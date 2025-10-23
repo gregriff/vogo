@@ -18,7 +18,7 @@ type User struct {
 	// hashed password
 	Password string
 
-	CreatedAt string
+	CreatedAt time.Time
 }
 
 type InviteCode struct {

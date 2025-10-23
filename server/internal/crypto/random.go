@@ -6,14 +6,14 @@ import (
 )
 
 const (
-	InviteCodeLength     = 6
-	UsernameSuffixLength = 4
+	InviteCodeLength = 6
+	FriendCodeLength = 5
 )
 
-// GenerateUsernameSuffix creates a suffix to append to all usernames to reasonably
+// GenerateFriendCode creates a suffix to append to all usernames to reasonably
 // ensure no name collisions, considering the small target userbase
-func GenerateUsernameSuffix() string {
-	return "#" + secureRandomString(UsernameSuffixLength)
+func GenerateFriendCode() string {
+	return "#" + secureRandomString(FriendCodeLength)
 }
 
 // GenerateInviteCode creates an invite code to be used by one client during registration. At time of registration,

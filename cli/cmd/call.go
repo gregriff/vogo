@@ -144,7 +144,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			panic(fmt.Errorf("call error: %w", callErr))
 		}
 
-		log.Println("RECIEVED ANSWER SD, adding remote SD:", recipientSd)
+		log.Println("RECIEVED ANSWER SD, adding remote SD")
 		if sdpErr := pc.SetRemoteDescription(*recipientSd); sdpErr != nil {
 			panic(sdpErr)
 		}

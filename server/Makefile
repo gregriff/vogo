@@ -1,5 +1,3 @@
-# for macos only
-XDG_DATA_HOME="$(HOME)/Library/Application\ Support"
 
 build:
 	go build -o ../bin/vogo-server main.go
@@ -10,5 +8,12 @@ run:
 invite:
 	go run . create-invite
 
-wipe-database:
-	rm "$(XDG_DATA_HOME)/vogo-server/vogo-server.sqlite"
+# db scripts
+PGDATABASE=vogo-server
+drop-db:
+	dropdb $(PGDATABASE)
+
+create-db:
+	createdb $(PGDATABASE)
+
+.PHONY: invite run build

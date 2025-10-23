@@ -33,7 +33,7 @@ func CreateAndListen(debug bool, host string, port int) {
 	} else {
 		handler = mux
 	}
-	handler = middleware.BasicAuth(mux, db)
+	handler = middleware.BasicAuth(handler, db)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", host, port),

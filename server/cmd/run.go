@@ -25,8 +25,8 @@ func init() {
 
 func runServer(_ *cobra.Command, _ []string) {
 	debug, host, port := viper.GetBool("debug"),
-		viper.GetString("host"),
-		viper.GetInt("port")
+		viper.GetString("server.host"),
+		viper.GetInt("server.port")
 
 	server.CreateAndListen(debug, host, port)
 }
