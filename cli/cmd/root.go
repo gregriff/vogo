@@ -54,5 +54,5 @@ func init() {
 
 	// expose to application via viper
 	_ = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
-	_ = viper.BindPFlag("stun-server", rootCmd.PersistentFlags().Lookup("stun-server"))
+	_ = viper.BindPFlag("servers.stun-origin", rootCmd.PersistentFlags().Lookup("stun-server"))
 }

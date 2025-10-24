@@ -12,11 +12,6 @@ import (
 	"github.com/gregriff/vogo/server/internal/validation"
 )
 
-type RegisterResponse struct {
-	Username,
-	FriendCode string
-}
-
 func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 	rData := schemas.NewUserRequest{}
 	if err := json.NewDecoder(req.Body).Decode(&rData); err != nil {
@@ -38,7 +33,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	friendCode, sqlErr := dal.CreateUser(h.db, rData.Username, hashedPassword, rData.InviteCode)
+	username, sqlErr := dal.CreateUser(h.db, rData.Username, hashedPassword, rData.InviteCode)
 	if sqlErr != nil {
 		log.Println(sqlErr.Error())
 		err := errors.New("error creating new user")
@@ -46,6 +41,5 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	resData := RegisterResponse{Username: rData.Username, FriendCode: *friendCode}
-	WriteJSON(w, &resData)
+	WriteJSON(w, &username)
 }

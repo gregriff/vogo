@@ -40,7 +40,7 @@ func CreateAndListen(debug bool, host string, port int) {
 		ReadHeaderTimeout: 500 * time.Millisecond,
 		ReadTimeout:       500 * time.Millisecond,
 		IdleTimeout:       500 * time.Millisecond,
-		Handler:           http.TimeoutHandler(handler, 10*time.Second, ""),
+		Handler:           http.TimeoutHandler(handler, 30*time.Second, ""),
 	}
 
 	// graceful shutdown channel

@@ -3,7 +3,6 @@ package configs
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +13,6 @@ import (
 	_ "embed" // used to embed the default application config file.
 
 	"github.com/adrg/xdg"
-	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/viper"
 )
 
@@ -74,25 +72,26 @@ func GetConfigDir() string {
 	return appConfigDir
 }
 
-// PersistCredentialsToConfig updates the vogo config file with the full username
+// PersistCredentialsToConfig updates the vogo config file with the username
 // given by the server and the entered password (plaintext)
-func PersistCredentialsToConfig(filename, username, friendCode string) error {
-	var config map[string]any
+// TODO: this may be used in the future to update the config file
+// func PersistCredentialsToConfig(filename, username, friendCode string) error {
+// 	var config map[string]any
 
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return errors.New("config file not found! developer error")
-	}
+// 	data, err := os.ReadFile(filename)
+// 	if err != nil {
+// 		return errors.New("config file not found! developer error")
+// 	}
 
-	// loads entire config
-	toml.Unmarshal(data, &config)
-	config["username"] = username
-	config["friend-code"] = friendCode
+// 	// loads entire config
+// 	toml.Unmarshal(data, &config)
+// 	config["username"] = username
+// 	config["friend-code"] = friendCode
 
-	data, err = toml.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("marshaling error: %w", err)
-	}
+// 	data, err = toml.Marshal(config)
+// 	if err != nil {
+// 		return fmt.Errorf("marshaling error: %w", err)
+// 	}
 
-	return os.WriteFile(filename, data, 0644)
-}
+// 	return os.WriteFile(filename, data, 0644)
+// }

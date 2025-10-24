@@ -1,9 +1,8 @@
 -- dialect: postgres
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY,
-  username VARCHAR(16) NOT NULL CHECK (length(username) > 1),
+  username VARCHAR(16) NOT NULL UNIQUE CHECK (length(username) > 1),
   password VARCHAR(60) NOT NULL,
-  friend_code VARCHAR(6) NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

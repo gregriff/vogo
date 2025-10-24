@@ -6,7 +6,6 @@ import (
 	"log"
 	"regexp"
 
-	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal/services/vogo"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -47,10 +46,10 @@ func init() {
 
 func registerUser(_ *cobra.Command, _ []string) {
 	_, username, password, inviteCode, vogoServer := viper.GetBool("debug"),
-		viper.GetString("username"),
-		viper.GetString("password"),
+		viper.GetString("user.name"),
+		viper.GetString("user.password"),
 		viper.GetString("code"),
-		viper.GetString("vogo-server")
+		viper.GetString("servers.vogo-origin")
 
 	if vErr := validateUsername(username); vErr != nil {
 		msg := fmt.Errorf("invalid username %s (%w)", username, vErr)
@@ -62,19 +61,19 @@ func registerUser(_ *cobra.Command, _ []string) {
 	}
 
 	vogoClient := vogo.NewClient(vogoServer, "", "")
-	username, friendCode, err := vogo.Register(*vogoClient, username, password, inviteCode)
+	username, err := vogo.Register(*vogoClient, username, password, inviteCode)
 	if err != nil {
 		log.Fatalf(fmt.Errorf("error during registration: %w", err).Error())
 	}
 
-	writeErr := configs.PersistCredentialsToConfig(ConfigFile, username, friendCode)
-	if writeErr != nil {
-		log.Fatalf(
-			`error writing username to config file. please write username=%s to %s`,
-			username, ConfigFile,
-		)
-	}
-	log.Printf("Now registered with username: %s, friend code: %s", username, friendCode)
+	// writeErr := configs.PersistCredentialsToConfig(ConfigFile, username, friendCode)
+	// if writeErr != nil {
+	// 	log.Fatalf(
+	// 		`error writing username to config file. please write username=%s to %s`,
+	// 		username, ConfigFile,
+	// 	)
+	// }
+	log.Printf("Now registered with username: %s", username)
 }
 
 var validCharsUsername = regexp.MustCompile(`^[A-Za-z\d@$!%*?&]+$`)

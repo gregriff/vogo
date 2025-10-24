@@ -5,17 +5,16 @@ package dal
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
-	"github.com/gregriff/vogo/server/internal/crypto"
 	"github.com/gregriff/vogo/server/internal/schemas"
 )
 
 // CreateUser adds a user to the database and associates them with their invite code.
-// TODO: use transaction to rollback if invite code fails
 func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*string, error) {
 	userId := uuid.New()
-	friendCode := crypto.GenerateFriendCode()
+	username = strings.ToLower(username)
 
 	// Basic transaction pattern
 	tx, tErr := db.Begin()
@@ -24,13 +23,13 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 	}
 	defer tx.Rollback()
 
+	var dbUsername string
 	err := tx.QueryRow(
-		"INSERT INTO users (id, username, friend_code, password) VALUES ($1, $2, $3, $4) RETURNING friend_code",
+		"INSERT INTO users (id, username, password) VALUES ($1, $2, $3) RETURNING username",
 		userId,
 		username,
-		friendCode,
 		hashedPassword,
-	).Scan(&friendCode)
+	).Scan(&dbUsername)
 	if err != nil {
 		return nil, fmt.Errorf("error inserting user: %w", err)
 	}
@@ -51,11 +50,12 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return &friendCode, nil
+	return &dbUsername, nil
 }
 
 func GetUserByUsername(db *sql.DB, username string) (*schemas.User, error) {
 	var user schemas.User
+	username = strings.ToLower(username)
 
 	query := "SELECT id, username, password, created_at FROM users WHERE username = $1"
 	err := db.QueryRow(query, username).Scan(&user.Id, &user.Name, &user.Password, &user.CreatedAt)

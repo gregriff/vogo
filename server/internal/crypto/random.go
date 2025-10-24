@@ -5,16 +5,7 @@ import (
 	"math/big"
 )
 
-const (
-	InviteCodeLength = 6
-	FriendCodeLength = 5
-)
-
-// GenerateFriendCode creates a suffix to append to all usernames to reasonably
-// ensure no name collisions, considering the small target userbase
-func GenerateFriendCode() string {
-	return "#" + secureRandomString(FriendCodeLength)
-}
+const InviteCodeLength = 6
 
 // GenerateInviteCode creates an invite code to be used by one client during registration. At time of registration,
 // server should check that this invite code has not already been used

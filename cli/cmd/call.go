@@ -21,7 +21,7 @@ var callCmd = &cobra.Command{
 	Short: "Call a friend",
 	Args:  cobra.MaximumNArgs(1),
 	PreRunE: func(_ *cobra.Command, args []string) error {
-		username, password := viper.GetString("username"), viper.GetString("password")
+		username, password := viper.GetString("user.name"), viper.GetString("user.password")
 		if len(username) == 0 {
 			return fmt.Errorf("username not found. ensure it is present in %s", ConfigFile)
 		}
@@ -48,17 +48,18 @@ func init() {
 }
 
 func initiateCall(_ *cobra.Command, _ []string) {
-	_, vogoServer, recipient, username, password := viper.GetBool("debug"),
-		viper.GetString("vogo-server"),
+	_, vogoServer, stunServer, recipient, username, password := viper.GetBool("debug"),
+		viper.GetString("servers.vogo-origin"),
+		viper.GetString("servers.stun-origin"),
 		viper.GetString("recipient"),
-		viper.GetString("username"),
-		viper.GetString("password")
+		viper.GetString("user.name"),
+		viper.GetString("user.password")
 
 	// Prepare the configuration
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
-				URLs: []string{"stun:stun.l.google.com:19302"},
+				URLs: []string{stunServer},
 			},
 		},
 	}
@@ -104,7 +105,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			message := "ping"
 
 			// Send the message as text
-			fmt.Printf("Sending '%s'\n", message)
+			fmt.Printf("sending message: '%s'\n", message)
 			if sendTextErr := dataChannel.SendText(message); sendTextErr != nil {
 				panic(sendTextErr)
 			}
@@ -113,7 +114,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 	// Register text message handling
 	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-		fmt.Printf("Message from DataChannel '%s': '%s'\n", dataChannel.Label(), string(msg.Data))
+		fmt.Printf("recieved message': '%s'\n", string(msg.Data))
 	})
 	///////////////////////////////////////////////////////////////////////////////////////////////////
 

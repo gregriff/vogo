@@ -14,14 +14,9 @@ type NewUser struct {
 	InviteCode string
 }
 
-type RegistrationResponse struct {
-	Username,
-	FriendCode string
-}
-
 // Register asks the vogo-server to create a new user given the provided credentials and returns
 // the official username and friend code if sucessful. It will exit if an error is encountered.
-func Register(client http.Client, username, password, inviteCode string) (string, string, error) {
+func Register(client http.Client, username, password, inviteCode string) (string, error) {
 	newUser := NewUser{Username: username, Password: password, InviteCode: inviteCode}
 	payload, err := json.Marshal(newUser)
 	if err != nil {
@@ -34,7 +29,7 @@ func Register(client http.Client, username, password, inviteCode string) (string
 		bytes.NewReader(payload),
 	)
 	if err != nil {
-		return "", "", fmt.Errorf("request error: %w", err)
+		return "", fmt.Errorf("request error: %w", err)
 	}
 
 	defer func() {
@@ -43,13 +38,11 @@ func Register(client http.Client, username, password, inviteCode string) (string
 
 	if res.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(res.Body)
-		return "", "", fmt.Errorf("request failed: %s", string(body))
+		return "", fmt.Errorf("request failed: %s", string(body))
 	}
 
-	// var finalUsername string
-	resData := RegistrationResponse{}
-	if err := json.NewDecoder(res.Body).Decode(&resData); err != nil {
+	if err := json.NewDecoder(res.Body).Decode(&username); err != nil {
 		panic(err)
 	}
-	return resData.Username, resData.FriendCode, nil
+	return username, nil
 }
