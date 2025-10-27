@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal"
 	"github.com/gregriff/vogo/cli/internal/services/signaling"
 	"github.com/pion/webrtc/v4"
@@ -61,7 +62,7 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// var candidatesMux sync.Mutex
 	// pendingCandidates := make([]*webrtc.ICECandidate, 0)
 
-	// Prepare the configuration
+	api := configs.NewWebRTC()
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -70,9 +71,8 @@ func answerCall(_ *cobra.Command, _ []string) {
 		},
 	}
 
-	// Create a new RTCPeerConnection
 	log.Println("creating answerer connection")
-	pc, err := webrtc.NewPeerConnection(config)
+	pc, err := api.NewPeerConnection(config)
 	if err != nil {
 		panic(err)
 	}
@@ -82,6 +82,10 @@ func answerCall(_ *cobra.Command, _ []string) {
 			fmt.Printf("cannot close peerConnection: %v\n", cErr)
 		}
 	}()
+
+	if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
+		panic(err)
+	}
 
 	pc.OnICECandidate(internal.OnICECandidate)
 

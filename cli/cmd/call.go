@@ -2,14 +2,17 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
+	"github.com/gen2brain/malgo"
+	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal"
 	"github.com/gregriff/vogo/cli/internal/services/signaling"
+	"github.com/pion/opus"
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -55,7 +58,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		viper.GetString("user.name"),
 		viper.GetString("user.password")
 
-	// Prepare the configuration
+	api := configs.NewWebRTC()
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
@@ -64,9 +67,8 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		},
 	}
 
-	// Create a new RTCPeerConnection
 	log.Println("creating peer connection")
-	pc, err := webrtc.NewPeerConnection(config)
+	pc, err := api.NewPeerConnection(config)
 	if err != nil {
 		panic(err)
 	}
@@ -77,46 +79,101 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		}
 	}()
 
-	pc.OnICECandidate(internal.OnICECandidate)
-
-	///////////////////////////////////////////////////////////////////////////////////////////////////
-	// Create a datachannel with label 'data'
-	dataChannel, err := pc.CreateDataChannel("data", nil)
-	if err != nil {
+	if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
 		panic(err)
 	}
-	///////////////////////////////////////////////////////////////////////////////////////////////////
+
+	// configure playback device
+	ctx, _ := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	defer ctx.Uninit()
+
+	const numChannels = 2
+	deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
+	deviceConfig.Playback.Format = malgo.FormatS16
+	deviceConfig.Playback.Channels = numChannels
+	deviceConfig.SampleRate = 48000
+	deviceConfig.Alsa.NoMMap = 1
+
+	// Buffer for decoded audio
+	playbackBuffer := internal.NewRingBuffer(2_000_000)
+
+	// read into output sample, for output to speaker device
+	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
+		playbackBuffer.Read(pOutputSample)
+	}
+
+	// init playback device
+	device, deviceErr := malgo.InitDevice(ctx.Context, deviceConfig, malgo.DeviceCallbacks{
+		Data: onSendFrames,
+	})
+	if deviceErr != nil {
+		panic(deviceErr)
+	}
+	device.Start()
+	defer device.Uninit()
+
+	decoder := opus.NewDecoder()
+	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		// opusPacket := &codecs.OpusPacket{}
+		pcmBuffer := make([]byte, 23040)
+
+		for { // Read RTP packets
+			packet, _, readErr := track.ReadRTP()
+			if readErr != nil {
+				if readErr == io.EOF {
+					break // Track closed, exit loop
+				}
+				continue // Temporary error, keep trying
+			}
+
+			// Decode Opus to PCM
+			bandwidth, _, decodeErr := decoder.Decode(packet.Payload, pcmBuffer)
+			if decodeErr != nil {
+				continue
+			}
+
+			// Calculate actual bytes decoded, assume 20ms frame (most common)
+			samplesPerChannel := bandwidth.SampleRate() * 20 / 960 // 960 for 48kHz
+			bytesDecoded := samplesPerChannel * numChannels * 2    // *2 for S16LE
+
+			// TODO: probably should calculate bytes decoded better. but keep in mind WEBRTC could change
+			// sample rate so continue to use that.
+			// deviceConfig := malgo.DefaultDeviceConfig(malgo.Duplex)
+			// deviceConfig.Capture.Format = malgo.FormatS16
+			// deviceConfig.Capture.Channels = 1
+			// deviceConfig.Playback.Format = malgo.FormatS16
+			// deviceConfig.Playback.Channels = 1
+			// deviceConfig.SampleRate = 44100
+			// deviceConfig.Alsa.NoMMap = 1
+
+			// var playbackSampleCount uint32
+			// var capturedSampleCount uint32
+			// pCapturedSamples := make([]byte, 0)
+
+			// sizeInBytes := uint32(malgo.SampleSizeInBytes(deviceConfig.Capture.Format))
+			// onRecvFrames := func(pSample2, pSample []byte, framecount uint32) {
+
+			// 	sampleCount := framecount * deviceConfig.Capture.Channels * sizeInBytes
+
+			// 	newCapturedSampleCount := capturedSampleCount + sampleCount
+
+			// 	pCapturedSamples = append(pCapturedSamples, pSample...)
+
+			// 	capturedSampleCount = newCapturedSampleCount
+
+			// }
+
+			// Write decoded PCM to ring buffer
+			// Malgo will pull from this buffer to play
+			playbackBuffer.Write(pcmBuffer[:bytesDecoded])
+		}
+	})
+
+	pc.OnICECandidate(internal.OnICECandidate)
 
 	// Set the handler for Peer connection state
 	// This will notify you when the peer has connected/disconnected
 	pc.OnConnectionStateChange(internal.OnConnectionStateChange)
-
-	///////////////////////////////////////////////////////////////////////////////////////////////////
-	// Register channel opening handling
-	dataChannel.OnOpen(func() {
-		fmt.Printf(
-			"Data channel '%s'-'%d' open. Messages will now be sent to any connected DataChannels every 5 seconds\n",
-			dataChannel.Label(), dataChannel.ID(),
-		)
-
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			message := "ping"
-
-			// Send the message as text
-			fmt.Printf("sending message: '%s'\n", message)
-			if sendTextErr := dataChannel.SendText(message); sendTextErr != nil {
-				panic(sendTextErr)
-			}
-		}
-	})
-
-	// Register text message handling
-	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-		fmt.Printf("recieved message': '%s'\n", string(msg.Data))
-	})
-	///////////////////////////////////////////////////////////////////////////////////////////////////
 
 	// Create an offer to send to the other process
 	log.Println("Creating offer")

@@ -1,7 +1,9 @@
 debug = true
 
-username = ""
+[user]
+name = ""
 password = ""
 
-stun-server = ""
-vogo-server = "http://localhost:8039"
+[servers]
+vogo-origin = "http://localhost:8039"
+# stun-origin = ""
