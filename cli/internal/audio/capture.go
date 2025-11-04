@@ -15,7 +15,7 @@ import (
 
 type AudioBuffer struct {
 	mu   sync.Mutex
-	data []byte
+	data []int16
 }
 
 func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) {
@@ -40,9 +40,9 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	// read into capture buffer, to write to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
 		pcmBuffer.mu.Lock()
-		pcmBuffer.data = append(pcmBuffer.data, pInputSample...)
+		pcmBuffer.data = append(pcmBuffer.data, bytesToInt16(pInputSample)...)
 		pcmBuffer.mu.Unlock()
-		log.Print("c")
+		log.Print("c", framecount)
 	}
 
 	// init playback device
@@ -66,7 +66,7 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
 
-	var curSample media.Sample
+	// var curSample media.Sample
 	for range ticker.C {
 		if ctx.Err() == context.Canceled {
 			break // stop recording and teardown mic context and device
@@ -75,37 +75,37 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 		pcmBuffer.mu.Lock()
 
 		// Need at least one frame worth of data
-		if len(pcmBuffer.data) < bytesPerFrame {
+		if len(pcmBuffer.data) < bytesPerFrame/2 { // /2 for int16
 			pcmBuffer.mu.Unlock()
 			continue // wait for more data
 		}
 
 		// Extract one frame
-		frameData := pcmBuffer.data[:bytesPerFrame]
-		pcmBuffer.data = pcmBuffer.data[bytesPerFrame:] // remove from buffer TODO: this may leak
+		frameData := pcmBuffer.data[:int16sPerFrame]
+		pcmBuffer.data = pcmBuffer.data[int16sPerFrame:] // remove from buffer TODO: this may leak
 		pcmBuffer.mu.Unlock()
 
-		curSample = media.Sample{
-			Data: make([]byte, bytesPerFrame*2), // TODO: reuse and reslice
-			// Timestamp: time.Now(),
-			Duration: frameDuration,
-		}
+		// place to write encoded opus for packet
+		data := make([]byte, bytesPerFrame) // TODO: reuse and reslice
 
-		// cast to int16 and encode to opus
-		pcm16 := bytesToInt16(frameData)
-		_, err := encoder.Encode(pcm16, curSample.Data)
+		// encode to opus
+		n, err := encoder.Encode(frameData, data)
 		if err != nil {
-			log.Println("Opus Encode error:", err)
+			log.Println("OPUS ENCODE ERROR:", err)
 			continue
 		}
 
 		// write to webrtc track
-		wErr := track.WriteSample(curSample)
+		wErr := track.WriteSample(media.Sample{
+			Data: data[:n], // only the first N bytes are opus data.
+			// Timestamp: time.Now(),
+			Duration: frameDuration,
+		})
 		if wErr != nil {
 			log.Println("WriteSample error:", err)
 			return
 		}
-		log.Print("w")
+		log.Print("w", n)
 	}
 }
 

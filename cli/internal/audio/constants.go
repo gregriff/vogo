@@ -24,4 +24,5 @@ const (
 
 	samplesPerFrame = int(SampleRate * 0.02)
 	bytesPerFrame   = samplesPerFrame * int(AudioFormat)
+	int16sPerFrame  = bytesPerFrame / 2
 )

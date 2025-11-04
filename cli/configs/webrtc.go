@@ -20,10 +20,8 @@ var OpusCodecCapability = webrtc.RTPCodecCapability{
 // e.receiveMTU = receiveMTU
 // }
 func NewWebRTC() *webrtc.API {
-	// Create a MediaEngine object to configure the supported codec
+	// Create a MediaEngine object and configure the supported codec
 	mediaEngine := &webrtc.MediaEngine{}
-
-	// setup opus codec
 	codecParams := webrtc.RTPCodecParameters{
 		RTPCodecCapability: OpusCodecCapability,
 		PayloadType:        111, // should this be negotiated and not hard coded?
@@ -50,7 +48,13 @@ func NewWebRTC() *webrtc.API {
 	// 	panic(err)
 	// }
 
-	// Create the API object with the MediaEngine
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine))
+	// not sure if this should be avoided but this prevents packet size overruns
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetReceiveMTU(4_000)
+
+	api := webrtc.NewAPI(
+		webrtc.WithMediaEngine(mediaEngine),
+		webrtc.WithSettingEngine(settingEngine),
+	)
 	return api
 }

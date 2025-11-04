@@ -51,7 +51,7 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 		// this is where the decoder writes pcm, and what we use to write to the playback buffer (ringbuffer)
 
 		// TODO: pull out and reuse
-		pcmBuffer := make([]int16, int(frameSize))
+		pcmBuffer := make([]int16, int(frameSize)*4)
 
 		for { // Read RTP packets
 			packet, _, readErr := track.ReadRTP()
@@ -59,12 +59,14 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 				if readErr == io.EOF {
 					break // Track closed, exit loop
 				}
+				log.Println("packet read err: ", readErr)
 				continue // Temporary error, keep trying
 			}
 
 			bytesDecoded, decodeErr := decoder.Decode(packet.Payload, pcmBuffer)
 			if decodeErr != nil {
 				log.Println("DECODE ERROR: ", decodeErr.Error())
+				// pcmBuffer = pcmBuffer[bytesDecoded:]
 				continue
 			}
 
