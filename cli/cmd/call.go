@@ -1,18 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/gen2brain/malgo"
 	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal"
+	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/services/signaling"
-	"github.com/pion/opus"
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -79,95 +78,23 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		}
 	}()
 
-	if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
-		panic(err)
+	var (
+		audioTrsv *webrtc.RTPTransceiver
+		tErr      error
+	)
+	if audioTrsv, tErr = pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeAudio,
+		webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionSendrecv,
+		},
+	); tErr != nil {
+		panic(tErr)
 	}
 
-	// configure playback device
-	ctx, _ := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	defer ctx.Uninit()
-
-	const numChannels = 2
-	deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
-	deviceConfig.Playback.Format = malgo.FormatS16
-	deviceConfig.Playback.Channels = numChannels
-	deviceConfig.SampleRate = 48000
-	deviceConfig.Alsa.NoMMap = 1
-
-	// Buffer for decoded audio
-	playbackBuffer := internal.NewRingBuffer(2_000_000)
-
-	// read into output sample, for output to speaker device
-	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
-		playbackBuffer.Read(pOutputSample)
-	}
-
-	// init playback device
-	device, deviceErr := malgo.InitDevice(ctx.Context, deviceConfig, malgo.DeviceCallbacks{
-		Data: onSendFrames,
-	})
-	if deviceErr != nil {
-		panic(deviceErr)
-	}
-	device.Start()
+	playbackCtx, device := audio.SetupPlayback(pc)
+	defer playbackCtx.Uninit()
+	defer playbackCtx.Free()
 	defer device.Uninit()
-
-	decoder := opus.NewDecoder()
-	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		// opusPacket := &codecs.OpusPacket{}
-		pcmBuffer := make([]byte, 23040)
-
-		for { // Read RTP packets
-			packet, _, readErr := track.ReadRTP()
-			if readErr != nil {
-				if readErr == io.EOF {
-					break // Track closed, exit loop
-				}
-				continue // Temporary error, keep trying
-			}
-
-			// Decode Opus to PCM
-			bandwidth, _, decodeErr := decoder.Decode(packet.Payload, pcmBuffer)
-			if decodeErr != nil {
-				continue
-			}
-
-			// Calculate actual bytes decoded, assume 20ms frame (most common)
-			samplesPerChannel := bandwidth.SampleRate() * 20 / 960 // 960 for 48kHz
-			bytesDecoded := samplesPerChannel * numChannels * 2    // *2 for S16LE
-
-			// TODO: probably should calculate bytes decoded better. but keep in mind WEBRTC could change
-			// sample rate so continue to use that.
-			// deviceConfig := malgo.DefaultDeviceConfig(malgo.Duplex)
-			// deviceConfig.Capture.Format = malgo.FormatS16
-			// deviceConfig.Capture.Channels = 1
-			// deviceConfig.Playback.Format = malgo.FormatS16
-			// deviceConfig.Playback.Channels = 1
-			// deviceConfig.SampleRate = 44100
-			// deviceConfig.Alsa.NoMMap = 1
-
-			// var playbackSampleCount uint32
-			// var capturedSampleCount uint32
-			// pCapturedSamples := make([]byte, 0)
-
-			// sizeInBytes := uint32(malgo.SampleSizeInBytes(deviceConfig.Capture.Format))
-			// onRecvFrames := func(pSample2, pSample []byte, framecount uint32) {
-
-			// 	sampleCount := framecount * deviceConfig.Capture.Channels * sizeInBytes
-
-			// 	newCapturedSampleCount := capturedSampleCount + sampleCount
-
-			// 	pCapturedSamples = append(pCapturedSamples, pSample...)
-
-			// 	capturedSampleCount = newCapturedSampleCount
-
-			// }
-
-			// Write decoded PCM to ring buffer
-			// Malgo will pull from this buffer to play
-			playbackBuffer.Write(pcmBuffer[:bytesDecoded])
-		}
-	})
 
 	pc.OnICECandidate(internal.OnICECandidate)
 
@@ -177,16 +104,16 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 	// Create an offer to send to the other process
 	log.Println("Creating offer")
-	offer, err := pc.CreateOffer(nil)
-	if err != nil {
-		panic(err)
+	offer, oErr := pc.CreateOffer(nil)
+	if oErr != nil {
+		panic(oErr)
 	}
 
 	// Sets the LocalDescription, and starts our UDP listeners
 	// Note: this will start the gathering of ICE candidates
 	log.Println("setting local description")
-	if err = pc.SetLocalDescription(offer); err != nil {
-		panic(err)
+	if oErr = pc.SetLocalDescription(offer); oErr != nil {
+		panic(oErr)
 	}
 
 	// Wait for all ICE candidates and include them all in the call request
@@ -195,6 +122,10 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	<-webrtc.GatheringCompletePromise(pc)
 	log.Println("waiting completed")
 
+	captureCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// handle signalling and on success init microphone capture
 	go func() {
 		sigClient := signaling.NewClient(vogoServer, username, password)
 		recipientSd, callErr := signaling.CallFriend(*sigClient, recipient, offer)
@@ -206,6 +137,20 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		if sdpErr := pc.SetRemoteDescription(*recipientSd); sdpErr != nil {
 			panic(sdpErr)
 		}
+
+		// TODO: the above should run in a seperate goroutine as the stuff below and should
+		// signal to the below that the ansewr has been recieved.
+
+		// setup microphone capture track
+		captureTrack, _ := webrtc.NewTrackLocalStaticSample(
+			configs.OpusCodecCapability,
+			"captureTrack",
+			"captureTrack"+username,
+		)
+		audioTrsv.Sender().ReplaceTrack(captureTrack)
+
+		// setup microphone and capture until cancelled
+		audio.StartCapture(captureCtx, pc, captureTrack)
 	}()
 
 	// Block forever
@@ -217,5 +162,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 	// block until ctrl C
 	<-sigChan
+
+	// all contexts defined above should now have their cancel funcs run
 	// NOTE: AudioRecieverStats{} implements a jitterbuffer...
 }

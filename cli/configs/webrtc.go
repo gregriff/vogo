@@ -1,19 +1,34 @@
 package configs
 
 import (
+	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/pion/webrtc/v4"
 )
 
+var OpusCodecCapability = webrtc.RTPCodecCapability{
+	MimeType:     webrtc.MimeTypeOpus,
+	ClockRate:    audio.SampleRate,
+	Channels:     audio.NumChannels,
+	SDPFmtpLine:  "", // "minptime=10;useinbandfec=1",
+	RTCPFeedback: nil,
+}
+
+// TODO : call this to get rid of packetio errors
+// // SetReceiveMTU sets the size of read buffer that copies incoming packets. This is optional.
+// Leave this 0 for the default receiveMTU
+// func (e *SettingEngine) SetReceiveMTU(receiveMTU uint) {
+// e.receiveMTU = receiveMTU
+// }
 func NewWebRTC() *webrtc.API {
 	// Create a MediaEngine object to configure the supported codec
 	mediaEngine := &webrtc.MediaEngine{}
 
 	// setup opus codec
-	if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 0, SDPFmtpLine: "", RTCPFeedback: nil,
-		},
-	}, webrtc.RTPCodecTypeAudio); err != nil {
+	codecParams := webrtc.RTPCodecParameters{
+		RTPCodecCapability: OpusCodecCapability,
+		PayloadType:        111, // should this be negotiated and not hard coded?
+	}
+	if err := mediaEngine.RegisterCodec(codecParams, webrtc.RTPCodecTypeAudio); err != nil {
 		panic(err)
 	}
 

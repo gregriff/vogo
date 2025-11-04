@@ -5,16 +5,16 @@ go 1.25.1
 require (
 	github.com/adrg/xdg v0.5.3
 	github.com/gen2brain/malgo v0.11.24
-	github.com/pion/opus v0.0.0-20251017233908-d37e25a5784d
+	github.com/google/uuid v1.6.0
 	github.com/pion/webrtc/v4 v4.1.6
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
+	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
 )
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
