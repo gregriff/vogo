@@ -75,18 +75,18 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 		pcm.mu.Lock()
 
 		// Need at least one frame worth of data
-		if len(pcm.data) < int16sPerFrame { // /2 for int16
+		if len(pcm.data) < frameSize {
 			pcm.mu.Unlock()
 			continue // wait for more data
 		}
 
 		// Extract one frame and remove it from the buffer
-		frameData := pcm.data[:int16sPerFrame]
-		pcm.data = pcm.data[int16sPerFrame:] // TODO: this may leak
+		frameData := pcm.data[:frameSize]
+		pcm.data = pcm.data[frameSize:] // TODO: this may leak
 		pcm.mu.Unlock()
 
 		// place to write encoded opus for packet
-		data := make([]byte, bytesPerFrame) // TODO: reuse and reslice
+		data := make([]byte, 1000) // TODO: reuse and reslice
 
 		// encode to opus
 		n, err := encoder.Encode(frameData, data)

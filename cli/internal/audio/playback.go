@@ -60,7 +60,7 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 	}
 
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		// this is where the decoder writes pcm, and what we use to write to the playback buffer (ringbuffer)
+		// this is where the decoder writes pcm, and what we use to write to the playback buffer
 
 		// TODO: pull out and reuse
 		pcmBuffer := make([]int16, int(frameSize)*4)
