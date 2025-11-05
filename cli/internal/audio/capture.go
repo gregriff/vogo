@@ -34,14 +34,14 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	// deviceConfig.PeriodSizeInMilliseconds = 10
 	deviceConfig.Alsa.NoMMap = 1
 
-	// for storing PCM from the mic, before converting to []int16
-	var pcmBuffer AudioBuffer
+	// for storing int16 PCM from the mic
+	var pcm AudioBuffer
 
 	// read into capture buffer, to write to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
-		pcmBuffer.mu.Lock()
-		pcmBuffer.data = append(pcmBuffer.data, bytesToInt16(pInputSample)...)
-		pcmBuffer.mu.Unlock()
+		pcm.mu.Lock()
+		pcm.data = append(pcm.data, bytesToInt16(pInputSample)...)
+		pcm.mu.Unlock()
 		log.Print("c", framecount)
 	}
 
@@ -66,24 +66,24 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
 
-	// var curSample media.Sample
+	// loop to encode buffered PCM into opus and send to network
 	for range ticker.C {
 		if ctx.Err() == context.Canceled {
 			break // stop recording and teardown mic context and device
 		}
 
-		pcmBuffer.mu.Lock()
+		pcm.mu.Lock()
 
 		// Need at least one frame worth of data
-		if len(pcmBuffer.data) < bytesPerFrame/2 { // /2 for int16
-			pcmBuffer.mu.Unlock()
+		if len(pcm.data) < int16sPerFrame { // /2 for int16
+			pcm.mu.Unlock()
 			continue // wait for more data
 		}
 
-		// Extract one frame
-		frameData := pcmBuffer.data[:int16sPerFrame]
-		pcmBuffer.data = pcmBuffer.data[int16sPerFrame:] // remove from buffer TODO: this may leak
-		pcmBuffer.mu.Unlock()
+		// Extract one frame and remove it from the buffer
+		frameData := pcm.data[:int16sPerFrame]
+		pcm.data = pcm.data[int16sPerFrame:] // TODO: this may leak
+		pcm.mu.Unlock()
 
 		// place to write encoded opus for packet
 		data := make([]byte, bytesPerFrame) // TODO: reuse and reslice
@@ -97,8 +97,7 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 
 		// write to webrtc track
 		wErr := track.WriteSample(media.Sample{
-			Data: data[:n], // only the first N bytes are opus data.
-			// Timestamp: time.Now(),
+			Data:     data[:n], // only the first N bytes are opus data.
 			Duration: frameDuration,
 		})
 		if wErr != nil {

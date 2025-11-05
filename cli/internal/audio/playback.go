@@ -1,6 +1,8 @@
 package audio
 
 import (
+	"encoding/binary"
+	"fmt"
 	"io"
 	"log"
 
@@ -20,17 +22,27 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 	deviceConfig.Alsa.NoMMap = 1
 
 	// Buffer for decoded audio
-	playbackBuffer := NewRingBuffer(rbCapacity)
+	var pcm AudioBuffer
+	// playbackBuffer := NewRingBuffer(rbCapacity)
 
-	// sizeInBytes := uint32(malgo.SampleSizeInBytes(CaptureFormat))
+	sizeInBytes := uint32(malgo.SampleSizeInBytes(AudioFormat))
+	fmt.Println("PLAYBACK SIZE IN BYTES: ", sizeInBytes)
 
 	// read into output sample, for output to speaker device. this fires every X milliseconds
 	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
-		// samplesToRead := framecount * deviceConfig.Playback.Channels * sizeInBytes
-		n := playbackBuffer.Read(pOutputSample)
-		if n > 0 {
-			log.Print("p")
+		samplesToRead := framecount * deviceConfig.Playback.Channels * sizeInBytes
+		pcm.mu.Lock()
+		defer pcm.mu.Unlock()
+
+		// if there isn't yet a full sample in the pcmBuffer sent from the network
+		if len(pcm.data) < int(samplesToRead) {
+			return
 		}
+
+		// write a full sample to the speaker buffer
+		copy(pOutputSample, int16ToBytes(pcm.data[:samplesToRead]))
+		pcm.data = pcm.data[samplesToRead:] // TODO: probably leaks
+		log.Print(" p", samplesToRead)
 	}
 
 	// init playback device
@@ -66,18 +78,27 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 			bytesDecoded, decodeErr := decoder.Decode(packet.Payload, pcmBuffer)
 			if decodeErr != nil {
 				log.Println("DECODE ERROR: ", decodeErr.Error())
-				// pcmBuffer = pcmBuffer[bytesDecoded:]
 				continue
 			}
 
 			// Write decoded PCM to ring buffer
 			// Malgo will pull from this buffer to play
-			playbackBuffer.Write(pcmBuffer[:bytesDecoded])
-			log.Print("r")
-			// pcmBuffer = pcmBuffer[bytesDecoded:]
+			pcm.mu.Lock()
+			pcm.data = append(pcm.data, pcmBuffer[:bytesDecoded]...)
+			pcm.mu.Unlock()
+			log.Print(" r", bytesDecoded)
 
 			// TODO: could use bytes decoded to know how much to read into the playback device
 		}
 	})
 	return ctx, device
+}
+
+// int16ToBytes converts an int16 slice to a byte slice of PCM audio. TODO: can be reimpl with unsafe
+func int16ToBytes(s []int16) []byte {
+	result := make([]byte, len(s)*2)
+	for i, v := range s {
+		binary.LittleEndian.PutUint16(result[i*2:], uint16(v))
+	}
+	return result
 }
