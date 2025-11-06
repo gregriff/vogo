@@ -32,19 +32,16 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	deviceConfig.Capture.Format = AudioFormat
 	deviceConfig.Capture.Channels = NumChannels
 	deviceConfig.SampleRate = SampleRate
-	// deviceConfig.PeriodSizeInMilliseconds = frameSizeMs
-	// deviceConfig.Alsa.NoMMap = 1
+	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
 
 	// for storing int16 PCM from the mic
 	var pcm AudioBuffer
 
 	// read into capture buffer, to write to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
-		// samplesToWrite = framecount * deviceConfig.Capture.Channels
 		pcm.mu.Lock()
 		pcm.data = append(pcm.data, bytesToInt16(pInputSample)...)
 		pcm.mu.Unlock()
-		// log.Print("c=", samplesToWrite)
 	}
 
 	// init playback device
@@ -59,7 +56,6 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 		panic(startErr)
 	}
 
-	// sizeInBytes := uint32(malgo.SampleSizeInBytes(AudioFormat))
 	encoder, encErr := opus.NewEncoder(SampleRate, NumChannels, opus.AppVoIP)
 	if encErr != nil {
 		panic(encErr)
@@ -110,7 +106,6 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 			log.Println("WriteSample error:", err)
 			return
 		}
-		// log.Print("w", bytesEncoded)
 	}
 }
 
