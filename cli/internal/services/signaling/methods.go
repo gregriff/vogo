@@ -40,12 +40,12 @@ func CallFriend(client http.Client, friendName string, offer webrtc.SessionDescr
 	log.Printf("Recieved answerer response: %s", res.Status)
 	if res.StatusCode != 200 {
 		// TODO: make this a sentinel error
-		return nil, fmt.Errorf("call unsucessful: %w", err)
+		return nil, fmt.Errorf("call unsucessful: %w", rErr)
 	}
 
 	sd := webrtc.SessionDescription{}
 	if sdpErr := json.NewDecoder(res.Body).Decode(&sd); sdpErr != nil {
-		return nil, fmt.Errorf("error parsing answer: %w", err)
+		return nil, fmt.Errorf("error parsing answer: %w", sdpErr)
 	}
 	return &sd, nil
 }

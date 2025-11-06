@@ -1,14 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
+	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal"
+	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/services/signaling"
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
@@ -21,7 +23,7 @@ var callCmd = &cobra.Command{
 	Short: "Call a friend",
 	Args:  cobra.MaximumNArgs(1),
 	PreRunE: func(_ *cobra.Command, args []string) error {
-		username, password := viper.GetString("username"), viper.GetString("password")
+		username, password := viper.GetString("user.name"), viper.GetString("user.password")
 		if len(username) == 0 {
 			return fmt.Errorf("username not found. ensure it is present in %s", ConfigFile)
 		}
@@ -48,24 +50,24 @@ func init() {
 }
 
 func initiateCall(_ *cobra.Command, _ []string) {
-	_, vogoServer, recipient, username, password := viper.GetBool("debug"),
-		viper.GetString("vogo-server"),
+	_, vogoServer, stunServer, recipient, username, password := viper.GetBool("debug"),
+		viper.GetString("servers.vogo-origin"),
+		viper.GetString("servers.stun-origin"),
 		viper.GetString("recipient"),
-		viper.GetString("username"),
-		viper.GetString("password")
+		viper.GetString("user.name"),
+		viper.GetString("user.password")
 
-	// Prepare the configuration
+	api := configs.NewWebRTC()
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
-				URLs: []string{"stun:stun.l.google.com:19302"},
+				URLs: []string{stunServer},
 			},
 		},
 	}
 
-	// Create a new RTCPeerConnection
 	log.Println("creating peer connection")
-	pc, err := webrtc.NewPeerConnection(config)
+	pc, err := api.NewPeerConnection(config)
 	if err != nil {
 		panic(err)
 	}
@@ -76,59 +78,42 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		}
 	}()
 
-	pc.OnICECandidate(internal.OnICECandidate)
-
-	///////////////////////////////////////////////////////////////////////////////////////////////////
-	// Create a datachannel with label 'data'
-	dataChannel, err := pc.CreateDataChannel("data", nil)
-	if err != nil {
-		panic(err)
+	var (
+		audioTrsv *webrtc.RTPTransceiver
+		tErr      error
+	)
+	if audioTrsv, tErr = pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeAudio,
+		webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionSendrecv,
+		},
+	); tErr != nil {
+		panic(tErr)
 	}
-	///////////////////////////////////////////////////////////////////////////////////////////////////
+
+	// playbackCtx, device := audio.SetupPlayback(pc)
+	// defer playbackCtx.Uninit()
+	// defer playbackCtx.Free()
+	// defer device.Uninit()
+
+	pc.OnICECandidate(internal.OnICECandidate)
 
 	// Set the handler for Peer connection state
 	// This will notify you when the peer has connected/disconnected
 	pc.OnConnectionStateChange(internal.OnConnectionStateChange)
 
-	///////////////////////////////////////////////////////////////////////////////////////////////////
-	// Register channel opening handling
-	dataChannel.OnOpen(func() {
-		fmt.Printf(
-			"Data channel '%s'-'%d' open. Messages will now be sent to any connected DataChannels every 5 seconds\n",
-			dataChannel.Label(), dataChannel.ID(),
-		)
-
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			message := "ping"
-
-			// Send the message as text
-			fmt.Printf("Sending '%s'\n", message)
-			if sendTextErr := dataChannel.SendText(message); sendTextErr != nil {
-				panic(sendTextErr)
-			}
-		}
-	})
-
-	// Register text message handling
-	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-		fmt.Printf("Message from DataChannel '%s': '%s'\n", dataChannel.Label(), string(msg.Data))
-	})
-	///////////////////////////////////////////////////////////////////////////////////////////////////
-
 	// Create an offer to send to the other process
 	log.Println("Creating offer")
-	offer, err := pc.CreateOffer(nil)
-	if err != nil {
-		panic(err)
+	offer, oErr := pc.CreateOffer(nil)
+	if oErr != nil {
+		panic(oErr)
 	}
 
 	// Sets the LocalDescription, and starts our UDP listeners
 	// Note: this will start the gathering of ICE candidates
 	log.Println("setting local description")
-	if err = pc.SetLocalDescription(offer); err != nil {
-		panic(err)
+	if oErr = pc.SetLocalDescription(offer); oErr != nil {
+		panic(oErr)
 	}
 
 	// Wait for all ICE candidates and include them all in the call request
@@ -137,6 +122,10 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	<-webrtc.GatheringCompletePromise(pc)
 	log.Println("waiting completed")
 
+	captureCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// handle signalling and on success init microphone capture
 	go func() {
 		sigClient := signaling.NewClient(vogoServer, username, password)
 		recipientSd, callErr := signaling.CallFriend(*sigClient, recipient, offer)
@@ -144,10 +133,24 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			panic(fmt.Errorf("call error: %w", callErr))
 		}
 
-		log.Println("RECIEVED ANSWER SD, adding remote SD:", recipientSd)
+		log.Println("RECIEVED ANSWER SD, adding remote SD")
 		if sdpErr := pc.SetRemoteDescription(*recipientSd); sdpErr != nil {
 			panic(sdpErr)
 		}
+
+		// TODO: the above should run in a seperate goroutine as the stuff below and should
+		// signal to the below that the ansewr has been recieved.
+
+		// setup microphone capture track
+		captureTrack, _ := webrtc.NewTrackLocalStaticSample(
+			configs.OpusCodecCapability,
+			"captureTrack",
+			"captureTrack"+username,
+		)
+		audioTrsv.Sender().ReplaceTrack(captureTrack)
+
+		// setup microphone and capture until cancelled
+		audio.StartCapture(captureCtx, pc, captureTrack)
 	}()
 
 	// Block forever
@@ -159,5 +162,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 	// block until ctrl C
 	<-sigChan
+
+	// all contexts defined above should now have their cancel funcs run
 	// NOTE: AudioRecieverStats{} implements a jitterbuffer...
 }

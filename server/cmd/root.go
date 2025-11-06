@@ -3,15 +3,13 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
+	"log"
 
-	"github.com/gregriff/vogo/server/config"
+	"github.com/gregriff/vogo/server/configs"
 	"github.com/spf13/cobra"
 )
 
-var configFile string
+var ConfigFile string
 
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
@@ -28,8 +26,7 @@ var rootCmd = &cobra.Command{
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		log.Fatal(err.Error())
 	}
 }
 
@@ -37,16 +34,17 @@ func init() {
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
-	if runtime.GOOS == "darwin" && os.Getenv("XDG_CONFIG_HOME") == "" {
-		home, _ := os.UserHomeDir()
-		os.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	}
 
+	// deferring this allows user to override config path with cli option
 	cobra.OnInitialize(func() {
-		config.InitConfig(configFile)
+		log.Printf("using config file: %s", ConfigFile)
+		configs.InitConfig(ConfigFile)
+
+		configs.ConfigurePostgres()
 	})
 
-	configHome := os.Getenv("XDG_CONFIG_HOME")
-	defaultConfigFilePath := fmt.Sprintf("%s/vogo-server/vogo-server.toml", configHome)
-	rootCmd.PersistentFlags().StringVar(&configFile, "config", "", fmt.Sprintf("config file (default is %s)", defaultConfigFilePath))
+	configDir := configs.GetConfigDir()
+	defaultConfigFilePath := fmt.Sprintf("%s/vogo-server.toml", configDir)
+	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config", defaultConfigFilePath, "config file")
+
 }

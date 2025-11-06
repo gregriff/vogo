@@ -33,14 +33,14 @@ func CreateAndListen(debug bool, host string, port int) {
 	} else {
 		handler = mux
 	}
-	handler = middleware.BasicAuth(mux, db)
+	handler = middleware.BasicAuth(handler, db)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", host, port),
 		ReadHeaderTimeout: 500 * time.Millisecond,
 		ReadTimeout:       500 * time.Millisecond,
 		IdleTimeout:       500 * time.Millisecond,
-		Handler:           http.TimeoutHandler(handler, 10*time.Second, ""),
+		Handler:           http.TimeoutHandler(handler, 30*time.Second, ""),
 	}
 
 	// graceful shutdown channel

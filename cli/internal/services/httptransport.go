@@ -33,7 +33,6 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	log.Println("making request to vogo server: ", req.Proto, url)
 
 	if path != "/register" {
-		log.Println("setting basic auth: ", t.Username, t.Password)
 		req.SetBasicAuth(t.Username, t.Password)
 	}
 	return http.DefaultTransport.RoundTrip(req)

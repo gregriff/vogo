@@ -14,8 +14,8 @@ register-caller:
 register-answerer:
 	go run . register --code=$(CODE) --config=$(ANSWERER_CONFIG_PATH)
 
-call:
-	go run . call $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
+call: build
+	../bin/vogo call $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
 
-answer:
-	go run . answer $(CALLER_NAME) --config=$(ANSWERER_CONFIG_PATH)
+answer: build
+	../bin/vogo answer $(CALLER_NAME) --config=$(ANSWERER_CONFIG_PATH)

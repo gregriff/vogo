@@ -5,16 +5,7 @@ import (
 	"math/big"
 )
 
-const (
-	InviteCodeLength     = 6
-	UsernameSuffixLength = 4
-)
-
-// GenerateUsernameSuffix creates a suffix to append to all usernames to reasonably
-// ensure no name collisions, considering the small target userbase
-func GenerateUsernameSuffix() string {
-	return "#" + secureRandomString(UsernameSuffixLength)
-}
+const InviteCodeLength = 6
 
 // GenerateInviteCode creates an invite code to be used by one client during registration. At time of registration,
 // server should check that this invite code has not already been used

@@ -1,4 +1,4 @@
-// Package configs contains the logic to obtain app configuration from a file or the environment
+// Package config contains the logic to obtain app configuration from a file or the environment
 package configs
 
 import (
@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-//go:embed vogo.toml
+//go:embed vogo-server.toml
 var defaultConfigFile []byte
 
 // InitConfig initializes the app config with Viper from the environment, a specified file, or a default file.
@@ -24,11 +24,11 @@ func InitConfig(file string) {
 	if file == "" {
 		panic("dev error, InitConfig should always be passed a valid config filepath")
 	}
-	viper.SetConfigName("vogo")
+	viper.SetConfigName("vogo-server")
 	viper.SetConfigType("toml")
 
 	// allow env vars to override config file
-	viper.SetEnvPrefix("vogo")
+	viper.SetEnvPrefix("vogo-server")
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	viper.AutomaticEnv()
 	viper.SetConfigFile(file)
@@ -51,6 +51,14 @@ func InitConfig(file string) {
 	}
 }
 
+// func getConfigDir() string {
+// 	appConfigDir := filepath.Join(xdg.ConfigHome, "vogo-server")
+// 	if err := os.MkdirAll(appConfigDir, 0o750); err != nil {
+// 		log.Fatalf("Error creating application config file at this location: %s", appConfigDir)
+// 	}
+// 	return appConfigDir
+// }
+
 // GetConfigDir obtains the configuration directory in a cross-platform manner,
 // always respecting the XDG_CONFIG_HOME env var, using standard defaults on all OS's,
 // but overriding to ~/.config on macOS
@@ -71,27 +79,3 @@ func GetConfigDir() string {
 	}
 	return appConfigDir
 }
-
-// PersistCredentialsToConfig updates the vogo config file with the username
-// given by the server and the entered password (plaintext)
-// TODO: this may be used in the future to update the config file
-// func PersistCredentialsToConfig(filename, username, friendCode string) error {
-// 	var config map[string]any
-
-// 	data, err := os.ReadFile(filename)
-// 	if err != nil {
-// 		return errors.New("config file not found! developer error")
-// 	}
-
-// 	// loads entire config
-// 	toml.Unmarshal(data, &config)
-// 	config["username"] = username
-// 	config["friend-code"] = friendCode
-
-// 	data, err = toml.Marshal(config)
-// 	if err != nil {
-// 		return fmt.Errorf("marshaling error: %w", err)
-// 	}
-
-// 	return os.WriteFile(filename, data, 0644)
-// }
