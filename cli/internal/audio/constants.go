@@ -14,9 +14,6 @@ const (
 	AudioFormat = malgo.FormatS16
 
 	frameDuration = 20 * time.Millisecond
-	frameSizeMs   = 20 // if you don't know, go with 60 ms.
-
-	// determines size of pcmBuffer
+	frameSizeMs   = 20
 	frameSize     = NumChannels * frameSizeMs * (SampleRate / 1000)
-	bytesPerFrame = frameSize * int(AudioFormat)
 )

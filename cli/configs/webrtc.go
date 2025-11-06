@@ -13,14 +13,7 @@ var OpusCodecCapability = webrtc.RTPCodecCapability{
 	RTCPFeedback: nil,
 }
 
-// TODO : call this to get rid of packetio errors
-// // SetReceiveMTU sets the size of read buffer that copies incoming packets. This is optional.
-// Leave this 0 for the default receiveMTU
-// func (e *SettingEngine) SetReceiveMTU(receiveMTU uint) {
-// e.receiveMTU = receiveMTU
-// }
 func NewWebRTC() *webrtc.API {
-	// Create a MediaEngine object and configure the supported codec
 	mediaEngine := &webrtc.MediaEngine{}
 	codecParams := webrtc.RTPCodecParameters{
 		RTPCodecCapability: OpusCodecCapability,
@@ -36,12 +29,11 @@ func NewWebRTC() *webrtc.API {
 	// for each PeerConnection.
 	// interceptorRegistry := &interceptor.Registry{}
 
-	// Register a intervalpli factory
-	// intervalPliFactory, err := intervalpli.NewReceiverInterceptor()
+	// jitterBufferFactory, err := jitterbuffer.NewInterceptor()
 	// if err != nil {
 	// 	panic(err)
 	// }
-	// interceptorRegistry.Add(intervalPliFactory)
+	// interceptorRegistry.Add(jitterBufferFactory)
 
 	// Use the default set of Interceptors
 	// if err = webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
@@ -50,7 +42,7 @@ func NewWebRTC() *webrtc.API {
 
 	// not sure if this should be avoided but this prevents packet size overruns
 	settingEngine := webrtc.SettingEngine{}
-	settingEngine.SetReceiveMTU(4_000)
+	settingEngine.SetReceiveMTU(3_000)
 
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(mediaEngine),

@@ -2,7 +2,6 @@ package audio
 
 import (
 	"encoding/binary"
-	"fmt"
 	"io"
 	"log"
 
@@ -10,6 +9,32 @@ import (
 	"github.com/pion/webrtc/v4"
 	"gopkg.in/hraban/opus.v2"
 )
+
+type PlaybackBuffer struct {
+	buf,
+	decodeBuf []int16
+	samplesDecoded int
+}
+
+// WritePCM moves PCM data from pb.decodeBuf into the main pb.buf and keeps track of
+// the number of samples written. It should be called after decoded PCM has been placed into
+// pb.decodeBuf by libopus (this overwrites old data in pb.decodeBuf).
+func (pb *PlaybackBuffer) WritePCM(numSamples int) {
+	pb.buf = append(pb.buf, pb.decodeBuf[:numSamples]...)
+	pb.samplesDecoded += numSamples
+}
+
+// Flush writes all samples buffered in the pb to the pcm buffer and resets the state.
+func (pb *PlaybackBuffer) Flush(pcm *AudioBuffer) (decoded int) {
+	pcm.mu.Lock()
+	decoded = pb.samplesDecoded
+	pcm.data = append(pcm.data, pb.buf[:pb.samplesDecoded]...)
+	pcm.mu.Unlock()
+
+	pb.buf = pb.buf[pb.samplesDecoded:]
+	pb.samplesDecoded = 0
+	return
+}
 
 func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.Device) {
 	// configure playback device
@@ -20,15 +45,14 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 	deviceConfig.Playback.Channels = NumChannels
 	deviceConfig.SampleRate = SampleRate
 	deviceConfig.Alsa.NoMMap = 1
+	deviceConfig.PeriodSizeInMilliseconds = 20
 
 	// Buffer for decoded audio
 	var pcm AudioBuffer
-	// playbackBuffer := NewRingBuffer(rbCapacity)
 
 	sizeInBytes := uint32(malgo.SampleSizeInBytes(AudioFormat))
-	fmt.Println("PLAYBACK SIZE IN BYTES: ", sizeInBytes)
 
-	// read into output sample, for output to speaker device. this fires every X milliseconds
+	// read into output sample buf, for output to speaker device. this fires every X milliseconds
 	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
 		samplesToRead := framecount * deviceConfig.Playback.Channels * sizeInBytes
 		pcm.mu.Lock()
@@ -42,7 +66,7 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 		// write a full sample to the speaker buffer
 		copy(pOutputSample, int16ToBytes(pcm.data[:samplesToRead]))
 		pcm.data = pcm.data[samplesToRead:] // TODO: probably leaks
-		log.Print(" p", samplesToRead)
+		log.Print(" p", samplesToRead, "samples remaining: ", len(pcm.data))
 	}
 
 	// init playback device
@@ -59,34 +83,37 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 		panic(decErr)
 	}
 
+	pb := PlaybackBuffer{
+		buf:       make([]int16, int(frameSize)*3),
+		decodeBuf: make([]int16, frameSize),
+	}
+
+	// this is where the decoder writes pcm, and what we use to write to the playback buffer
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		// this is where the decoder writes pcm, and what we use to write to the playback buffer
-
-		// TODO: pull out and reuse
-		pcmBuffer := make([]int16, int(frameSize)*4)
-
 		for { // Read RTP packets
+			// track.SetReadDeadline(time.Now().Add(1*time.Second))
 			packet, _, readErr := track.ReadRTP()
 			if readErr != nil {
 				if readErr == io.EOF {
 					break // Track closed, exit loop
 				}
 				log.Println("packet read err: ", readErr)
+				// TODO: check if context is cancelled, break if so
 				continue // Temporary error, keep trying
 			}
 
-			bytesDecoded, decodeErr := decoder.Decode(packet.Payload, pcmBuffer)
+			numSamples, decodeErr := decoder.Decode(packet.Payload, pb.decodeBuf)
 			if decodeErr != nil {
 				log.Println("DECODE ERROR: ", decodeErr.Error())
 				continue
 			}
+			pb.WritePCM(numSamples)
 
-			// Write decoded PCM to ring buffer
-			// Malgo will pull from this buffer to play
-			pcm.mu.Lock()
-			pcm.data = append(pcm.data, pcmBuffer[:bytesDecoded]...)
-			pcm.mu.Unlock()
-			log.Print(" r", bytesDecoded)
+			// if pb.samplesDecoded <= 1000 {
+			// continue
+			// }
+			n := pb.Flush(&pcm)
+			log.Print(" r", n)
 
 			// TODO: could use bytes decoded to know how much to read into the playback device
 		}

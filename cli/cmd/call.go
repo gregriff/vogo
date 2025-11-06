@@ -91,10 +91,10 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		panic(tErr)
 	}
 
-	playbackCtx, device := audio.SetupPlayback(pc)
-	defer playbackCtx.Uninit()
-	defer playbackCtx.Free()
-	defer device.Uninit()
+	// playbackCtx, device := audio.SetupPlayback(pc)
+	// defer playbackCtx.Uninit()
+	// defer playbackCtx.Free()
+	// defer device.Uninit()
 
 	pc.OnICECandidate(internal.OnICECandidate)
 
