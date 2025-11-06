@@ -48,12 +48,11 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 	}
 	device.Start()
 
+	pcmBuffer := make([]int16, pcmBufferSize)
 	decoder, decErr := opus.NewDecoder(SampleRate, NumChannels)
 	if decErr != nil {
 		panic(decErr)
 	}
-
-	pcmBuffer := make([]int16, int(frameSize)*4)
 
 	// this is where the decoder writes pcm from the network
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
@@ -80,7 +79,6 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 			pcm.mu.Lock()
 			pcm.data = append(pcm.data, pcmBuffer[:framesDecoded]...)
 			pcm.mu.Unlock()
-			// log.Print(" r", framesDecoded)
 		}
 	})
 	return ctx, device

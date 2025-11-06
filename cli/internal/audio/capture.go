@@ -13,7 +13,7 @@ import (
 	"gopkg.in/hraban/opus.v2"
 )
 
-// AudioBuffer is a shared buffer that is written to from the network and read from by malgo for playback
+// AudioBuffer is a shared buffer that is written to/from the network and read/written by malgo for playback
 type AudioBuffer struct {
 	mu   sync.Mutex
 	data []int16
@@ -56,15 +56,14 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 		panic(startErr)
 	}
 
+	opusBuffer := make([]byte, opusBufferSize)
 	encoder, encErr := opus.NewEncoder(SampleRate, NumChannels, opus.AppVoIP)
 	if encErr != nil {
 		panic(encErr)
 	}
-	// encoder.SetBitrate(144_000)
-	// bitrate, _ := encoder.Bitrate()
 	// complexity, _ := encoder.Complexity()
-	// fmt.Printf("Encoder: bitrate: %d, complexity: %d\n", bitrate, complexity)
 
+	// TODO: shorten this?
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
 
@@ -87,11 +86,8 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 		pcm.data = pcm.data[frameSize:] // TODO: this may leak
 		pcm.mu.Unlock()
 
-		// place to write encoded opus for packet
-		data := make([]byte, 1000) // TODO: reuse and reslice
-
 		// encode to opus
-		bytesEncoded, err := encoder.Encode(frameData, data)
+		bytesEncoded, err := encoder.Encode(frameData, opusBuffer)
 		if err != nil {
 			log.Println("OPUS ENCODE ERROR:", err)
 			continue
@@ -99,7 +95,7 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 
 		// write to webrtc track
 		wErr := track.WriteSample(media.Sample{
-			Data:     data[:bytesEncoded], // only the first N bytes are opus data.
+			Data:     opusBuffer[:bytesEncoded], // only the first N bytes are opus data.
 			Duration: frameDuration,
 		})
 		if wErr != nil {
