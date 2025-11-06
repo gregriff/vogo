@@ -3,6 +3,7 @@ package audio
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -62,7 +63,9 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 		panic(encErr)
 	}
 	// complexity, _ := encoder.Complexity()
+	bitrate, _ := encoder.Bitrate()
 	// encoder.SetInBandFEC(true)  // adds latency, probably use PLC
+	fmt.Println("Bitrate: ", bitrate)
 
 	// TODO: shorten this?
 	ticker := time.NewTicker(frameDuration)

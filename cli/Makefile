@@ -1,6 +1,6 @@
 
 build:
-	go build -o ../bin/vogo main.go
+	go build -tags nolibopusfile -o -o ../bin/vogo main.go
 
 # testing
 CALLER_NAME=greg
