@@ -68,6 +68,7 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 				continue // Temporary error, keep trying
 			}
 
+			// TODO: check for 0 samples decoded and call PLC?
 			samplesDecoded, decodeErr := decoder.Decode(packet.Payload, pcmBuffer)
 			if decodeErr != nil {
 				log.Println("DECODE ERROR: ", decodeErr.Error())

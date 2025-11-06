@@ -62,6 +62,7 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 		panic(encErr)
 	}
 	// complexity, _ := encoder.Complexity()
+	// encoder.SetInBandFEC(true)  // adds latency, probably use PLC
 
 	// TODO: shorten this?
 	ticker := time.NewTicker(frameDuration)
