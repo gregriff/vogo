@@ -50,11 +50,9 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 	// Buffer for decoded audio
 	var pcm AudioBuffer
 
-	sizeInBytes := uint32(malgo.SampleSizeInBytes(AudioFormat))
-
 	// read into output sample buf, for output to speaker device. this fires every X milliseconds
 	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
-		samplesToRead := framecount * deviceConfig.Playback.Channels * sizeInBytes
+		samplesToRead := framecount * deviceConfig.Playback.Channels
 		pcm.mu.Lock()
 		defer pcm.mu.Unlock()
 
@@ -92,6 +90,7 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 
 	// this is where the decoder writes pcm, and what we use to write to the playback buffer
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		// device.Start()
 		for { // Read RTP packets
 			// track.SetReadDeadline(time.Now().Add(1*time.Second))
 			packet, _, readErr := track.ReadRTP()
