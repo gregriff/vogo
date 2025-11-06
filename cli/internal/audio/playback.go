@@ -44,8 +44,8 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 	deviceConfig.Playback.Format = AudioFormat
 	deviceConfig.Playback.Channels = NumChannels
 	deviceConfig.SampleRate = SampleRate
-	deviceConfig.Alsa.NoMMap = 1
-	deviceConfig.PeriodSizeInMilliseconds = 20
+	// deviceConfig.Alsa.NoMMap = 1
+	deviceConfig.PeriodSizeInMilliseconds = frameSizeMs
 
 	// Buffer for decoded audio
 	var pcm AudioBuffer
@@ -60,13 +60,15 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 
 		// if there isn't yet a full sample in the pcmBuffer sent from the network
 		if len(pcm.data) < int(samplesToRead) {
+			log.Printf("empty, need=%ds, psiM=%d, framecount=%d",
+				samplesToRead, deviceConfig.PeriodSizeInMilliseconds, framecount)
 			return
 		}
 
 		// write a full sample to the speaker buffer
 		copy(pOutputSample, int16ToBytes(pcm.data[:samplesToRead]))
 		pcm.data = pcm.data[samplesToRead:] // TODO: probably leaks
-		log.Print(" p", samplesToRead, "samples remaining: ", len(pcm.data))
+		log.Printf(" p=%d, samplesRemaining=%d", samplesToRead, len(pcm.data)/int(deviceConfig.Playback.Channels))
 	}
 
 	// init playback device

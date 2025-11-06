@@ -32,18 +32,21 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	deviceConfig.Capture.Format = AudioFormat
 	deviceConfig.Capture.Channels = NumChannels
 	deviceConfig.SampleRate = SampleRate
-	// deviceConfig.PeriodSizeInMilliseconds = 10
-	deviceConfig.Alsa.NoMMap = 1
+	// deviceConfig.PeriodSizeInMilliseconds = frameSizeMs
+	// deviceConfig.Alsa.NoMMap = 1
 
 	// for storing int16 PCM from the mic
 	var pcm AudioBuffer
 
+	sizeInBytes := uint32(malgo.SampleSizeInBytes(AudioFormat))
+
 	// read into capture buffer, to write to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
+		_ = framecount * deviceConfig.Capture.Channels * sizeInBytes
 		pcm.mu.Lock()
 		pcm.data = append(pcm.data, bytesToInt16(pInputSample)...)
 		pcm.mu.Unlock()
-		// log.Print("c", framecount)
+		// log.Print("c=", samplesToWrite)
 	}
 
 	// init playback device
