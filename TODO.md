@@ -1,6 +1,7 @@
 # TODOs
 
 ### Next:
+- fully impl cancel ctxs. parent ctx for top level funcs that cancel on ctrl C and child ctxs from this for all the devices?
 - remove/fix xdg config in client to match server
 - determine how friends should refer to eachother (include friend code?)
 - impl status cmd

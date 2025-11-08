@@ -72,39 +72,40 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	defer ticker.Stop()
 
 	// loop to encode buffered PCM into opus and send to network
-	for range ticker.C {
-		if ctx.Err() == context.Canceled {
-			break // stop recording and teardown mic context and device
-		}
-
-		pcm.mu.Lock()
-
-		// Need at least one frame worth of data
-		if len(pcm.data) < frameSize {
-			pcm.mu.Unlock()
-			continue // wait for more data
-		}
-
-		// Extract one frame and remove it from the buffer
-		frameData := pcm.data[:frameSize]
-		pcm.data = pcm.data[frameSize:] // TODO: this may leak
-		pcm.mu.Unlock()
-
-		// encode to opus
-		bytesEncoded, err := encoder.Encode(frameData, opusBuffer)
-		if err != nil {
-			log.Println("OPUS ENCODE ERROR:", err)
-			continue
-		}
-
-		// write to webrtc track
-		wErr := track.WriteSample(media.Sample{
-			Data:     opusBuffer[:bytesEncoded], // only the first N bytes are opus data.
-			Duration: frameDuration,
-		})
-		if wErr != nil {
-			log.Println("WriteSample error:", err)
+	for {
+		select {
+		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			pcm.mu.Lock()
+
+			// Need at least one frame worth of data
+			if len(pcm.data) < frameSize {
+				pcm.mu.Unlock()
+				continue // wait for more data
+			}
+
+			// Extract one frame and remove it from the buffer
+			frameData := pcm.data[:frameSize]
+			pcm.data = pcm.data[frameSize:] // TODO: this may leak
+			pcm.mu.Unlock()
+
+			// encode to opus
+			bytesEncoded, err := encoder.Encode(frameData, opusBuffer)
+			if err != nil {
+				log.Println("OPUS ENCODE ERROR:", err)
+				continue
+			}
+
+			// write to webrtc track
+			wErr := track.WriteSample(media.Sample{
+				Data:     opusBuffer[:bytesEncoded], // only the first N bytes are opus data.
+				Duration: frameDuration,
+			})
+			if wErr != nil {
+				log.Println("WriteSample error:", err)
+				return
+			}
 		}
 	}
 }

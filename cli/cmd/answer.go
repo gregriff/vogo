@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal"
@@ -57,9 +58,6 @@ func answerCall(_ *cobra.Command, _ []string) {
 		viper.GetString("servers.stun-origin"),
 		viper.GetString("caller")
 
-	// TODO:
-	// - define audio information
-
 	// var candidatesMux sync.Mutex
 	// pendingCandidates := make([]*webrtc.ICECandidate, 0)
 
@@ -92,27 +90,46 @@ func answerCall(_ *cobra.Command, _ []string) {
 		audioTrsv *webrtc.RTPTransceiver
 		tErr      error
 	)
-	if audioTrsv, tErr = pc.AddTransceiverFromKind(
+	audioTrsv, tErr = pc.AddTransceiverFromKind(
 		webrtc.RTPCodecTypeAudio,
 		webrtc.RTPTransceiverInit{
 			Direction: webrtc.RTPTransceiverDirectionSendrecv,
 		},
-	); tErr != nil {
+	)
+	if tErr != nil {
 		panic(tErr)
 	}
 
 	// setup microphone capture track
-	captureTrack, _ := webrtc.NewTrackLocalStaticSample(
+	captureTrack, trackErr := webrtc.NewTrackLocalStaticSample(
 		configs.OpusCodecCapability,
 		"captureTrack",
 		"captureTrack"+username,
 	)
+	if trackErr != nil {
+		panic(trackErr)
+	}
 	audioTrsv.Sender().ReplaceTrack(captureTrack)
 
-	playbackCtx, device := audio.SetupPlayback(pc)
-	defer playbackCtx.Uninit()
-	defer playbackCtx.Free()
-	defer device.Uninit()
+	playbackCtx, pCtxCancel := context.WithCancel(context.Background())
+	defer pCtxCancel()
+	playbackMalgoCtx, device := audio.SetupPlayback(playbackCtx, pc)
+
+	// this func tearsdown the playback malgo device.
+	// TODO: wait until the playback context is cancelled
+	defer func() {
+		// this signals to audio.SetupPlayback to stop playback
+		pCtxCancel()
+		time.Sleep(audio.ReadPacketDeadline * 2)
+
+		// audio.SetupPlayback should have returned by now
+		teardownErr := playbackMalgoCtx.Uninit()
+		if teardownErr != nil {
+			log.Printf("teardown err: %v", teardownErr)
+		}
+		playbackMalgoCtx.Free()
+		device.Uninit()
+	}()
 
 	pc.OnICECandidate(internal.OnICECandidate)
 
@@ -149,8 +166,7 @@ func answerCall(_ *cobra.Command, _ []string) {
 	<-webrtc.GatheringCompletePromise(pc)
 	log.Println("waiting completed")
 
-	localDescription := *pc.LocalDescription()
-	signaling.PostAnswer(*sigClient, caller, localDescription)
+	signaling.PostAnswer(*sigClient, caller, *pc.LocalDescription())
 
 	// TODO: the above should run in a goroutine with a context and
 	// signal to the below that the ansewr has been completed.
@@ -163,10 +179,10 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// )
 	// audioTrsv.Sender().ReplaceTrack(captureTrack)
 
-	captureCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	captureCtx, cCtxCancel := context.WithCancel(context.Background())
+	defer cCtxCancel() // takes ~20ms for capture to stop after this is called
 
-	// setup mic and capture indefinitely
+	// setup mic and capture until the above cancel func is run
 	go func() {
 		audio.StartCapture(captureCtx, pc, captureTrack)
 	}()

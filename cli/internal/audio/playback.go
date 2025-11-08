@@ -1,18 +1,23 @@
 package audio
 
 import (
+	"context"
 	"encoding/binary"
 	"io"
 	"log"
+	"time"
 
 	"github.com/gen2brain/malgo"
 	"github.com/pion/webrtc/v4"
 	"gopkg.in/hraban/opus.v2"
 )
 
-func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.Device) {
+func SetupPlayback(ctx context.Context, pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.Device) {
 	// configure playback device
-	ctx, _ := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	malgoCtx, initErr := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	if initErr != nil {
+		panic(initErr)
+	}
 
 	deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
 	deviceConfig.Playback.Format = AudioFormat
@@ -40,7 +45,7 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 	}
 
 	// init playback device
-	device, deviceErr := malgo.InitDevice(ctx.Context, deviceConfig, malgo.DeviceCallbacks{
+	device, deviceErr := malgo.InitDevice(malgoCtx.Context, deviceConfig, malgo.DeviceCallbacks{
 		Data: onSendFrames,
 	})
 	if deviceErr != nil {
@@ -57,14 +62,17 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 	// this is where the decoder writes pcm from the network
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		for { // Read RTP packets
-			// track.SetReadDeadline(time.Now().Add(1*time.Second))
+			track.SetReadDeadline(time.Now().Add(ReadPacketDeadline))
 			packet, _, readErr := track.ReadRTP()
 			if readErr != nil {
 				if readErr == io.EOF {
 					break // Track closed, exit loop
 				}
-				log.Println("packet read err: ", readErr)
+				log.Println("PACKET READ ERR: ", readErr)
 				// TODO: check if context is cancelled, break if so
+				if ctx.Err() == context.Canceled {
+					break // stop playback and stop reading packets
+				}
 				continue // Temporary error, keep trying
 			}
 
@@ -82,7 +90,7 @@ func SetupPlayback(pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.D
 			pcm.mu.Unlock()
 		}
 	})
-	return ctx, device
+	return malgoCtx, device
 }
 
 // int16ToBytes converts an int16 slice to a byte slice of PCM audio. TODO: can be reimpl with unsafe

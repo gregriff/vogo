@@ -82,12 +82,13 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		audioTrsv *webrtc.RTPTransceiver
 		tErr      error
 	)
-	if audioTrsv, tErr = pc.AddTransceiverFromKind(
+	audioTrsv, tErr = pc.AddTransceiverFromKind(
 		webrtc.RTPCodecTypeAudio,
 		webrtc.RTPTransceiverInit{
 			Direction: webrtc.RTPTransceiverDirectionSendrecv,
 		},
-	); tErr != nil {
+	)
+	if tErr != nil {
 		panic(tErr)
 	}
 
@@ -95,6 +96,21 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	// defer playbackCtx.Uninit()
 	// defer playbackCtx.Free()
 	// defer device.Uninit()
+	//
+	// playbackCtx, pCtxCancel := context.WithCancel(context.Background())
+	// defer pCtxCancel()
+	// playbackMalgoCtx, device := audio.SetupPlayback(playbackCtx, pc)
+
+	// // this func tearsdown the playback malgo device.
+	// // TODO: wait until the playback context is cancelled
+	// defer func() {
+	// 	teardownErr := playbackMalgoCtx.Uninit()
+	// 	if teardownErr != nil {
+	// 		log.Printf("teardown err: %v", teardownErr)
+	// 	}
+	// 	playbackMalgoCtx.Free()
+	// 	device.Uninit()
+	// }()
 
 	pc.OnICECandidate(internal.OnICECandidate)
 
@@ -122,8 +138,8 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	<-webrtc.GatheringCompletePromise(pc)
 	log.Println("waiting completed")
 
-	captureCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	captureCtx, cCtxCancel := context.WithCancel(context.Background())
+	defer cCtxCancel()
 
 	// handle signalling and on success init microphone capture
 	go func() {
