@@ -1,18 +1,20 @@
 package audio
 
 import (
-	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"log"
-	"time"
+	"sync"
 
 	"github.com/gen2brain/malgo"
 	"github.com/pion/webrtc/v4"
 	"gopkg.in/hraban/opus.v2"
 )
 
-func SetupPlayback(ctx context.Context, pc *webrtc.PeerConnection) (*malgo.AllocatedContext, *malgo.Device) {
+// SetupPlayback initializes the playback device with malgo, and defines the callback that is run per remote-track, that
+// reads the audio from the network and places it in the buffer for the playback device to read from
+func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (*malgo.AllocatedContext, *malgo.Device) {
 	// configure playback device
 	malgoCtx, initErr := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if initErr != nil {
@@ -59,20 +61,21 @@ func SetupPlayback(ctx context.Context, pc *webrtc.PeerConnection) (*malgo.Alloc
 		panic(decErr)
 	}
 
+	// this func runs for every remote track connected to this peer connection
 	// this is where the decoder writes pcm from the network
+	// note: realize that this code will run multiple times if more than one remote track is connected (multi-user voice chat)
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		for { // Read RTP packets
-			track.SetReadDeadline(time.Now().Add(ReadPacketDeadline))
+		wg.Add(1)
+		defer wg.Done()
+		for {
+			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
 			packet, _, readErr := track.ReadRTP()
 			if readErr != nil {
 				if readErr == io.EOF {
-					break // Track closed, exit loop
+					fmt.Println("read EOF")
+					return // Track closed, exit loop
 				}
 				log.Println("PACKET READ ERR: ", readErr)
-				// TODO: check if context is cancelled, break if so
-				if ctx.Err() == context.Canceled {
-					break // stop playback and stop reading packets
-				}
 				continue // Temporary error, keep trying
 			}
 

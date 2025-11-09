@@ -72,9 +72,9 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		panic(err)
 	}
 	defer func() {
-		log.Println("closing peer connection")
+		log.Println("forcing close of caller connection")
 		if cErr := pc.Close(); cErr != nil {
-			fmt.Printf("cannot close peerConnection: %v\n", cErr)
+			fmt.Printf("cannot forcefully close caller connection: %v\n", cErr)
 		}
 	}()
 
@@ -178,7 +178,4 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 	// block until ctrl C
 	<-sigChan
-
-	// all contexts defined above should now have their cancel funcs run
-	// NOTE: AudioRecieverStats{} implements a jitterbuffer...
 }

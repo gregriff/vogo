@@ -26,8 +26,4 @@ const (
 
 	// size of buffer to hold decoded PCM from the network
 	pcmBufferSize = frameSize
-
-	// time until a packet read is aborted, and the parent context is checked to see whether
-	// to shutdown and teardown playback device
-	ReadPacketDeadline = 250 * time.Millisecond
 )

@@ -11,6 +11,7 @@
 ### Polish before release
 - ensure simd is enabled
 - profile cpu and mem
+- 192k bitrate?
 - enable caller playback!
 
 

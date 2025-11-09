@@ -26,8 +26,12 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	if initErr != nil {
 		panic(initErr)
 	}
-	defer deviceCtx.Uninit()
-	defer deviceCtx.Free()
+	defer func() {
+		if uErr := deviceCtx.Uninit(); uErr != nil {
+			fmt.Printf("error uninitializing capture device context: %v", uErr)
+		}
+		deviceCtx.Free()
+	}()
 
 	deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
 	deviceConfig.Capture.Format = AudioFormat

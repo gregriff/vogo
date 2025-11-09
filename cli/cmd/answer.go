@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
-	"time"
 
 	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal"
@@ -76,9 +76,9 @@ func answerCall(_ *cobra.Command, _ []string) {
 		panic(createErr)
 	}
 	defer func() {
-		log.Println("closing answerer connection")
+		fmt.Println("forcing close of answerer connection")
 		if cErr := pc.Close(); cErr != nil {
-			fmt.Printf("cannot close peerConnection: %v\n", cErr)
+			fmt.Printf("cannot forcefully close answerer connection: %v\n", cErr)
 		}
 	}()
 
@@ -111,21 +111,22 @@ func answerCall(_ *cobra.Command, _ []string) {
 	}
 	audioTrsv.Sender().ReplaceTrack(captureTrack)
 
-	playbackCtx, pCtxCancel := context.WithCancel(context.Background())
-	defer pCtxCancel()
-	playbackMalgoCtx, device := audio.SetupPlayback(playbackCtx, pc)
+	var playbackWg sync.WaitGroup
+	playbackMalgoCtx, device := audio.SetupPlayback(pc, &playbackWg)
+	// TODO: use recover() on this ^, then call wg.Done() to ensure teardown never blocks
 
 	// this func tearsdown the playback malgo device.
-	// TODO: wait until the playback context is cancelled
 	defer func() {
-		// this signals to audio.SetupPlayback to stop playback
-		pCtxCancel()
-		time.Sleep(audio.ReadPacketDeadline * 2)
+		// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
+		fmt.Println("gracefully closing answerer connection")
+		if gcErr := pc.GracefulClose(); gcErr != nil {
+			fmt.Printf("cannot gracefully close answerer connection: %v\n", gcErr)
+		}
+		playbackWg.Wait()
 
-		// audio.SetupPlayback should have returned by now
 		teardownErr := playbackMalgoCtx.Uninit()
 		if teardownErr != nil {
-			log.Printf("teardown err: %v", teardownErr)
+			log.Printf("err uninitializing playback device context: %v", teardownErr)
 		}
 		playbackMalgoCtx.Free()
 		device.Uninit()
