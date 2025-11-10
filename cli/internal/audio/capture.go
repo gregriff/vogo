@@ -31,6 +31,7 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 			fmt.Printf("error uninitializing capture device context: %v", uErr)
 		}
 		deviceCtx.Free()
+		fmt.Println("uninit and freed capture device")
 	}()
 
 	deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)

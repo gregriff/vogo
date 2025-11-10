@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/configs"
@@ -92,24 +93,26 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		panic(tErr)
 	}
 
-	// playbackCtx, device := audio.SetupPlayback(pc)
-	// defer playbackCtx.Uninit()
-	// defer playbackCtx.Free()
-	// defer device.Uninit()
-	//
-	// playbackCtx, pCtxCancel := context.WithCancel(context.Background())
-	// defer pCtxCancel()
-	// playbackMalgoCtx, device := audio.SetupPlayback(playbackCtx, pc)
+	// var playbackWg sync.WaitGroup
+	// playbackMalgoCtx, device := audio.SetupPlayback(pc, &playbackWg)
+	// // TODO: use recover() on this ^, then call wg.Done() to ensure teardown never blocks
 
 	// // this func tearsdown the playback malgo device.
-	// // TODO: wait until the playback context is cancelled
 	// defer func() {
+	// 	// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
+	// 	fmt.Println("gracefully closing caller connection")
+	// 	if gcErr := pc.GracefulClose(); gcErr != nil {
+	// 		fmt.Printf("cannot gracefully close caller connection: %v\n", gcErr)
+	// 	}
+	// 	playbackWg.Wait()
+
 	// 	teardownErr := playbackMalgoCtx.Uninit()
 	// 	if teardownErr != nil {
-	// 		log.Printf("teardown err: %v", teardownErr)
+	// 		log.Printf("err uninitializing playback device context: %v", teardownErr)
 	// 	}
 	// 	playbackMalgoCtx.Free()
 	// 	device.Uninit()
+	// 	fmt.Println("uninit and freed playback device")
 	// }()
 
 	pc.OnICECandidate(internal.OnICECandidate)
@@ -140,9 +143,11 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 	captureCtx, cCtxCancel := context.WithCancel(context.Background())
 	defer cCtxCancel()
+	var captureWaitGroup sync.WaitGroup
 
 	// handle signalling and on success init microphone capture
-	go func() {
+	// setup microphone and capture until cancelled
+	captureWaitGroup.Go(func() {
 		sigClient := signaling.NewClient(vogoServer, username, password)
 		recipientSd, callErr := signaling.CallFriend(*sigClient, recipient, offer)
 		if callErr != nil {
@@ -164,10 +169,8 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			"captureTrack"+username,
 		)
 		audioTrsv.Sender().ReplaceTrack(captureTrack)
-
-		// setup microphone and capture until cancelled
 		audio.StartCapture(captureCtx, pc, captureTrack)
-	}()
+	})
 
 	// Block forever
 	log.Println("Sent offer, blocking until ctrl C")
@@ -178,4 +181,6 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 	// block until ctrl C
 	<-sigChan
+	cCtxCancel()
+	captureWaitGroup.Wait()
 }

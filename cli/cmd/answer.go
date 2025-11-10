@@ -130,6 +130,7 @@ func answerCall(_ *cobra.Command, _ []string) {
 		}
 		playbackMalgoCtx.Free()
 		device.Uninit()
+		fmt.Println("uninit and freed playback device")
 	}()
 
 	pc.OnICECandidate(internal.OnICECandidate)
@@ -182,11 +183,12 @@ func answerCall(_ *cobra.Command, _ []string) {
 
 	captureCtx, cCtxCancel := context.WithCancel(context.Background())
 	defer cCtxCancel() // takes ~20ms for capture to stop after this is called
+	var captureWaitGroup sync.WaitGroup
 
 	// setup mic and capture until the above cancel func is run
-	go func() {
+	captureWaitGroup.Go(func() {
 		audio.StartCapture(captureCtx, pc, captureTrack)
-	}()
+	})
 
 	// Block forever
 	log.Println("Answer complete, mic initalized, blocking until ctrl C")
@@ -197,6 +199,8 @@ func answerCall(_ *cobra.Command, _ []string) {
 
 	// block until ctrl C
 	<-sigChan
+	cCtxCancel()
+	captureWaitGroup.Wait()
 
 	// all contexts defined above should now have their cancel funcs run
 }
