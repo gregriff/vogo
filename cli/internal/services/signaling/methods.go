@@ -50,24 +50,26 @@ func CallFriend(client http.Client, friendName string, offer webrtc.SessionDescr
 	return &sd, nil
 }
 
-func GetCallerSd(client http.Client, callerName string) *webrtc.SessionDescription {
+func GetCallerSd(client http.Client, callerName string) (*webrtc.SessionDescription, error) {
 	res, err := client.Get(fmt.Sprintf("/caller/%s", callerName))
 	if err != nil {
-		log.Fatalf("request to get caller information failed: %v", err)
+		return nil, fmt.Errorf("request to get caller information failed: %w", err)
 	}
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
 	log.Printf("Recieved /caller response: %s", res.Status)
 	if res.StatusCode != 200 {
-		log.Fatalf("failed to get caller from server: %s", res.Status)
+		return nil, fmt.Errorf("failed to get caller from server: %s", res.Status)
 	}
 
 	// this needs to be the callers Sd
 	callerSd := webrtc.SessionDescription{}
 	if err = json.NewDecoder(res.Body).Decode(&callerSd); err != nil {
-		panic(err)
+		return nil, fmt.Errorf("json decode error: %w", err)
 	}
-	_ = res.Body.Close()
-	return &callerSd
+	return &callerSd, nil
 }
 
 type AnswerRequest struct {
@@ -75,11 +77,11 @@ type AnswerRequest struct {
 	Sd         webrtc.SessionDescription
 }
 
-func PostAnswer(client http.Client, callerName string, localDescription webrtc.SessionDescription) {
+func PostAnswer(client http.Client, callerName string, localDescription webrtc.SessionDescription) error {
 	answerReq := AnswerRequest{CallerName: callerName, Sd: localDescription}
 	payload, err := json.Marshal(answerReq)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("json marshal error: %w", err)
 	}
 
 	log.Println("answerer actually posting answer to vogo server")
@@ -89,12 +91,16 @@ func PostAnswer(client http.Client, callerName string, localDescription webrtc.S
 		bytes.NewReader(payload),
 	)
 	if err != nil {
-		log.Fatalf("error posting answer: %v", err)
+		return fmt.Errorf("error posting answer: %w", err)
 	}
+	defer func() {
+		_ = res.Body.Close()
+	}()
+
 	if res.StatusCode != 200 {
-		log.Fatalf("failed to post answer: %s", res.Status)
+		return fmt.Errorf("failed to post answer: %s", res.Status)
 	}
 
 	log.Println("Answer was successful")
-	_ = res.Body.Close()
+	return nil
 }

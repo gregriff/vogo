@@ -20,52 +20,17 @@ type AudioBuffer struct {
 	data []int16
 }
 
-func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) {
-	// configure playback device
-	deviceCtx, initErr := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) error {
+	deviceCtx, device, pcm, initErr := initCaptureDevice()
+	defer teardownCaptureResources(deviceCtx, device)
 	if initErr != nil {
-		panic(initErr)
-	}
-	defer func() {
-		if uErr := deviceCtx.Uninit(); uErr != nil {
-			fmt.Printf("error uninitializing capture device context: %v", uErr)
-		}
-		deviceCtx.Free()
-		fmt.Println("uninit and freed capture device")
-	}()
-
-	deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
-	deviceConfig.Capture.Format = AudioFormat
-	deviceConfig.Capture.Channels = NumChannels
-	deviceConfig.SampleRate = SampleRate
-	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
-
-	// for storing int16 PCM from the mic
-	var pcm AudioBuffer
-
-	// read into capture buffer, to write to network. this fires every X milliseconds
-	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
-		pcm.mu.Lock()
-		pcm.data = append(pcm.data, bytesToInt16(pInputSample)...)
-		pcm.mu.Unlock()
-	}
-
-	// init playback device
-	device, deviceErr := malgo.InitDevice(deviceCtx.Context, deviceConfig, malgo.DeviceCallbacks{
-		Data: onRecvFrames,
-	})
-	if deviceErr != nil {
-		panic(deviceErr)
-	}
-	defer device.Uninit()
-	if startErr := device.Start(); startErr != nil {
-		panic(startErr)
+		return fmt.Errorf("error initalizing capture device: %w", initErr)
 	}
 
 	opusBuffer := make([]byte, opusBufferSize)
 	encoder, encErr := opus.NewEncoder(SampleRate, NumChannels, opus.AppVoIP)
 	if encErr != nil {
-		panic(encErr)
+		return fmt.Errorf("encoder error: %w", encErr)
 	}
 	// complexity, _ := encoder.Complexity()
 	bitrate, _ := encoder.Bitrate()
@@ -80,7 +45,7 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 			pcm.mu.Lock()
 
@@ -103,16 +68,53 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 			}
 
 			// write to webrtc track
-			wErr := track.WriteSample(media.Sample{
+			failedPeers := track.WriteSample(media.Sample{
 				Data:     opusBuffer[:bytesEncoded], // only the first N bytes are opus data.
 				Duration: frameDuration,
 			})
-			if wErr != nil {
-				log.Println("WriteSample error:", err)
-				return
+			if failedPeers != nil {
+				log.Println("WriteSample error, contains failed peers:", err)
+				continue
 			}
 		}
 	}
+}
+
+func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm *AudioBuffer, err error) {
+	// configure playback device
+	ctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	if err != nil {
+		err = fmt.Errorf("error initializing device context: %w", err)
+		return
+	}
+
+	deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
+	deviceConfig.Capture.Format = AudioFormat
+	deviceConfig.Capture.Channels = NumChannels
+	deviceConfig.SampleRate = SampleRate
+	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
+
+	pcm = &AudioBuffer{}
+
+	// read into capture buffer, to write to network. this fires every X milliseconds
+	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
+		pcm.mu.Lock()
+		pcm.data = append(pcm.data, bytesToInt16(pInputSample)...)
+		pcm.mu.Unlock()
+	}
+
+	// init playback device
+	device, err = malgo.InitDevice(ctx.Context, deviceConfig, malgo.DeviceCallbacks{
+		Data: onRecvFrames,
+	})
+	if err != nil {
+		err = fmt.Errorf("error creating capture device: %w", err)
+		return
+	}
+	if err := device.Start(); err != nil {
+		err = fmt.Errorf("error starting capture device: %w", err)
+	}
+	return
 }
 
 // bytesToInt16 turns a byte slice of PCM audio into an int16 slice for the opus encoder to use.

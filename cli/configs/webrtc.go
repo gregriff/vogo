@@ -1,6 +1,8 @@
 package configs
 
 import (
+	"fmt"
+
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/pion/webrtc/v4"
 )
@@ -13,14 +15,14 @@ var OpusCodecCapability = webrtc.RTPCodecCapability{
 	RTCPFeedback: nil,
 }
 
-func NewWebRTC() *webrtc.API {
+func NewPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 	mediaEngine := &webrtc.MediaEngine{}
 	codecParams := webrtc.RTPCodecParameters{
 		RTPCodecCapability: OpusCodecCapability,
 		PayloadType:        111, // should this be negotiated and not hard coded?
 	}
 	if err := mediaEngine.RegisterCodec(codecParams, webrtc.RTPCodecTypeAudio); err != nil {
-		panic(err)
+		return nil, fmt.Errorf("error registering codec: %w", err)
 	}
 
 	// Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
@@ -48,5 +50,12 @@ func NewWebRTC() *webrtc.API {
 		webrtc.WithMediaEngine(mediaEngine),
 		webrtc.WithSettingEngine(settingEngine),
 	)
-	return api
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{stunServer},
+			},
+		},
+	}
+	return api.NewPeerConnection(config)
 }

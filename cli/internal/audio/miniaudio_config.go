@@ -1,5 +1,6 @@
 package audio
 
+// these cgo flags disable all miniaudio subsystems that will not be used
 // https://miniaud.io/docs/manual/index.html#Building
 // -DMA_DEBUG_OUTPUT
 

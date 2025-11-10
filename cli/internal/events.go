@@ -3,7 +3,6 @@ package internal
 import (
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/pion/webrtc/v4"
 )
@@ -26,13 +25,8 @@ func OnConnectionStateChange(state webrtc.PeerConnectionState) {
 		// It may be reconnected using an ICE Restart.
 		// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
 		// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-		fmt.Println("Peer Connection has gone to failed exiting")
-		os.Exit(0)
+		fmt.Println("Peer Connection has gone to failed")
+		// os.Exit(0)
 	}
-
-	if state == webrtc.PeerConnectionStateClosed {
-		// PeerConnection was explicitly closed. This usually happens from a DTLS CloseNotify
-		fmt.Println("Peer Connection has gone to closed exiting")
-		os.Exit(0)
-	}
+	// if PeerConnection was explicitly closed, this usually happens from a DTLS CloseNotify
 }

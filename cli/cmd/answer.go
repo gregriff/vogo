@@ -61,19 +61,11 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// var candidatesMux sync.Mutex
 	// pendingCandidates := make([]*webrtc.ICECandidate, 0)
 
-	api := configs.NewWebRTC()
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{stunServer},
-			},
-		},
-	}
-
 	log.Println("creating answerer connection")
-	pc, createErr := api.NewPeerConnection(config)
+	pc, createErr := configs.NewPeerConnection(stunServer)
 	if createErr != nil {
-		panic(createErr)
+		fmt.Printf("error creating peer connection %v", createErr)
+		return
 	}
 	defer func() {
 		fmt.Println("forcing close of answerer connection")
@@ -86,18 +78,15 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// 	panic(err)
 	// }
 
-	var (
-		audioTrsv *webrtc.RTPTransceiver
-		tErr      error
-	)
-	audioTrsv, tErr = pc.AddTransceiverFromKind(
+	audioTrsv, tErr := pc.AddTransceiverFromKind(
 		webrtc.RTPCodecTypeAudio,
 		webrtc.RTPTransceiverInit{
 			Direction: webrtc.RTPTransceiverDirectionSendrecv,
 		},
 	)
 	if tErr != nil {
-		panic(tErr)
+		fmt.Printf("error adding transceiver: %v", tErr)
+		return
 	}
 
 	// setup microphone capture track
@@ -107,31 +96,19 @@ func answerCall(_ *cobra.Command, _ []string) {
 		"captureTrack"+username,
 	)
 	if trackErr != nil {
-		panic(trackErr)
+		fmt.Printf("error initalizing capture track: %v", trackErr)
+		return
 	}
 	audioTrsv.Sender().ReplaceTrack(captureTrack)
 
 	var playbackWg sync.WaitGroup
-	playbackMalgoCtx, device := audio.SetupPlayback(pc, &playbackWg)
-	// TODO: use recover() on this ^, then call wg.Done() to ensure teardown never blocks
 
-	// this func tearsdown the playback malgo device.
-	defer func() {
-		// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
-		fmt.Println("gracefully closing answerer connection")
-		if gcErr := pc.GracefulClose(); gcErr != nil {
-			fmt.Printf("cannot gracefully close answerer connection: %v\n", gcErr)
-		}
-		playbackWg.Wait()
-
-		teardownErr := playbackMalgoCtx.Uninit()
-		if teardownErr != nil {
-			log.Printf("err uninitializing playback device context: %v", teardownErr)
-		}
-		playbackMalgoCtx.Free()
-		device.Uninit()
-		fmt.Println("uninit and freed playback device")
-	}()
+	playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
+	defer audio.TeardownPlaybackResources(pc, playbackCtx, device, &playbackWg)
+	if playbackErr != nil {
+		fmt.Printf("error initializing playback system: %v", playbackErr)
+		return
+	}
 
 	pc.OnICECandidate(internal.OnICECandidate)
 
@@ -142,24 +119,31 @@ func answerCall(_ *cobra.Command, _ []string) {
 	log.Println("getting caller SD from vogo server, caller Name: ", caller)
 	sigClient := signaling.NewClient(vogoServer, username, password)
 
-	callerSd := signaling.GetCallerSd(*sigClient, caller)
+	callerSd, sdErr := signaling.GetCallerSd(*sigClient, caller)
+	if sdErr != nil {
+		fmt.Printf("error getting callers session description: %v", sdErr)
+		return
+	}
 
 	log.Println("setting caller's remote description")
-	if err := pc.SetRemoteDescription(*callerSd); err != nil {
-		log.Fatalf("error setting callers remote description: %v", err)
+	if sdErr = pc.SetRemoteDescription(*callerSd); sdErr != nil {
+		fmt.Printf("error setting callers remote description: %v", sdErr)
+		return
 	}
 
 	log.Println("answerer creating answer")
 	answer, aErr := pc.CreateAnswer(nil)
 	if aErr != nil {
-		log.Fatalf("error creating answer: %v", aErr)
+		fmt.Printf("error creating answer: %v", aErr)
+		return
 	}
 
 	// Sets the LocalDescription, and starts our UDP listeners
 	log.Println("answerer setting localDescription and listening for UDP")
-	aErr = pc.SetLocalDescription(answer)
-	if aErr != nil {
-		log.Fatalf("error setting local description: %v", aErr)
+	ldErr := pc.SetLocalDescription(answer)
+	if ldErr != nil {
+		fmt.Printf("error setting local description: %v", ldErr)
+		return
 	}
 
 	// Create a channel to wait for gathering and Wait for gathering to finish
@@ -168,7 +152,11 @@ func answerCall(_ *cobra.Command, _ []string) {
 	<-webrtc.GatheringCompletePromise(pc)
 	log.Println("waiting completed")
 
-	signaling.PostAnswer(*sigClient, caller, *pc.LocalDescription())
+	answerErr := signaling.PostAnswer(*sigClient, caller, *pc.LocalDescription())
+	if answerErr != nil {
+		fmt.Printf("error while posting answer: %w", answerErr)
+		return
+	}
 
 	// TODO: the above should run in a goroutine with a context and
 	// signal to the below that the ansewr has been completed.
@@ -184,23 +172,30 @@ func answerCall(_ *cobra.Command, _ []string) {
 	captureCtx, cCtxCancel := context.WithCancel(context.Background())
 	defer cCtxCancel() // takes ~20ms for capture to stop after this is called
 	var captureWaitGroup sync.WaitGroup
+	errorChan := make(chan error, 1)
 
 	// setup mic and capture until the above cancel func is run
 	captureWaitGroup.Go(func() {
-		audio.StartCapture(captureCtx, pc, captureTrack)
+		captureErr := audio.StartCapture(captureCtx, pc, captureTrack)
+		if captureErr != nil {
+			errorChan <- fmt.Errorf("error with capture device: %v", captureErr)
+		}
 	})
 
 	// Block forever
 	log.Println("Answer complete, mic initalized, blocking until ctrl C")
 
-	// TODO: tie this to the context of the peer connection
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// block until ctrl C
-	<-sigChan
+	// block until ctrl C or an error in capture goroutine
+	select {
+	case err := <-errorChan:
+		fmt.Println(err)
+		break
+	case <-sigChan:
+		break
+	}
 	cCtxCancel()
 	captureWaitGroup.Wait()
-
-	// all contexts defined above should now have their cancel funcs run
 }
