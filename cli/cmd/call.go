@@ -129,23 +129,24 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	<-webrtc.GatheringCompletePromise(pc)
 	log.Println("waiting completed")
 
-	// TODO: could tie this to ICE candidate context? if calling needs to happen in parallel
-	callCtx, cancelCall := context.WithCancel(sigCtx)
-	captureCtx, cancelCapture := context.WithCancel(sigCtx)
-	var captureWaitGroup sync.WaitGroup
-	defer func() { // wait for capture device teardown
-		cancelCapture()
-		cancelCall()
-		captureWaitGroup.Wait()
-	}()
+	// notifies microphone capture goroutine to begin capture
+	callAnswered := make(chan struct{}, 1)
+
+	// sending an error on this channel will abort the call process
 	errorChan := make(chan error, 1)
 
-	// handle signalling and on success init microphone capture
-	// setup microphone and capture until cancelled
-	captureWaitGroup.Go(func() {
+	// TODO: could tie this to ICE candidate context? if calling needs to happen in parallel
+	var callWg sync.WaitGroup
+	callCtx, cancelCall := context.WithCancel(sigCtx)
+	defer func() {
+		cancelCall()
+		callWg.Wait()
+	}()
+
+	callWg.Go(func() {
+		defer cancelCall()
 		sigClient := signaling.NewClient(vogoServer, username, password)
 		recipientSd, callErr := signaling.CallFriend(callCtx, *sigClient, recipient, offer)
-		cancelCall()
 		if callErr != nil {
 			errorChan <- fmt.Errorf("error while calling: %w", callErr)
 			return
@@ -156,17 +157,30 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			errorChan <- fmt.Errorf("error while setting remote description: %w", sdpErr)
 			return
 		}
+		close(callAnswered)
+	})
 
-		// TODO: the above should run in a seperate goroutine as the stuff below and should
-		// signal to the below that the ansewr has been recieved.
+	var captureWg sync.WaitGroup
+	captureCtx, cancelCapture := context.WithCancel(sigCtx)
+	defer func() {
+		cancelCapture()
+		captureWg.Wait()
+	}()
 
-		captureErr := audio.StartCapture(captureCtx, pc, captureTrack)
-		if captureErr != nil {
-			errorChan <- fmt.Errorf("error with capture device: %w", captureErr)
+	// setup microphone once call is answered and capture until cancelled
+	captureWg.Go(func() {
+		select {
+		case <-captureCtx.Done(): // if call fails
+			return
+		case <-callAnswered:
+			captureErr := audio.StartCapture(captureCtx, pc, captureTrack)
+			if captureErr != nil {
+				errorChan <- fmt.Errorf("error with capture device: %w", captureErr)
+			}
 		}
 	})
 
-	// block until ctrl C or error in capture goroutine
+	// block until sigint or error in goroutines above
 	select {
 	case err := <-errorChan:
 		fmt.Println(err)

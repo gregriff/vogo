@@ -1,7 +1,7 @@
 # TODOs
 
 ### Next:
-- parent ctx for top level funcs that cancel on ctrl C and child ctxs from this for all the devices?
+- impl timeout on server-side for call endpoint so that a cancelled request does not cause an infinite block on a goroutine
 - remove/fix xdg config in client to match server
 - determine how friends should refer to eachother (include friend code?)
 - impl status cmd
