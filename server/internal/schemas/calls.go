@@ -11,8 +11,37 @@ import (
 
 // CallMap stores signaling information for pending calls.
 // (the time from when a call is created until it is answered).
-// Entries are deleted when the recipient answers. Takes a caller's UUID as a key
-type CallMap map[uuid.UUID]Call
+// Entries are deleted when the recipient answers or if the call fails.
+// Takes a caller's UUID as a key
+type CallMap struct {
+	mu    sync.Mutex
+	calls map[uuid.UUID]Call
+}
+
+// Update inserts or updates a call for a given id
+func (m *CallMap) Update(id uuid.UUID, call Call) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls[id] = call
+}
+
+// Get returns a Call for a given id, returning an error if not found
+func (m *CallMap) Get(id uuid.UUID) (Call, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if call, exists := m.calls[id]; exists {
+		return call, nil
+	} else {
+		return Call{}, errors.New("call not found")
+	}
+}
+
+// Delete removes a call entry from the PendingCalls map
+func (m *CallMap) Delete(id uuid.UUID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.calls, id)
+}
 
 var (
 	pendingCalls    CallMap
@@ -20,11 +49,11 @@ var (
 )
 
 // GetPendingCalls returns a singleton storing pending calls. Once migrated to websockets, this will be obsolete
-func GetPendingCalls() CallMap {
+func GetPendingCalls() *CallMap {
 	createCallStore.Do(func() {
-		pendingCalls = make(CallMap, 10)
+		pendingCalls = CallMap{calls: make(map[uuid.UUID]Call, 10)}
 	})
-	return pendingCalls
+	return &pendingCalls
 }
 
 // Call is the struct that stores information about a Call
@@ -55,7 +84,7 @@ func CreateCallAndNotify(caller, recipient User, callerSd webrtc.SessionDescript
 	}
 	// add this call to pending map, using caller's ID since a client can only make one call at a time
 	calls := GetPendingCalls()
-	calls[caller.Id] = newCall
+	calls.Update(caller.Id, newCall)
 
 	// return the channel that will return the answerer's Sd
 	return newCall.AnswerChan
@@ -66,23 +95,14 @@ func CreateCallAndNotify(caller, recipient User, callerSd webrtc.SessionDescript
 func AnswerCall(caller User, answererSd webrtc.SessionDescription) error {
 	calls := GetPendingCalls()
 
-	var (
-		call  Call
-		found bool
-	)
-	if call, found = calls[caller.Id]; !found {
-		return errors.New("call not found")
+	call, err := calls.Get(caller.Id)
+	if err != nil {
+		return err
 	}
 
 	// update call with recipient's SD
 	call.SdTo = answererSd
 	call.AnswerChan <- answererSd
-	calls[caller.Id] = call
+	calls.Update(caller.Id, call)
 	return nil
-}
-
-// DeleteCall removes a call entry from the PendingCalls map
-func DeleteCall(id uuid.UUID) {
-	calls := GetPendingCalls()
-	delete(calls, id)
 }

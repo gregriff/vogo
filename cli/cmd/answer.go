@@ -151,7 +151,7 @@ func answerCall(_ *cobra.Command, _ []string) {
 
 	answerErr := signaling.PostAnswer(*sigClient, caller, *pc.LocalDescription())
 	if answerErr != nil {
-		fmt.Printf("error while posting answer: %w", answerErr)
+		fmt.Printf("error while posting answer: %v", answerErr)
 		return
 	}
 

@@ -53,17 +53,17 @@ func registerUser(_ *cobra.Command, _ []string) {
 
 	if vErr := validateUsername(username); vErr != nil {
 		msg := fmt.Errorf("invalid username %s (%w)", username, vErr)
-		log.Fatalf(msg.Error())
+		log.Fatal(msg.Error())
 	}
 	if vErr := validatePassword(password); vErr != nil {
 		msg := fmt.Errorf("invalid password %s (%w)", password, vErr)
-		log.Fatalf(msg.Error())
+		log.Fatal(msg.Error())
 	}
 
 	vogoClient := vogo.NewClient(vogoServer, "", "")
 	username, err := vogo.Register(*vogoClient, username, password, inviteCode)
 	if err != nil {
-		log.Fatalf(fmt.Errorf("error during registration: %w", err).Error())
+		log.Fatal(fmt.Errorf("error during registration: %w", err).Error())
 	}
 
 	// writeErr := configs.PersistCredentialsToConfig(ConfigFile, username, friendCode)

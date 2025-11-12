@@ -45,11 +45,17 @@ func (h *RouteHandler) Call(w http.ResponseWriter, req *http.Request) {
 	}
 
 	log.Println("waiting for call to be answered")
-	answererSd := <-schemas.CreateCallAndNotify(*caller, *recipient, rData.Sd)
+	select {
+	case <-req.Context().Done():
+		log.Println("call request cancelled by client")
+		break // allow cleanup below to run if request is cancelled
+	case answererSd := <-schemas.CreateCallAndNotify(*caller, *recipient, rData.Sd):
+		log.Println("call has been answered")
+		WriteJSON(w, answererSd)
 
-	log.Println("call has been answered")
-	WriteJSON(w, answererSd)
-	schemas.DeleteCall(caller.Id)
+	}
+	calls := schemas.GetPendingCalls()
+	calls.Delete(caller.Id)
 }
 
 // Caller is a GET endpoint that the answerer calls when they want the SD of the caller
@@ -74,13 +80,9 @@ func (h *RouteHandler) Caller(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	var (
-		call  schemas.Call
-		found bool
-	)
 	calls := schemas.GetPendingCalls()
-	if call, found = calls[caller.Id]; !found {
-		err := fmt.Errorf("Call not found")
+	call, err := calls.Get(caller.Id)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
