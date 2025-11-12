@@ -20,7 +20,8 @@ import (
 // PUT /channel: modify channel properties
 // DELETE /channel
 
-// Call is used by a client to create a call.
+// Call is used by a client to create a call. The request contains the caller's offer, after
+// their ICE gathering has fully completed.
 func (h *RouteHandler) Call(w http.ResponseWriter, req *http.Request) {
 	rData := schemas.CallRequest{}
 	if err := json.NewDecoder(req.Body).Decode(&rData); err != nil {
@@ -58,7 +59,8 @@ func (h *RouteHandler) Call(w http.ResponseWriter, req *http.Request) {
 	calls.Delete(caller.Id)
 }
 
-// Caller is a GET endpoint that the answerer calls when they want the SD of the caller
+// Caller is a GET endpoint that the answerer calls when they want the SD of the caller.
+// This returns to the answerer the caller's offer, with all ICE candidates present
 func (h *RouteHandler) Caller(w http.ResponseWriter, req *http.Request) {
 	callerName := req.PathValue("name")
 
@@ -91,7 +93,8 @@ func (h *RouteHandler) Caller(w http.ResponseWriter, req *http.Request) {
 	WriteJSON(w, &call.SdFrom)
 }
 
-// Answer is used by a client to accept a pending call requested by another client.
+// Answer is used by a client to accept a pending call requested by another client. It sends the caller the
+// answerer's answer (with all ICE candidates)
 func (h *RouteHandler) Answer(w http.ResponseWriter, req *http.Request) {
 	aData := schemas.AnswerRequest{}
 	if err := json.NewDecoder(req.Body).Decode(&aData); err != nil {
