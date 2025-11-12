@@ -58,6 +58,11 @@ func answerCall(_ *cobra.Command, _ []string) {
 		viper.GetString("servers.stun-origin"),
 		viper.GetString("caller")
 
+	// parent context for all other contexts to be derived from
+	sigCtx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// var candidatesMux sync.Mutex
 	// pendingCandidates := make([]*webrtc.ICECandidate, 0)
 
@@ -158,16 +163,8 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// TODO: the above should run in a goroutine with a context and
 	// signal to the below that the ansewr has been completed.
 
-	// // setup microphone capture track
-	// captureTrack, _ := webrtc.NewTrackLocalStaticSample(
-	// 	configs.OpusCodecCapability,
-	// 	uuid.NewString(),
-	// 	uuid.NewString(),
-	// )
-	// audioTrsv.Sender().ReplaceTrack(captureTrack)
-
-	captureCtx, cCtxCancel := context.WithCancel(context.Background())
 	var captureWaitGroup sync.WaitGroup
+	captureCtx, cCtxCancel := context.WithCancel(sigCtx)
 	defer func() { // wait for capture device teardown
 		cCtxCancel()
 		captureWaitGroup.Wait()
@@ -182,15 +179,12 @@ func answerCall(_ *cobra.Command, _ []string) {
 		}
 	})
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	// block until ctrl C or an error in capture goroutine
 	select {
 	case err := <-errorChan:
 		fmt.Println(err)
 		break
-	case <-sigChan:
+	case <-sigCtx.Done():
 		break
 	}
 }
