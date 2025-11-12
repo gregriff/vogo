@@ -58,6 +58,11 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		viper.GetString("user.name"),
 		viper.GetString("user.password")
 
+	// parent context for all other contexts to be derived from
+	sigCtx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	log.Println("creating caller connection")
 	pc, createErr := configs.NewPeerConnection(stunServer)
 	if createErr != nil {
@@ -82,6 +87,14 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		return
 	}
 
+	// setup microphone capture track
+	captureTrack, _ := webrtc.NewTrackLocalStaticSample(
+		configs.OpusCodecCapability,
+		"captureTrack",
+		"captureTrack"+username,
+	)
+	audioTrsv.Sender().ReplaceTrack(captureTrack)
+
 	// var playbackWg sync.WaitGroup
 
 	// playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
@@ -92,10 +105,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	// }
 
 	pc.OnICECandidate(internal.OnICECandidate)
-
-	// Set the handler for Peer connection state
-	// This will notify you when the peer has connected/disconnected
-	pc.OnConnectionStateChange(internal.OnConnectionStateChange)
+	pc.OnConnectionStateChange(internal.OnConnectionStateChangeCaller) // TODO: remove
 
 	// Create an offer to send to the other process
 	log.Println("Creating offer")
@@ -119,16 +129,23 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	<-webrtc.GatheringCompletePromise(pc)
 	log.Println("waiting completed")
 
-	captureCtx, cCtxCancel := context.WithCancel(context.Background())
-	defer cCtxCancel()
+	// TODO: could tie this to ICE candidate context? if calling needs to happen in parallel
+	callCtx, cancelCall := context.WithCancel(sigCtx)
+	captureCtx, cancelCapture := context.WithCancel(sigCtx)
 	var captureWaitGroup sync.WaitGroup
+	defer func() { // wait for capture device teardown
+		cancelCapture()
+		cancelCall()
+		captureWaitGroup.Wait()
+	}()
 	errorChan := make(chan error, 1)
 
 	// handle signalling and on success init microphone capture
 	// setup microphone and capture until cancelled
 	captureWaitGroup.Go(func() {
 		sigClient := signaling.NewClient(vogoServer, username, password)
-		recipientSd, callErr := signaling.CallFriend(*sigClient, recipient, offer)
+		recipientSd, callErr := signaling.CallFriend(callCtx, *sigClient, recipient, offer)
+		cancelCall()
 		if callErr != nil {
 			errorChan <- fmt.Errorf("error while calling: %w", callErr)
 			return
@@ -143,33 +160,18 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		// TODO: the above should run in a seperate goroutine as the stuff below and should
 		// signal to the below that the ansewr has been recieved.
 
-		// setup microphone capture track
-		captureTrack, _ := webrtc.NewTrackLocalStaticSample(
-			configs.OpusCodecCapability,
-			"captureTrack",
-			"captureTrack"+username,
-		)
-		audioTrsv.Sender().ReplaceTrack(captureTrack)
 		captureErr := audio.StartCapture(captureCtx, pc, captureTrack)
 		if captureErr != nil {
 			errorChan <- fmt.Errorf("error with capture device: %w", captureErr)
 		}
 	})
 
-	// Block forever
-	log.Println("Sent offer, blocking until ctrl C")
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	// block until ctrl C or error in capture goroutine
 	select {
 	case err := <-errorChan:
 		fmt.Println(err)
 		break
-	case <-sigChan:
+	case <-sigCtx.Done():
 		break
 	}
-	cCtxCancel()
-	captureWaitGroup.Wait()
 }

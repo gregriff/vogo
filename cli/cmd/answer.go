@@ -111,9 +111,6 @@ func answerCall(_ *cobra.Command, _ []string) {
 	}
 
 	pc.OnICECandidate(internal.OnICECandidate)
-
-	// Set the handler for Peer connection state
-	// This will notify you when the peer has connected/disconnected
 	pc.OnConnectionStateChange(internal.OnConnectionStateChange)
 
 	log.Println("getting caller SD from vogo server, caller Name: ", caller)
@@ -170,8 +167,11 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// audioTrsv.Sender().ReplaceTrack(captureTrack)
 
 	captureCtx, cCtxCancel := context.WithCancel(context.Background())
-	defer cCtxCancel() // takes ~20ms for capture to stop after this is called
 	var captureWaitGroup sync.WaitGroup
+	defer func() { // wait for capture device teardown
+		cCtxCancel()
+		captureWaitGroup.Wait()
+	}()
 	errorChan := make(chan error, 1)
 
 	// setup mic and capture until the above cancel func is run
@@ -181,9 +181,6 @@ func answerCall(_ *cobra.Command, _ []string) {
 			errorChan <- fmt.Errorf("error with capture device: %v", captureErr)
 		}
 	})
-
-	// Block forever
-	log.Println("Answer complete, mic initalized, blocking until ctrl C")
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -196,6 +193,4 @@ func answerCall(_ *cobra.Command, _ []string) {
 	case <-sigChan:
 		break
 	}
-	cCtxCancel()
-	captureWaitGroup.Wait()
 }
