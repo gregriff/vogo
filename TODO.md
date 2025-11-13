@@ -7,6 +7,8 @@
 - impl status cmd
 - impl adding friends
 - impl PLC?
+- ensure DTLS is working correctly and encrypting
+- look here https://github.com/pion/webrtc/blob/master/examples/README.md#media-api to see info about rtcp media stats
 
 ### Polish before release
 - ensure simd is enabled

@@ -25,7 +25,8 @@ func (m *CallMap) Update(id uuid.UUID, call Call) {
 	m.calls[id] = call
 }
 
-// Get returns a Call for a given id, returning an error if not found
+// Get returns a copy of a call Call for a given id, returning an error if not found.
+// Updating a call should be done with CallMap.Update
 func (m *CallMap) Get(id uuid.UUID) (Call, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -48,7 +49,7 @@ var (
 	createCallStore sync.Once
 )
 
-// GetPendingCalls returns a singleton storing pending calls. Once migrated to websockets, this will be obsolete
+// GetPendingCalls returns a singleton storing pending calls. Once migrated to websockets, this will be obsolete?
 func GetPendingCalls() *CallMap {
 	createCallStore.Do(func() {
 		pendingCalls = CallMap{calls: make(map[uuid.UUID]Call, 10)}
@@ -62,11 +63,7 @@ type Call struct {
 	Id uuid.UUID
 
 	From,
-	To User
-
-	// These are used to communicate the sessionDescriptions during signaling
-	SdFrom,
-	SdTo webrtc.SessionDescription
+	To ClientInfo
 
 	CreatedAt time.Time
 
@@ -74,35 +71,82 @@ type Call struct {
 	AnswerChan chan webrtc.SessionDescription
 }
 
-func CreateCallAndNotify(caller, recipient User, callerSd webrtc.SessionDescription) <-chan webrtc.SessionDescription {
+// ClientInfo is the information about a webrtc client needed to create a call or a channel.
+// It stores data used during the signaling process.
+type ClientInfo struct {
+	user *User
+
+	// encapsulates the offer or answer of the client
+	Sd webrtc.SessionDescription
+
+	// websockets will wait read from these to facilitate ICE trickle
+	CandidateChan chan webrtc.ICECandidateInit
+}
+
+func CreateCall(
+	caller, recipient *User,
+	callerSd webrtc.SessionDescription,
+	callerIceChan, recipientIceChan chan webrtc.ICECandidateInit,
+	answerChan chan webrtc.SessionDescription,
+) {
+	callerClient := ClientInfo{
+		user:          caller,
+		Sd:            callerSd,
+		CandidateChan: callerIceChan,
+	}
+	recipientClient := ClientInfo{
+		user:          recipient,
+		Sd:            webrtc.SessionDescription{},
+		CandidateChan: recipientIceChan,
+	}
+
 	newCall := Call{
-		From:       caller,
-		To:         recipient,
-		SdFrom:     callerSd,
+		From:       callerClient,
+		To:         recipientClient,
 		CreatedAt:  time.Now(),
-		AnswerChan: make(chan webrtc.SessionDescription),
+		AnswerChan: answerChan,
 	}
 	// add this call to pending map, using caller's ID since a client can only make one call at a time
 	calls := GetPendingCalls()
 	calls.Update(caller.Id, newCall)
-
-	// return the channel that will return the answerer's Sd
-	return newCall.AnswerChan
 }
+
+// func CreateCallAndNotify(caller, recipient User, callerSd webrtc.SessionDescription) <-chan webrtc.SessionDescription {
+// 	callerClient := ClientInfo{
+// 		user: caller,
+// 		Sd:   callerSd,
+// 	}
+// 	recipientClient := ClientInfo{
+// 		user: recipient,
+// 		Sd:   webrtc.SessionDescription{},
+// 	}
+// 	newCall := Call{
+// 		From:       callerClient,
+// 		To:         recipientClient,
+// 		CreatedAt:  time.Now(),
+// 		AnswerChan: make(chan webrtc.SessionDescription),
+// 	}
+// 	// add this call to pending map, using caller's ID since a client can only make one call at a time
+// 	calls := GetPendingCalls()
+// 	calls.Update(caller.Id, newCall)
+
+// 	// return the channel that will return the answerer's Sd
+// 	return newCall.AnswerChan
+// }
 
 // AnswerCall notifies the blocked caller goroutine that the call has been answered and sends the
 // answerer's sessionDescription.
-func AnswerCall(caller User, answererSd webrtc.SessionDescription) error {
-	calls := GetPendingCalls()
+// func AnswerCall(caller User, answererSd webrtc.SessionDescription) error {
+// 	calls := GetPendingCalls()
 
-	call, err := calls.Get(caller.Id)
-	if err != nil {
-		return err
-	}
+// 	call, err := calls.Get(caller.Id)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	// update call with recipient's SD
-	call.SdTo = answererSd
-	call.AnswerChan <- answererSd
-	calls.Update(caller.Id, call)
-	return nil
-}
+// 	// update call with recipient's SD
+// 	call.To.Sd = answererSd
+// 	call.AnswerChan <- answererSd
+// 	calls.Update(caller.Id, call)
+// 	return nil
+// }

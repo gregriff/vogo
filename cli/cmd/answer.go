@@ -148,12 +148,13 @@ func answerCall(_ *cobra.Command, _ []string) {
 		return
 	}
 
-	// Create a channel to wait for gathering and Wait for gathering to finish
-	// TODO: don't use this and impl ICE trickle with vogo-server
+	// TODO: once ws is working, do we even need to check to see if gathering is completed?
+	// prob not
 	log.Println("waiting on gathering complete promise")
 	<-webrtc.GatheringCompletePromise(pc)
 	log.Println("waiting completed")
 
+	// TODO: this should send on ws immediately
 	answerErr := signaling.PostAnswer(*sigClient, caller, *pc.LocalDescription())
 	if answerErr != nil {
 		fmt.Printf("error while posting answer: %v", answerErr)

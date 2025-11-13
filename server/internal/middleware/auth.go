@@ -11,6 +11,7 @@ import (
 	"github.com/gregriff/vogo/server/internal/crypto"
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/server/internal/schemas"
+	"golang.org/x/net/websocket"
 )
 
 type contextKey string
@@ -55,5 +56,10 @@ func writeAuthError(w http.ResponseWriter) {
 // This should probably be a func in the route handler since its a dependency
 func GetUsername(r *http.Request) string {
 	username, _ := r.Context().Value(authKey).(string)
+	return username
+}
+
+func GetUsernameWS(ws *websocket.Conn) string {
+	username, _ := ws.Request().Context().Value(authKey).(string)
 	return username
 }

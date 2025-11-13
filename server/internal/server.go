@@ -14,6 +14,7 @@ import (
 	"github.com/gregriff/vogo/server/internal/db"
 	"github.com/gregriff/vogo/server/internal/middleware"
 	"github.com/gregriff/vogo/server/internal/routes"
+	"golang.org/x/net/websocket"
 )
 
 func CreateAndListen(debug bool, host string, port int) {
@@ -70,9 +71,24 @@ func CreateAndListen(debug bool, host string, port int) {
 
 // createRoutes creates the routing rules for the webserver
 func createRoutes(mux *http.ServeMux, h *routes.RouteHandler) {
-	mux.HandleFunc("POST /call", h.Call)
-	mux.HandleFunc("POST /answer", h.Answer)
-	mux.HandleFunc("GET /caller/{name}", h.Caller)
+	// mux.HandleFunc("POST /call", h.Call)
+	// mux.HandleFunc("POST /answer", h.Answer)
+	// mux.HandleFunc("GET /caller/{name}", h.Caller)
 
 	mux.HandleFunc("POST /register", h.Register)
+
+	callHandler := websocket.Server{
+		Handshake: func(_ *websocket.Config, _ *http.Request) error { return nil },
+		Handler:   func(ws *websocket.Conn) { h.CallWS(ws) },
+	}
+
+	answerHandler := websocket.Server{
+		Handshake: func(_ *websocket.Config, _ *http.Request) error { return nil },
+		Handler:   func(ws *websocket.Conn) { h.AnswerWS(ws) },
+	}
+
+	// TODO: how does client dial ws? may need to serve them here differently, maybe specifyfing their origin in the server config
+	// TODO: will need to have different endpoints or logic for channels (multi-client calls)
+	http.Handle("/ws/call", callHandler)
+	http.Handle("/ws/answer", answerHandler) // would be nice to grab callerName before upgrade here
 }
