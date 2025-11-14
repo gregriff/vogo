@@ -2,7 +2,6 @@ package signaling
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,38 +15,38 @@ type CallRequest struct {
 	Sd            webrtc.SessionDescription
 }
 
-func CallFriend(ctx context.Context, client http.Client, friendName string, offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
-	callReq := CallRequest{RecipientName: friendName, Sd: offer}
-	payload, err := json.Marshal(callReq)
-	if err != nil {
-		return nil, fmt.Errorf("json marshal error: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", "/call", bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("error creating call request: %w", err)
-	}
+// func CallFriend(ctx context.Context, client http.Client, friendName string, offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
+// 	callReq := CallRequest{RecipientName: friendName, Sd: offer}
+// 	payload, err := json.Marshal(callReq)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("json marshal error: %w", err)
+// 	}
+// 	req, err := http.NewRequestWithContext(ctx, "POST", "/call", bytes.NewReader(payload))
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error creating call request: %w", err)
+// 	}
 
-	// Send our offer to vogo-server. This request will hang until recipient answers
-	res, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("error during call request: %w", err)
-	}
+// 	// Send our offer to vogo-server. This request will hang until recipient answers
+// 	res, err := client.Do(req)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error during call request: %w", err)
+// 	}
 
-	defer func() {
-		_ = res.Body.Close()
-	}()
+// 	defer func() {
+// 		_ = res.Body.Close()
+// 	}()
 
-	if res.StatusCode != 200 {
-		// TODO: make this a sentinel error
-		return nil, fmt.Errorf("call unsucessful: %s", res.Status)
-	}
+// 	if res.StatusCode != 200 {
+// 		// TODO: make this a sentinel error
+// 		return nil, fmt.Errorf("call unsucessful: %s", res.Status)
+// 	}
 
-	sd := webrtc.SessionDescription{}
-	if err := json.NewDecoder(res.Body).Decode(&sd); err != nil {
-		return nil, fmt.Errorf("error parsing answer: %w", err)
-	}
-	return &sd, nil
-}
+// 	sd := webrtc.SessionDescription{}
+// 	if err := json.NewDecoder(res.Body).Decode(&sd); err != nil {
+// 		return nil, fmt.Errorf("error parsing answer: %w", err)
+// 	}
+// 	return &sd, nil
+// }
 
 func GetCallerSd(client http.Client, callerName string) (*webrtc.SessionDescription, error) {
 	res, err := client.Get(fmt.Sprintf("/caller/%s", callerName))

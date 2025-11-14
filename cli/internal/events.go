@@ -8,7 +8,7 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-func OnICECandidate(candidate *webrtc.ICECandidate) {
+func OnICECandidate(candidate *webrtc.ICECandidate, ch chan webrtc.ICECandidateInit) {
 	var addr string
 	if candidate != nil {
 		addr = candidate.Address
@@ -16,6 +16,8 @@ func OnICECandidate(candidate *webrtc.ICECandidate) {
 		addr = "nil!"
 	}
 	log.Printf("ICE candidate recieved: %s", addr)
+
+	ch <- candidate.ToJSON()
 }
 
 func OnConnectionStateChange(state webrtc.PeerConnectionState) {

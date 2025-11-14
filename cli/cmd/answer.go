@@ -115,7 +115,10 @@ func answerCall(_ *cobra.Command, _ []string) {
 		return
 	}
 
-	pc.OnICECandidate(internal.OnICECandidate)
+	candidateChan := make(chan webrtc.ICECandidateInit, 10)
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		internal.OnICECandidate(c, candidateChan)
+	})
 	pc.OnConnectionStateChange(internal.OnConnectionStateChange)
 
 	log.Println("getting caller SD from vogo server, caller Name: ", caller)

@@ -78,17 +78,19 @@ func createRoutes(mux *http.ServeMux, h *routes.RouteHandler) {
 	mux.HandleFunc("POST /register", h.Register)
 
 	callHandler := websocket.Server{
-		Handshake: func(_ *websocket.Config, _ *http.Request) error { return nil },
+		Handshake: websocketHandshake,
 		Handler:   func(ws *websocket.Conn) { h.CallWS(ws) },
 	}
 
 	answerHandler := websocket.Server{
-		Handshake: func(_ *websocket.Config, _ *http.Request) error { return nil },
+		Handshake: websocketHandshake,
 		Handler:   func(ws *websocket.Conn) { h.AnswerWS(ws) },
 	}
 
 	// TODO: how does client dial ws? may need to serve them here differently, maybe specifyfing their origin in the server config
 	// TODO: will need to have different endpoints or logic for channels (multi-client calls)
-	http.Handle("/ws/call", callHandler)
-	http.Handle("/ws/answer", answerHandler) // would be nice to grab callerName before upgrade here
+	http.Handle("/call", callHandler)
+	http.HandleFunc("/answer/{name}", answerHandler.ServeHTTP)
 }
+
+func websocketHandshake(_ *websocket.Config, _ *http.Request) error { return nil }

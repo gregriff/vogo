@@ -32,8 +32,6 @@ import (
 // it returns once the call connects.
 // Note: the channel version of this func will need to stay open until the client exits the channel call.
 func (h *RouteHandler) CallWS(ws *websocket.Conn) {
-	defer ws.Close()
-
 	username := middleware.GetUsernameWS(ws)
 	caller, sqlErr := dal.GetUserByUsername(h.db, username)
 	if sqlErr != nil {
@@ -55,7 +53,8 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 
 		// for websocket reading ////////////////////////
 		buf        = make([]byte, 1500)
-		n          int // bytes read per message
+		mu         sync.Mutex // TODO: this won't be needed once we send the codes msgs over the readChan
+		n          int        // bytes read per message
 		readErr    error
 		readWg     sync.WaitGroup
 		wsReadChan = make(chan struct{})
@@ -66,16 +65,22 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 		/////////////////////////////////////////////////
 	)
 	defer func() {
+		ws.Close()
 		readWg.Wait()
 		log.Println("readWg closed")
 	}()
 
 	readWg.Go(func() {
 		for {
+			mu.Lock()
 			// TODO: handle when this unblocks due to ws closing
+			// TODO: could define a codec, read like this, send to chan, use a type switch on it for cleaner message parsing
+			// var data any
+			// websocket.JSON.Receive(ws, data)
 			n, readErr = ws.Read(buf)
+			mu.Unlock()
 			if readErr != nil {
-				log.Println(readErr)
+				log.Printf("error reading from ws: %v", readErr)
 			}
 			wsReadChan <- struct{}{}
 		}
@@ -91,13 +96,16 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 			return
 		case answerSd := <-answerChan:
 			if wErr := wsWrite(ws, answerSd); wErr != nil {
-				panic(wErr)
+				log.Printf("error writing answer: %v", wErr)
+				return
 			}
 		case candidate := <-iceRecvChan:
 			if wErr := wsWrite(ws, candidate); wErr != nil {
-				panic(wErr)
+				log.Printf("error writing candidate: %v", wErr)
+				return
 			}
 		case <-wsReadChan:
+			mu.Lock()
 			switch {
 			// Attempt to unmarshal as a SessionDescription. If the SDP field is empty
 			// assume it is not one.
@@ -107,36 +115,28 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 				if sqlErr != nil {
 					log.Println(fmt.Errorf("error fetching recipient: %w", sqlErr))
 					ws.WriteClose(http.StatusBadRequest)
+					mu.Unlock()
 					return
 				}
 				schemas.CreateCall(caller, recipient, offer.Sd, iceSendChan, iceRecvChan, answerChan)
 				log.Println("call created")
-				// - below is what the answerer should do upon receiving the offer
-				// peerConnection.SetRemoteDescription(offer)
-				// answer, answerErr := peerConnection.CreateAnswer(nil)
-				// peerConnection.SetLocalDescription(answer)
-
-				// outbound, marshalErr := json.Marshal(answer)
-				// if marshalErr != nil {
-				// 	panic(marshalErr)
-				// }
-				// - this writes to the websocket (for the server)
-				// err = wsConn.Write(outbound)
 			// Attempt to unmarshal as a ICECandidateInit. If the candidate field is empty
 			// assume it is not one.
 			case json.Unmarshal(buf[:n], &candidate) == nil && candidate.Candidate != "":
 				call, err := calls.Get(caller.Id)
 				if err != nil {
-					panic("call not found during trickle ice")
+					log.Print("call not found during trickle ice")
+					mu.Unlock()
+					return
 				}
 				fmt.Println("caller candidate sending to chan")
 				call.From.CandidateChan <- candidate
-			//
-			// - below is what the answerer should do upon recieving the candidate
-			// err = peerConnection.AddICECandidate(candidate)
 			default:
-				panic("Unknown message")
+				log.Print("unknown message")
+				mu.Unlock()
+				return
 			}
+			mu.Unlock()
 		}
 	}
 }
@@ -183,8 +183,6 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 // AnswerWS obtains the caller's name from the first ws message and sends the caller's offer Sd to the client.
 // It then waits for the clients answer, where it then facilitates trickle-ICE gathering between the two clients.
 func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
-	defer ws.Close()
-
 	username := middleware.GetUsernameWS(ws)
 	_, sqlErr := dal.GetUserByUsername(h.db, username)
 	if sqlErr != nil {
@@ -194,26 +192,26 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 	}
 
 	// for websocket reading
-	var (
-		buf     = make([]byte, 1500)
-		n       int // bytes read per message
-		readErr error
+	// var (
+	// 	buf     = make([]byte, 1500)
+	// 	n       int // bytes read per message
+	// 	readErr error
 
-		// websocket message
-		callerName string
-	)
-	n, rErr := ws.Read(buf)
-	if rErr != nil {
-		log.Println(rErr)
-	}
+	// 	// websocket message
+	// 	// callerName string
+	// )
+	// n, rErr := ws.Read(buf)
+	// if rErr != nil {
+	// 	log.Println(rErr)
+	// }
+	// jsonErr := json.Unmarshal(buf[:n], &callerName)
+	// if jsonErr != nil || callerName == "" {
+	// log.Println("caller name invalid: ", callerName)
+	// ws.WriteClose(http.StatusBadRequest)
+	// return
+	// }
 
-	jsonErr := json.Unmarshal(buf[:n], &callerName)
-	if jsonErr != nil || callerName == "" {
-		log.Println("caller name invalid: ", callerName)
-		ws.WriteClose(http.StatusBadRequest)
-		return
-	}
-
+	callerName := ws.Request().PathValue("name")
 	caller, sqlErr := dal.GetUserByUsername(h.db, callerName)
 	if sqlErr != nil {
 		log.Println(fmt.Errorf("error fetching caller: %w", sqlErr))
@@ -231,11 +229,16 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 
 	// send caller's SD. client will then create an answer and post it to this ws
 	if wErr := wsWrite(ws, call.From.Sd); wErr != nil {
-		panic(wErr)
+		log.Printf("error writing offer: %v", wErr)
+		return
 	}
 
 	// for websocket reading
 	var (
+		buf        = make([]byte, 1500)
+		n          int // bytes read per message
+		readErr    error
+		mu         sync.Mutex
 		readWg     sync.WaitGroup
 		wsReadChan = make(chan struct{})
 
@@ -244,16 +247,20 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 		answer    schemas.AnswerRequest
 	)
 	defer func() {
+		ws.Close()
 		readWg.Wait()
 		log.Println("readWg closed")
 	}()
 
 	readWg.Go(func() {
 		for {
+			mu.Lock()
 			// TODO: handle when this unblocks due to ws closing
 			n, readErr = ws.Read(buf)
+			mu.Unlock()
 			if readErr != nil {
-				log.Println(readErr)
+				log.Printf("error reading from ws: %v", readErr)
+				return
 			}
 			wsReadChan <- struct{}{}
 		}
@@ -267,44 +274,45 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 			return
 		case candidate := <-call.From.CandidateChan:
 			if wErr := wsWrite(ws, candidate); wErr != nil {
-				panic(wErr)
+				log.Printf("error writing answer: %v", wErr)
+				return
 			}
 		case <-wsReadChan:
+			mu.Lock()
 			// todo: if answer, send to answerchan
 			switch {
-			// Attempt to unmarshal as a SessionDescription. If the SDP field is empty
-			// assume it is not one.
 			case json.Unmarshal(buf[:n], &answer) == nil && answer.Sd.SDP != "":
 				log.Println("answerWS: answer recieved")
 				caller, sqlErr := dal.GetUserByUsername(h.db, answer.CallerName)
 				if sqlErr != nil {
 					log.Println(fmt.Errorf("error fetching caller: %w", sqlErr))
 					ws.WriteClose(http.StatusInternalServerError)
+					mu.Unlock()
 					return
 				}
 				call, err := calls.Get(caller.Id)
 				if err != nil {
-					panic("call not found during answer")
+					log.Printf("call not found during answer: %v", err)
+					mu.Unlock()
+					return
 				}
 				fmt.Println("answer sending to chan")
 				call.AnswerChan <- answer.Sd
-				// - below is what the caller should do upon receiving the offer
-				// peerConnection.SetRemoteDescription(offer)
-			// Attempt to unmarshal as a ICECandidateInit. If the candidate field is empty
-			// assume it is not one.
 			case json.Unmarshal(buf[:n], &candidate) == nil && candidate.Candidate != "":
 				call, err := calls.Get(caller.Id)
 				if err != nil {
-					panic("call not found during trickle ice")
+					log.Print("call not found during trickle ice")
+					mu.Unlock()
+					return
 				}
 				fmt.Println("caller candidate sending to chan")
 				call.To.CandidateChan <- candidate
-			//
-			// - below is what the caller should do upon recieving the candidate
-			// err = peerConnection.AddICECandidate(candidate)
 			default:
-				panic("Unknown message")
+				log.Print("unknown message")
+				mu.Unlock()
+				return
 			}
+			mu.Unlock()
 		}
 	}
 }
