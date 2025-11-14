@@ -18,7 +18,6 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"golang.org/x/net/websocket"
 	// _ "net/http/pprof".
 )
 
@@ -79,24 +78,11 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		}
 	}()
 
-	audioTrsv, tErr := pc.AddTransceiverFromKind(
-		webrtc.RTPCodecTypeAudio,
-		webrtc.RTPTransceiverInit{
-			Direction: webrtc.RTPTransceiverDirectionSendrecv,
-		},
-	)
+	track, tErr := configs.CreateAudioTrack(pc, username)
 	if tErr != nil {
-		fmt.Printf("error adding transceiver: %v", tErr)
+		log.Printf("error creating audio track: %v", tErr)
 		return
 	}
-
-	// setup microphone capture track
-	captureTrack, _ := webrtc.NewTrackLocalStaticSample(
-		configs.OpusCodecCapability,
-		"captureTrack",
-		"captureTrack"+username,
-	)
-	audioTrsv.Sender().ReplaceTrack(captureTrack)
 
 	// var playbackWg sync.WaitGroup
 
@@ -131,9 +117,9 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 	// Wait for all ICE candidates and include them all in the call request
 	// TODO: don't use this and impl ICE trickle with vogo-server
-	log.Println("waiting on gathering complete promise")
-	<-webrtc.GatheringCompletePromise(pc)
-	log.Println("waiting completed")
+	// log.Println("waiting on gathering complete promise")
+	// <-webrtc.GatheringCompletePromise(pc)
+	// log.Println("waiting completed")
 
 	// notifies microphone capture goroutine to begin capture
 	callAnswered := make(chan struct{}, 1)
@@ -182,7 +168,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 		// post offer
 		callReq := signaling.CallRequest{RecipientName: recipient, Sd: offer}
-		if wErr := wsWrite(ws, callReq); wErr != nil {
+		if wErr := signaling.WriteWS(ws, callReq); wErr != nil {
 			errorChan <- wErr
 			return
 		}
@@ -226,7 +212,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 				log.Println("ws answer connection cancelled")
 				return
 			case candidate := <-candidateChan:
-				if wErr := wsWrite(ws, candidate); wErr != nil {
+				if wErr := signaling.WriteWS(ws, candidate); wErr != nil {
 					errorChan <- wErr
 					return
 				}
@@ -269,7 +255,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		case <-captureCtx.Done(): // if call fails
 			return
 		case <-callAnswered: // TODO: this should actually wait on the onICEConnected? event
-			captureErr := audio.StartCapture(captureCtx, pc, captureTrack)
+			captureErr := audio.StartCapture(captureCtx, pc, track)
 			if captureErr != nil {
 				errorChan <- fmt.Errorf("error with capture device: %w", captureErr)
 			}
@@ -284,17 +270,4 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	case <-sigCtx.Done():
 		break
 	}
-}
-
-func wsWrite(ws *websocket.Conn, data any) error {
-	bytes, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("error marshaling before writing to websocket: %w", err)
-	}
-
-	_, err = ws.Write(bytes)
-	if err != nil {
-		return fmt.Errorf("error writing to websocket: %w", err)
-	}
-	return nil
 }

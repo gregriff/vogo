@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -63,9 +65,6 @@ func answerCall(_ *cobra.Command, _ []string) {
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// var candidatesMux sync.Mutex
-	// pendingCandidates := make([]*webrtc.ICECandidate, 0)
-
 	log.Println("creating answerer connection")
 	pc, createErr := configs.NewPeerConnection(stunServer)
 	if createErr != nil {
@@ -83,28 +82,11 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// 	panic(err)
 	// }
 
-	audioTrsv, tErr := pc.AddTransceiverFromKind(
-		webrtc.RTPCodecTypeAudio,
-		webrtc.RTPTransceiverInit{
-			Direction: webrtc.RTPTransceiverDirectionSendrecv,
-		},
-	)
+	track, tErr := configs.CreateAudioTrack(pc, username)
 	if tErr != nil {
-		fmt.Printf("error adding transceiver: %v", tErr)
+		log.Printf("error creating audio track: %v", tErr)
 		return
 	}
-
-	// setup microphone capture track
-	captureTrack, trackErr := webrtc.NewTrackLocalStaticSample(
-		configs.OpusCodecCapability,
-		"captureTrack",
-		"captureTrack"+username,
-	)
-	if trackErr != nil {
-		fmt.Printf("error initalizing capture track: %v", trackErr)
-		return
-	}
-	audioTrsv.Sender().ReplaceTrack(captureTrack)
 
 	var playbackWg sync.WaitGroup
 
@@ -121,63 +103,160 @@ func answerCall(_ *cobra.Command, _ []string) {
 	})
 	pc.OnConnectionStateChange(internal.OnConnectionStateChange)
 
-	log.Println("getting caller SD from vogo server, caller Name: ", caller)
-	sigClient := signaling.NewClient(vogoServer, username, password)
+	var answerWg sync.WaitGroup
+	answerCtx, cancelAnswer := context.WithCancel(sigCtx)
+	defer func() { // wait for capture device teardown
+		cancelAnswer()
+		answerWg.Wait()
+	}()
+	errorChan := make(chan error, 1)
 
-	callerSd, sdErr := signaling.GetCallerSd(*sigClient, caller)
-	if sdErr != nil {
-		fmt.Printf("error getting callers session description: %v", sdErr)
-		return
-	}
+	// notifies microphone capture goroutine to begin capture
+	answerSent := make(chan struct{}, 1)
 
-	log.Println("setting caller's remote description")
-	if sdErr = pc.SetRemoteDescription(*callerSd); sdErr != nil {
-		fmt.Printf("error setting callers remote description: %v", sdErr)
-		return
-	}
+	answerWg.Go(func() {
+		defer cancelAnswer()
+		endpoint := fmt.Sprintf("/answer/%s", caller)
+		cfg, cfgErr := signaling.NewWsConfig(vogoServer, username, password, endpoint)
+		if cfgErr != nil {
+			errorChan <- cfgErr
+			return
+		}
 
-	log.Println("answerer creating answer")
-	answer, aErr := pc.CreateAnswer(nil)
-	if aErr != nil {
-		fmt.Printf("error creating answer: %v", aErr)
-		return
-	}
+		ws, dialErr := cfg.DialContext(answerCtx)
+		if dialErr != nil {
+			errorChan <- fmt.Errorf("error dialing ws: %w", dialErr)
+			return
+		}
 
-	// Sets the LocalDescription, and starts our UDP listeners
-	log.Println("answerer setting localDescription and listening for UDP")
-	ldErr := pc.SetLocalDescription(answer)
-	if ldErr != nil {
-		fmt.Printf("error setting local description: %v", ldErr)
-		return
-	}
+		// for websocket reading
+		var (
+			buf        = make([]byte, 1500)
+			n          int // bytes read per message
+			readErr    error
+			mu         sync.Mutex
+			readWg     sync.WaitGroup
+			wsReadChan = make(chan struct{})
+
+			// websocket messages
+			candidate webrtc.ICECandidateInit
+			offer     webrtc.SessionDescription
+		)
+		defer func() {
+			ws.Close()
+			readWg.Wait()
+			log.Println("readWg closed")
+		}()
+
+		readWg.Go(func() {
+			for {
+				mu.Lock()
+				// TODO: handle when this unblocks due to ws closing
+				n, readErr = ws.Read(buf)
+				mu.Unlock()
+				if readErr != nil {
+					errorChan <- fmt.Errorf("error reading from ws: %w", readErr)
+					return
+				}
+				wsReadChan <- struct{}{}
+			}
+		})
+
+		for {
+			select {
+			case <-answerCtx.Done():
+				log.Println("ws answer connection cancelled")
+				return
+			case candidate := <-candidateChan:
+				if wErr := signaling.WriteWS(ws, candidate); wErr != nil {
+					errorChan <- wErr
+					return
+				}
+			case <-wsReadChan:
+				mu.Lock()
+				switch {
+				case json.Unmarshal(buf[:n], &offer) == nil && offer.SDP != "":
+					aErr := signaling.CreateAndPostAnswer(ws, pc, &offer, caller)
+					if aErr != nil {
+						errorChan <- fmt.Errorf("error creating or posting answer: %w", aErr)
+						mu.Unlock()
+						return
+					}
+					close(answerSent)
+				case json.Unmarshal(buf[:n], &candidate) == nil && candidate.Candidate != "":
+					if iceErr := pc.AddICECandidate(candidate); iceErr != nil {
+						errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
+						mu.Unlock()
+						return
+					}
+				default:
+					errorChan <- errors.New("unknown message")
+					mu.Unlock()
+					return
+				}
+				mu.Unlock()
+			}
+		}
+	})
+
+	// log.Println("getting caller SD from vogo server, caller Name: ", caller)
+	// sigClient := signaling.NewClient(vogoServer, username, password)
+
+	// callerSd, sdErr := signaling.GetCallerSd(*sigClient, caller)
+	// if sdErr != nil {
+	// 	fmt.Printf("error getting callers session description: %v", sdErr)
+	// 	return
+	// }
+
+	// log.Println("setting caller's remote description")
+	// if sdErr = pc.SetRemoteDescription(*callerSd); sdErr != nil {
+	// 	fmt.Printf("error setting callers remote description: %v", sdErr)
+	// 	return
+	// }
+
+	// log.Println("answerer creating answer")
+	// answer, aErr := pc.CreateAnswer(nil)
+	// if aErr != nil {
+	// 	fmt.Printf("error creating answer: %v", aErr)
+	// 	return
+	// }
+
+	// // Sets the LocalDescription, and starts our UDP listeners
+	// log.Println("answerer setting localDescription and listening for UDP")
+	// ldErr := pc.SetLocalDescription(answer)
+	// if ldErr != nil {
+	// 	fmt.Printf("error setting local description: %v", ldErr)
+	// 	return
+	// }
 
 	// TODO: once ws is working, do we even need to check to see if gathering is completed?
 	// prob not
-	log.Println("waiting on gathering complete promise")
-	<-webrtc.GatheringCompletePromise(pc)
-	log.Println("waiting completed")
+	// log.Println("waiting on gathering complete promise")
+	// <-webrtc.GatheringCompletePromise(pc)
+	// log.Println("waiting completed")
 
 	// TODO: this should send on ws immediately
-	answerErr := signaling.PostAnswer(*sigClient, caller, *pc.LocalDescription())
-	if answerErr != nil {
-		fmt.Printf("error while posting answer: %v", answerErr)
-		return
-	}
+	// answerErr := signaling.PostAnswer(*sigClient, caller, *pc.LocalDescription())
+	// if answerErr != nil {
+	// 	fmt.Printf("error while posting answer: %v", answerErr)
+	// 	return
+	// }
 
 	// TODO: the above should run in a goroutine with a context and
 	// signal to the below that the ansewr has been completed.
 
 	var captureWaitGroup sync.WaitGroup
-	captureCtx, cCtxCancel := context.WithCancel(sigCtx)
+	captureCtx, cancelCapture := context.WithCancel(sigCtx)
 	defer func() { // wait for capture device teardown
-		cCtxCancel()
+		cancelCapture()
 		captureWaitGroup.Wait()
 	}()
-	errorChan := make(chan error, 1)
 
 	// setup mic and capture until the above cancel func is run
 	captureWaitGroup.Go(func() {
-		captureErr := audio.StartCapture(captureCtx, pc, captureTrack)
+		// TODO: need to wait for onICEconnected
+		<-answerSent
+		captureErr := audio.StartCapture(captureCtx, pc, track)
 		if captureErr != nil {
 			errorChan <- fmt.Errorf("error with capture device: %v", captureErr)
 		}

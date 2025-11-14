@@ -7,7 +7,7 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-var OpusCodecCapability = webrtc.RTPCodecCapability{
+var opusCodec = webrtc.RTPCodecCapability{
 	MimeType:     webrtc.MimeTypeOpus,
 	ClockRate:    audio.SampleRate,
 	Channels:     audio.NumChannels,
@@ -18,7 +18,7 @@ var OpusCodecCapability = webrtc.RTPCodecCapability{
 func NewPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 	mediaEngine := &webrtc.MediaEngine{}
 	codecParams := webrtc.RTPCodecParameters{
-		RTPCodecCapability: OpusCodecCapability,
+		RTPCodecCapability: opusCodec,
 		PayloadType:        111, // should this be negotiated and not hard coded?
 	}
 	if err := mediaEngine.RegisterCodec(codecParams, webrtc.RTPCodecTypeAudio); err != nil {
@@ -58,4 +58,28 @@ func NewPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 		},
 	}
 	return api.NewPeerConnection(config)
+}
+
+func CreateAudioTrack(pc *webrtc.PeerConnection, trackID string) (*webrtc.TrackLocalStaticSample, error) {
+	audioTrsv, err := pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeAudio,
+		webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionSendrecv,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error adding transceiver: %v", err)
+	}
+
+	// setup microphone capture track
+	captureTrack, err := webrtc.NewTrackLocalStaticSample(
+		opusCodec,
+		"captureTrack",
+		"captureTrack"+trackID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error initalizing capture track: %v", err)
+	}
+	audioTrsv.Sender().ReplaceTrack(captureTrack)
+	return captureTrack, nil
 }

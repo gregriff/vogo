@@ -9,14 +9,15 @@ import (
 )
 
 func OnICECandidate(candidate *webrtc.ICECandidate, ch chan webrtc.ICECandidateInit) {
-	var addr string
+	addr := "nil!"
 	if candidate != nil {
 		addr = candidate.Address
-	} else {
-		addr = "nil!"
 	}
 	log.Printf("ICE candidate recieved: %s", addr)
 
+	if candidate == nil {
+		return
+	}
 	ch <- candidate.ToJSON()
 }
 

@@ -1,7 +1,7 @@
 # TODOs
 
 ### Next:
-- impl timeout on server-side for call endpoint so that a cancelled request does not cause an infinite block on a goroutine
+- add a edit-config command that invokes default text editor (how do i do this on windows?)
 - remove/fix xdg config in client to match server
 - determine how friends should refer to eachother (include friend code?)
 - impl status cmd
@@ -11,9 +11,9 @@
 - look here https://github.com/pion/webrtc/blob/master/examples/README.md#media-api to see info about rtcp media stats
 
 ### Polish before release
+- ensure ws is using TLS
 - ensure simd is enabled
 - profile cpu and mem
-- 192k bitrate?
 - enable caller playback!
 
 

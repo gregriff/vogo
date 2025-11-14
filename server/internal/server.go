@@ -46,7 +46,7 @@ func CreateAndListen(debug bool, host string, port int) {
 
 	// graceful shutdown channel
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// run server
 	go func() {
@@ -71,15 +71,11 @@ func CreateAndListen(debug bool, host string, port int) {
 
 // createRoutes creates the routing rules for the webserver
 func createRoutes(mux *http.ServeMux, h *routes.RouteHandler) {
-	// mux.HandleFunc("POST /call", h.Call)
-	// mux.HandleFunc("POST /answer", h.Answer)
-	// mux.HandleFunc("GET /caller/{name}", h.Caller)
-
 	mux.HandleFunc("POST /register", h.Register)
 
 	callHandler := websocket.Server{
 		Handshake: websocketHandshake,
-		Handler:   func(ws *websocket.Conn) { h.CallWS(ws) },
+		Handler:   h.CallWS,
 	}
 
 	answerHandler := websocket.Server{
@@ -89,8 +85,8 @@ func createRoutes(mux *http.ServeMux, h *routes.RouteHandler) {
 
 	// TODO: how does client dial ws? may need to serve them here differently, maybe specifyfing their origin in the server config
 	// TODO: will need to have different endpoints or logic for channels (multi-client calls)
-	http.Handle("/call", callHandler)
-	http.HandleFunc("/answer/{name}", answerHandler.ServeHTTP)
+	mux.Handle("GET /call", callHandler)
+	mux.HandleFunc("GET /answer/{name}", answerHandler.ServeHTTP)
 }
 
 func websocketHandshake(_ *websocket.Config, _ *http.Request) error { return nil }
