@@ -1,7 +1,10 @@
 # TODOs
 
 ### Next:
+- in client call() send ICE candidates on ws while waiting for answer. 
+- server both call and answer requests should close. need to figure out how to cancel the request context
 - add a edit-config command that invokes default text editor (how do i do this on windows?)
+- manually impl a timeout cancel of /call ws request
 - remove/fix xdg config in client to match server
 - determine how friends should refer to eachother (include friend code?)
 - impl status cmd

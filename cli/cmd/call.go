@@ -2,9 +2,8 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -18,6 +17,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/net/websocket"
 	// _ "net/http/pprof".
 )
 
@@ -125,7 +125,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	callAnswered := make(chan struct{}, 1)
 
 	// sending an error on this channel will abort the call process
-	errorChan := make(chan error, 1)
+	errorChan := make(chan error, 10)
 
 	// TODO: could tie this to ICE candidate context? if calling needs to happen in parallel
 	var callWg sync.WaitGroup
@@ -134,23 +134,6 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		cancelCall()
 		callWg.Wait()
 	}()
-
-	// callWg.Go(func() {
-	// 	defer cancelCall()
-	// 	sigClient := signaling.NewClient(vogoServer, username, password)
-	// 	recipientSd, callErr := signaling.CallFriend(callCtx, *sigClient, recipient, offer)
-	// 	if callErr != nil {
-	// 		errorChan <- fmt.Errorf("error while calling: %w", callErr)
-	// 		return
-	// 	}
-
-	// 	log.Println("RECIEVED ANSWER SD, adding remote SD")
-	// 	if sdpErr := pc.SetRemoteDescription(*recipientSd); sdpErr != nil {
-	// 		errorChan <- fmt.Errorf("error while setting remote description: %w", sdpErr)
-	// 		return
-	// 	}
-	// 	close(callAnswered)
-	// })
 
 	callWg.Go(func() {
 		defer cancelCall()
@@ -168,6 +151,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 		// post offer
 		callReq := signaling.CallRequest{RecipientName: recipient, Sd: offer}
+		log.Println("wrote offer to ws")
 		if wErr := signaling.WriteWS(ws, callReq); wErr != nil {
 			errorChan <- wErr
 			return
@@ -175,12 +159,9 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 		// for websocket reading
 		var (
-			buf        = make([]byte, 1500)
-			n          int // bytes read per message
 			readErr    error
-			mu         sync.Mutex
 			readWg     sync.WaitGroup
-			wsReadChan = make(chan struct{})
+			wsReadChan = make(chan webrtc.ICECandidateInit)
 
 			// websocket messages
 			candidate webrtc.ICECandidateInit
@@ -192,17 +173,37 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			log.Println("readWg closed")
 		}()
 
+		// TODO: here, we could send our ICE candidates to the ws while we wait for the answer
+
+		readErr = websocket.JSON.Receive(ws, &answer)
+		if readErr != nil {
+			errorChan <- fmt.Errorf("error reading answer from ws: %v", readErr)
+			ws.Close()
+			return
+		}
+		if answer.SDP == "" {
+			log.Println("empty answer")
+			return
+		}
+		if sdErr := pc.SetRemoteDescription(answer); sdErr != nil {
+			errorChan <- fmt.Errorf("error while setting remote description: %w", sdErr)
+			return
+		}
+		close(callAnswered)
+
 		readWg.Go(func() {
 			for {
-				mu.Lock()
-				// TODO: handle when this unblocks due to ws closing
-				n, readErr = ws.Read(buf)
-				mu.Unlock()
+				readErr = websocket.JSON.Receive(ws, &candidate)
 				if readErr != nil {
-					errorChan <- fmt.Errorf("error reading from ws: %w", readErr)
+					if readErr == io.EOF {
+						ws.Close()
+						return
+					}
+					log.Printf("error reading from ws: %v", readErr)
+					ws.Close()
 					return
 				}
-				wsReadChan <- struct{}{}
+				wsReadChan <- candidate
 			}
 		})
 
@@ -211,33 +212,16 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			case <-callCtx.Done():
 				log.Println("ws answer connection cancelled")
 				return
-			case candidate := <-candidateChan:
-				if wErr := signaling.WriteWS(ws, candidate); wErr != nil {
+			case iceCandidate := <-candidateChan:
+				if wErr := signaling.WriteWS(ws, iceCandidate); wErr != nil {
 					errorChan <- wErr
 					return
 				}
-			case <-wsReadChan:
-				mu.Lock()
-				switch {
-				case json.Unmarshal(buf[:n], &answer) == nil && answer.SDP != "":
-					if sdErr := pc.SetRemoteDescription(offer); sdErr != nil {
-						errorChan <- fmt.Errorf("error while setting remote description: %w", sdErr)
-						mu.Unlock()
-						return
-					}
-					close(callAnswered)
-				case json.Unmarshal(buf[:n], &candidate) == nil && candidate.Candidate != "":
-					if iceErr := pc.AddICECandidate(candidate); iceErr != nil {
-						errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
-						mu.Unlock()
-						return
-					}
-				default:
-					errorChan <- errors.New("unknown message")
-					mu.Unlock()
+			case answerCandidate := <-wsReadChan:
+				if iceErr := pc.AddICECandidate(answerCandidate); iceErr != nil {
+					errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
 					return
 				}
-				mu.Unlock()
 			}
 		}
 	})
@@ -255,10 +239,11 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		case <-captureCtx.Done(): // if call fails
 			return
 		case <-callAnswered: // TODO: this should actually wait on the onICEConnected? event
-			captureErr := audio.StartCapture(captureCtx, pc, track)
-			if captureErr != nil {
-				errorChan <- fmt.Errorf("error with capture device: %w", captureErr)
-			}
+			break
+		}
+		captureErr := audio.StartCapture(captureCtx, pc, track)
+		if captureErr != nil {
+			errorChan <- fmt.Errorf("error with capture device: %w", captureErr)
 		}
 	})
 

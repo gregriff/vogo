@@ -41,7 +41,8 @@ func CreateAndListen(debug bool, host string, port int) {
 		ReadHeaderTimeout: 500 * time.Millisecond,
 		ReadTimeout:       500 * time.Millisecond,
 		IdleTimeout:       500 * time.Millisecond,
-		Handler:           http.TimeoutHandler(handler, 30*time.Second, ""),
+		// Handler:           http.TimeoutHandler(handler, 30*time.Second, ""),
+		Handler: handler,
 	}
 
 	// graceful shutdown channel
@@ -64,7 +65,7 @@ func CreateAndListen(debug bool, host string, port int) {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("http shutdown error: %v", err)
+		log.Printf("http shutdown error: %v", err)
 	}
 	log.Println("Graceful shutdown complete.")
 }

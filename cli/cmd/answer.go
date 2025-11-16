@@ -2,10 +2,10 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -18,6 +18,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/net/websocket"
 	// _ "net/http/pprof".
 )
 
@@ -97,7 +98,7 @@ func answerCall(_ *cobra.Command, _ []string) {
 		return
 	}
 
-	candidateChan := make(chan webrtc.ICECandidateInit, 10)
+	candidateChan := make(chan webrtc.ICECandidateInit, 15)
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		internal.OnICECandidate(c, candidateChan)
 	})
@@ -109,10 +110,10 @@ func answerCall(_ *cobra.Command, _ []string) {
 		cancelAnswer()
 		answerWg.Wait()
 	}()
-	errorChan := make(chan error, 1)
+	errorChan := make(chan error, 10)
 
 	// notifies microphone capture goroutine to begin capture
-	answerSent := make(chan struct{}, 1)
+	answerSent := make(chan struct{})
 
 	answerWg.Go(func() {
 		defer cancelAnswer()
@@ -131,12 +132,9 @@ func answerCall(_ *cobra.Command, _ []string) {
 
 		// for websocket reading
 		var (
-			buf        = make([]byte, 1500)
-			n          int // bytes read per message
 			readErr    error
-			mu         sync.Mutex
 			readWg     sync.WaitGroup
-			wsReadChan = make(chan struct{})
+			wsReadChan = make(chan webrtc.ICECandidateInit)
 
 			// websocket messages
 			candidate webrtc.ICECandidateInit
@@ -148,17 +146,38 @@ func answerCall(_ *cobra.Command, _ []string) {
 			log.Println("readWg closed")
 		}()
 
+		readErr = websocket.JSON.Receive(ws, &offer)
+		if readErr != nil {
+			log.Printf("error reading offer from ws: %v", readErr)
+			ws.WriteClose(http.StatusBadRequest)
+			return
+		}
+		if offer.SDP == "" {
+			log.Println("empty offer")
+			ws.WriteClose(http.StatusBadRequest)
+			return
+		}
+		aErr := signaling.CreateAndPostAnswer(ws, pc, &offer, caller)
+		if aErr != nil {
+			errorChan <- fmt.Errorf("error creating or posting answer: %w", aErr)
+			return
+		}
+		log.Println("answer sent")
+		close(answerSent)
+
 		readWg.Go(func() {
 			for {
-				mu.Lock()
-				// TODO: handle when this unblocks due to ws closing
-				n, readErr = ws.Read(buf)
-				mu.Unlock()
+				readErr = websocket.JSON.Receive(ws, &candidate)
 				if readErr != nil {
-					errorChan <- fmt.Errorf("error reading from ws: %w", readErr)
+					if readErr == io.EOF {
+						ws.Close()
+						return
+					}
+					log.Printf("error reading from ws: %v", readErr)
+					ws.Close()
 					return
 				}
-				wsReadChan <- struct{}{}
+				wsReadChan <- candidate
 			}
 		})
 
@@ -167,80 +186,23 @@ func answerCall(_ *cobra.Command, _ []string) {
 			case <-answerCtx.Done():
 				log.Println("ws answer connection cancelled")
 				return
-			case candidate := <-candidateChan:
-				if wErr := signaling.WriteWS(ws, candidate); wErr != nil {
+			case iceCandidate := <-candidateChan:
+				if wErr := signaling.WriteWS(ws, iceCandidate); wErr != nil {
 					errorChan <- wErr
 					return
 				}
-			case <-wsReadChan:
-				mu.Lock()
-				switch {
-				case json.Unmarshal(buf[:n], &offer) == nil && offer.SDP != "":
-					aErr := signaling.CreateAndPostAnswer(ws, pc, &offer, caller)
-					if aErr != nil {
-						errorChan <- fmt.Errorf("error creating or posting answer: %w", aErr)
-						mu.Unlock()
-						return
-					}
-					close(answerSent)
-				case json.Unmarshal(buf[:n], &candidate) == nil && candidate.Candidate != "":
-					if iceErr := pc.AddICECandidate(candidate); iceErr != nil {
-						errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
-						mu.Unlock()
-						return
-					}
-				default:
-					errorChan <- errors.New("unknown message")
-					mu.Unlock()
+			case callerCandidate := <-wsReadChan:
+				if callerCandidate.Candidate == "" {
+					log.Println("empty candidate recieved")
 					return
 				}
-				mu.Unlock()
+				if iceErr := pc.AddICECandidate(callerCandidate); iceErr != nil {
+					errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
+					return
+				}
 			}
 		}
 	})
-
-	// log.Println("getting caller SD from vogo server, caller Name: ", caller)
-	// sigClient := signaling.NewClient(vogoServer, username, password)
-
-	// callerSd, sdErr := signaling.GetCallerSd(*sigClient, caller)
-	// if sdErr != nil {
-	// 	fmt.Printf("error getting callers session description: %v", sdErr)
-	// 	return
-	// }
-
-	// log.Println("setting caller's remote description")
-	// if sdErr = pc.SetRemoteDescription(*callerSd); sdErr != nil {
-	// 	fmt.Printf("error setting callers remote description: %v", sdErr)
-	// 	return
-	// }
-
-	// log.Println("answerer creating answer")
-	// answer, aErr := pc.CreateAnswer(nil)
-	// if aErr != nil {
-	// 	fmt.Printf("error creating answer: %v", aErr)
-	// 	return
-	// }
-
-	// // Sets the LocalDescription, and starts our UDP listeners
-	// log.Println("answerer setting localDescription and listening for UDP")
-	// ldErr := pc.SetLocalDescription(answer)
-	// if ldErr != nil {
-	// 	fmt.Printf("error setting local description: %v", ldErr)
-	// 	return
-	// }
-
-	// TODO: once ws is working, do we even need to check to see if gathering is completed?
-	// prob not
-	// log.Println("waiting on gathering complete promise")
-	// <-webrtc.GatheringCompletePromise(pc)
-	// log.Println("waiting completed")
-
-	// TODO: this should send on ws immediately
-	// answerErr := signaling.PostAnswer(*sigClient, caller, *pc.LocalDescription())
-	// if answerErr != nil {
-	// 	fmt.Printf("error while posting answer: %v", answerErr)
-	// 	return
-	// }
 
 	// TODO: the above should run in a goroutine with a context and
 	// signal to the below that the ansewr has been completed.
@@ -255,7 +217,12 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// setup mic and capture until the above cancel func is run
 	captureWaitGroup.Go(func() {
 		// TODO: need to wait for onICEconnected
-		<-answerSent
+		select {
+		case <-captureCtx.Done():
+			return
+		case <-answerSent:
+			break
+		}
 		captureErr := audio.StartCapture(captureCtx, pc, track)
 		if captureErr != nil {
 			errorChan <- fmt.Errorf("error with capture device: %v", captureErr)

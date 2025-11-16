@@ -29,13 +29,15 @@ func NewWsConfig(baseUrl, username, password, endpoint string) (*websocket.Confi
 }
 
 // WriteWS writes to a websocket connection
+// TODO: can replace with websocket.JSON.Send()
 func WriteWS(ws *websocket.Conn, data any) error {
 	bytes, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("error marshaling before writing to websocket: %w", err)
 	}
 
-	_, err = ws.Write(bytes)
+	n, err := ws.Write(bytes)
+	log.Printf("wrote %d bytes to ws", n)
 	if err != nil {
 		return fmt.Errorf("error writing to websocket: %w", err)
 	}
