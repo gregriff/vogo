@@ -3,9 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -118,43 +116,33 @@ func answerCall(_ *cobra.Command, _ []string) {
 	answerWg.Go(func() {
 		defer cancelAnswer()
 		endpoint := fmt.Sprintf("/answer/%s", caller)
-		cfg, cfgErr := signaling.NewWsConfig(vogoServer, username, password, endpoint)
-		if cfgErr != nil {
-			errorChan <- cfgErr
-			return
-		}
-
-		ws, dialErr := cfg.DialContext(answerCtx)
-		if dialErr != nil {
-			errorChan <- fmt.Errorf("error dialing ws: %w", dialErr)
+		ws, wsErr := signaling.NewWebsocketConn(answerCtx, vogoServer, username, password, endpoint)
+		if wsErr != nil {
+			errorChan <- fmt.Errorf("error creating websocket connection: %w", wsErr)
 			return
 		}
 
 		// for websocket reading
 		var (
-			readErr    error
-			readWg     sync.WaitGroup
-			wsReadChan = make(chan webrtc.ICECandidateInit)
+			readWg   sync.WaitGroup
+			readChan = make(chan webrtc.ICECandidateInit)
 
 			// websocket messages
 			candidate webrtc.ICECandidateInit
 			offer     webrtc.SessionDescription
 		)
 		defer func() {
-			ws.Close()
+			if cErr := ws.Close(); cErr != nil {
+				log.Printf("error closing ws in defer: %v", cErr)
+			}
 			readWg.Wait()
 			log.Println("readWg closed")
 		}()
 
-		readErr = websocket.JSON.Receive(ws, &offer)
+		// wait to recv offer
+		readErr := websocket.JSON.Receive(ws, &offer)
 		if readErr != nil {
 			log.Printf("error reading offer from ws: %v", readErr)
-			ws.WriteClose(http.StatusBadRequest)
-			return
-		}
-		if offer.SDP == "" {
-			log.Println("empty offer")
-			ws.WriteClose(http.StatusBadRequest)
 			return
 		}
 		aErr := signaling.CreateAndPostAnswer(ws, pc, &offer, caller)
@@ -166,19 +154,7 @@ func answerCall(_ *cobra.Command, _ []string) {
 		close(answerSent)
 
 		readWg.Go(func() {
-			for {
-				readErr = websocket.JSON.Receive(ws, &candidate)
-				if readErr != nil {
-					if readErr == io.EOF {
-						ws.Close()
-						return
-					}
-					log.Printf("error reading from ws: %v", readErr)
-					ws.Close()
-					return
-				}
-				wsReadChan <- candidate
-			}
+			signaling.ReadForever(ws, candidate, readChan)
 		})
 
 		for {
@@ -186,16 +162,17 @@ func answerCall(_ *cobra.Command, _ []string) {
 			case <-answerCtx.Done():
 				log.Println("ws answer connection cancelled")
 				return
-			case iceCandidate := <-candidateChan:
-				if wErr := signaling.WriteWS(ws, iceCandidate); wErr != nil {
-					errorChan <- wErr
+			case iceCandidate, ok := <-candidateChan:
+				if sErr := websocket.JSON.Send(ws, iceCandidate); sErr != nil {
+					errorChan <- fmt.Errorf("error sending ice candidate: %w", sErr)
 					return
 				}
-			case callerCandidate := <-wsReadChan:
-				if callerCandidate.Candidate == "" {
-					log.Println("empty candidate recieved")
+				log.Println("sent candidate")
+				if !ok {
+					log.Println("caller's ice gathering completed, channel closed")
 					return
 				}
+			case callerCandidate := <-readChan:
 				if iceErr := pc.AddICECandidate(callerCandidate); iceErr != nil {
 					errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
 					return

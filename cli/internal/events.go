@@ -8,7 +8,7 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-func OnICECandidate(candidate *webrtc.ICECandidate, ch chan webrtc.ICECandidateInit) {
+func OnICECandidate(candidate *webrtc.ICECandidate, ch chan<- webrtc.ICECandidateInit) {
 	addr := "nil!"
 	if candidate != nil {
 		addr = candidate.Address
@@ -16,6 +16,7 @@ func OnICECandidate(candidate *webrtc.ICECandidate, ch chan webrtc.ICECandidateI
 	log.Printf("ICE candidate recieved: %s", addr)
 
 	if candidate == nil {
+		close(ch)
 		return
 	}
 	ch <- candidate.ToJSON()

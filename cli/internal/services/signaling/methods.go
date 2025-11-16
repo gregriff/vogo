@@ -39,8 +39,10 @@ func CreateAndPostAnswer(ws *websocket.Conn, pc *webrtc.PeerConnection, offer *w
 		fmt.Printf("error setting local description: %v", err)
 		return err
 	}
+
+	// send answer
 	answerReq := AnswerRequest{CallerName: callerName, Sd: *pc.LocalDescription()}
-	if err = WriteWS(ws, answerReq); err != nil {
+	if err = websocket.JSON.Send(ws, answerReq); err != nil {
 		return err
 	}
 	return nil

@@ -1,17 +1,34 @@
 package signaling
 
 import (
+	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 
 	"golang.org/x/net/websocket"
 )
 
-// NewWsConfig creates a new websocket.Config for the vogo server for a specific endpoint, with basic auth.
-func NewWsConfig(baseUrl, username, password, endpoint string) (*websocket.Config, error) {
+// NewWebsocketConn creates a websocket connection to the vogo server.
+func NewWebsocketConn(
+	ctx context.Context,
+	baseUrl, username, password, endpoint string,
+) (*websocket.Conn, error) {
+	cfg, err := newWebsocketConfig(baseUrl, username, password, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	ws, err := cfg.DialContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error dialing ws: %w", err)
+	}
+	return ws, nil
+}
+
+// newWebsocketConfig creates a new websocket.Config for the vogo server for a specific endpoint, with basic auth.
+func newWebsocketConfig(baseUrl, username, password, endpoint string) (*websocket.Config, error) {
 	loc := strings.Replace(baseUrl, "http", "ws", 1) + endpoint
 	log.Println("ws url: ", loc)
 
@@ -28,18 +45,20 @@ func NewWsConfig(baseUrl, username, password, endpoint string) (*websocket.Confi
 	return cfg, nil
 }
 
-// WriteWS writes to a websocket connection
-// TODO: can replace with websocket.JSON.Send()
-func WriteWS(ws *websocket.Conn, data any) error {
-	bytes, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("error marshaling before writing to websocket: %w", err)
+// ReadForever reads from ws in a loop, sending the data read to the channel ch.
+// If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
+func ReadForever[T any](ws *websocket.Conn, data T, ch chan T) {
+	var err error
+	for {
+		err = websocket.JSON.Receive(ws, &data)
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			log.Printf("error reading from ws: %v", err)
+			_ = ws.Close()
+			return
+		}
+		ch <- data
 	}
-
-	n, err := ws.Write(bytes)
-	log.Printf("wrote %d bytes to ws", n)
-	if err != nil {
-		return fmt.Errorf("error writing to websocket: %w", err)
-	}
-	return nil
 }

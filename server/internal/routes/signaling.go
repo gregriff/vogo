@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -53,9 +52,9 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 		iceRecvChan = make(chan webrtc.ICECandidateInit, 15)
 
 		// for websocket reading ////////////////////////
-		readErr    error
-		readWg     sync.WaitGroup
-		wsReadChan = make(chan webrtc.ICECandidateInit)
+		readErr  error
+		readWg   sync.WaitGroup
+		readChan = make(chan webrtc.ICECandidateInit)
 
 		// websocket messages
 		candidate webrtc.ICECandidateInit
@@ -63,7 +62,10 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 		/////////////////////////////////////////////////
 	)
 	defer func() {
-		ws.Close()
+		cErr := ws.Close()
+		if cErr != nil {
+			log.Println("error closing ws during defer: ", cErr)
+		}
 		readWg.Wait()
 		log.Println("readWg closed")
 	}()
@@ -93,19 +95,7 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 	log.Println("call created")
 
 	readWg.Go(func() {
-		for {
-			readErr = websocket.JSON.Receive(ws, &candidate)
-			if readErr != nil {
-				if readErr == io.EOF {
-					ws.Close()
-					return
-				}
-				log.Printf("error reading from ws: %v", readErr)
-				ws.WriteClose(http.StatusInternalServerError)
-				return
-			}
-			wsReadChan <- candidate
-		}
+		ReadForever(ws, candidate, readChan)
 	})
 
 	// this request will be canceled by the client once the call is successful,
@@ -114,22 +104,28 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("Call req context done")
 			calls.Delete(caller.Id)
 			return
 		case answerSd := <-answerChan:
-			if wErr := wsWrite(ws, answerSd); wErr != nil {
+			if wErr := websocket.JSON.Send(ws, answerSd); wErr != nil {
 				log.Printf("error writing answer: %v", wErr)
 				return
 			}
-		case answerCandidate := <-iceRecvChan:
-			if wErr := wsWrite(ws, answerCandidate); wErr != nil {
+		case answerCandidate, ok := <-iceRecvChan:
+			if wErr := websocket.JSON.Send(ws, answerCandidate); wErr != nil {
 				log.Printf("error writing candidate: %v", wErr)
 				return
 			}
-		case callerCandidate := <-wsReadChan:
-			if callerCandidate.Candidate == "" {
-				log.Println("empty candidate recieved")
+			if !ok {
+				log.Println("nil answer candidate sent, call will succeed")
 				return
+			}
+		case callerCandidate := <-readChan:
+			// TODO: could have readforever do this check and close the chan, and check closure here
+			if callerCandidate.Candidate == "" {
+				log.Println("empty candidate recieved: ", callerCandidate)
+				break
 			}
 			call, err := calls.Get(caller.Id)
 			if err != nil {
@@ -170,23 +166,26 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 	}
 
 	// send caller's SD. client will then create an answer and post it to this ws
-	if wErr := wsWrite(ws, call.From.Sd); wErr != nil {
+	if wErr := websocket.JSON.Send(ws, call.From.Sd); wErr != nil {
 		log.Printf("error writing offer: %v", wErr)
 		return
 	}
 
 	// for websocket reading
 	var (
-		readErr    error
-		readWg     sync.WaitGroup
-		wsReadChan = make(chan webrtc.ICECandidateInit)
+		readErr  error
+		readWg   sync.WaitGroup
+		readChan = make(chan webrtc.ICECandidateInit)
 
 		// websocket messages
 		candidate webrtc.ICECandidateInit
 		answer    schemas.AnswerRequest
 	)
 	defer func() {
-		ws.Close()
+		cErr := ws.Close()
+		if cErr != nil {
+			log.Println("error closing ws during defer: ", cErr)
+		}
 		readWg.Wait()
 		log.Println("readWg closed")
 	}()
@@ -216,61 +215,58 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 		log.Printf("call not found during answer: %v", err)
 		return
 	}
-	fmt.Println("answer sending to chan")
 	call.AnswerChan <- answer.Sd
 
 	readWg.Go(func() {
-		for {
-			readErr = websocket.JSON.Receive(ws, &candidate)
-			if readErr != nil {
-				if readErr == io.EOF {
-					ws.Close()
-					return
-				}
-				log.Printf("error reading from ws: %v", readErr)
-				ws.WriteClose(http.StatusInternalServerError)
-				return
-			}
-			wsReadChan <- candidate
-		}
+		ReadForever(ws, candidate, readChan)
 	})
 
 	ctx := ws.Request().Context()
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("Answer req context done")
 			calls.Delete(caller.Id)
 			return
 		case candidate := <-call.From.CandidateChan:
-			if wErr := wsWrite(ws, candidate); wErr != nil {
+			if wErr := websocket.JSON.Send(ws, candidate); wErr != nil {
 				log.Printf("error writing answer: %v", wErr)
 				return
 			}
-		case answerCandidate := <-wsReadChan:
-			if answerCandidate.Candidate == "" {
-				log.Println("empty candidate recieved")
-				return
-			}
+		case answerCandidate := <-readChan:
 			call, err := calls.Get(caller.Id)
 			if err != nil {
 				log.Print("answer: call not found during trickle ice")
 				return
 			}
+			// TODO: maybe dont send the empty candidate, so server is always the one to close the conn?
 			call.To.CandidateChan <- answerCandidate
 			fmt.Println("answer candidate sent to chan")
+			if answerCandidate.Candidate == "" {
+				log.Println("empty candidate recieved", answerCandidate)
+				close(call.To.CandidateChan)
+				return
+			}
 		}
 	}
 }
 
-func wsWrite(ws *websocket.Conn, data any) error {
-	bytes, err := json.Marshal(data)
-	if err != nil {
-		return err
+// ReadForever reads from ws in a loop, sending the data read to the channel ch.
+// If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
+func ReadForever[T any](ws *websocket.Conn, data T, ch chan T) {
+	var err error
+	for {
+		err = websocket.JSON.Receive(ws, &data)
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			log.Printf("error reading from ws: %v", err)
+			if closeErr := ws.Close(); closeErr != nil {
+				log.Printf("error closing ws: %v", closeErr)
+			}
+			return
+		}
+		ch <- data
 	}
-
-	_, err = ws.Write(bytes)
-	if err != nil {
-		return err
-	}
-	return nil
 }
