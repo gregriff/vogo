@@ -113,43 +113,15 @@ func answerCall(_ *cobra.Command, _ []string) {
 	defer func() { // wait for capture device teardown
 		cancelAnswer()
 		answerWg.Wait()
+		log.Println("answer wg completed")
 	}()
 	errorChan := make(chan error, 10)
 
 	answerWg.Go(func() {
 		defer cancelAnswer()
-		defer func() {
-			log.Println("answer goroutine COMPLETE")
-		}()
-		endpoint := fmt.Sprintf("/answer/%s", caller)
-		ws, err := signaling.NewConnection(answerCtx, vogoServer, username, password, endpoint)
-		if err != nil {
-			errorChan <- fmt.Errorf("error creating websocket: %w", err)
-			return
-		}
 
-		offer, err := signaling.RecieveOffer(ws)
-		if err != nil {
-			errorChan <- fmt.Errorf("error recieving offer: %w", err)
-		}
-		err = signaling.CreateAndSendAnswer(ws, pc, offer, caller)
-		if err != nil {
-			errorChan <- fmt.Errorf("error creating or posting answer %w", err)
-			return
-		}
-		log.Println("answer sent")
-
-		// read caller candidates from ws as they come in
-		var (
-			readWg           sync.WaitGroup
-			callerCandidates = make(chan webrtc.ICECandidateInit)
-		)
-		defer signaling.CloseAndWait(ws, &readWg)
-
-		readWg.Go(func() {
-			signaling.ReadCandidates(ws, callerCandidates)
-		})
-		err = exchangeCandidates(answerCtx, ws, pc, candidates, callerCandidates)
+		credentials := signaling.NewCredentials(vogoServer, username, password)
+		err = answerAndConnect(answerCtx, pc, credentials, caller, candidates)
 		if err != nil {
 			errorChan <- err
 			return
@@ -185,6 +157,49 @@ func answerCall(_ *cobra.Command, _ []string) {
 	case <-sigCtx.Done():
 		break
 	}
+}
+
+// answerAndConnect answers and establishes a voice call with a friend client. It
+// uses a websocket connection to a vogo server to handle signaling and connecting.
+// It uses trickle-ICE for fast connection.
+func answerAndConnect(
+	ctx context.Context,
+	pc *webrtc.PeerConnection,
+	credentials *signaling.Credentials,
+	caller string,
+	candidates <-chan webrtc.ICECandidateInit,
+) error {
+	endpoint := fmt.Sprintf("/answer/%s", caller)
+	ws, err := signaling.NewConnection(ctx, credentials, endpoint)
+	if err != nil {
+		return fmt.Errorf("error creating websocket: %w", err)
+	}
+
+	offer, err := signaling.RecieveOffer(ws)
+	if err != nil {
+		return fmt.Errorf("error recieving offer: %w", err)
+	}
+	err = signaling.CreateAndSendAnswer(ws, pc, offer, caller)
+	if err != nil {
+		return fmt.Errorf("error creating or posting answer %w", err)
+	}
+	log.Println("answer sent")
+
+	// read caller candidates from ws as they come in
+	var (
+		readWg           sync.WaitGroup
+		callerCandidates = make(chan webrtc.ICECandidateInit)
+	)
+	defer signaling.CloseAndWait(ws, &readWg)
+
+	readWg.Go(func() {
+		signaling.ReadCandidates(ws, callerCandidates)
+	})
+	err = exchangeCandidates(ctx, ws, pc, candidates, callerCandidates)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // exchangeCandidates handles sending the client's ICE candidates to the websocket to be

@@ -111,65 +111,16 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	callCtx, cancelCall := context.WithCancel(sigCtx)
 	defer func() {
 		cancelCall()
-		log.Println("cancelCall called, waiting...")
 		callWg.Wait()
 		log.Println("call wg completed")
 	}()
 
 	callWg.Go(func() {
 		defer cancelCall()
-		defer func() {
-			log.Println("call goroutine COMPLETE")
-		}()
-		ws, err := signaling.NewConnection(callCtx, vogoServer, username, password, "/call")
+
+		credentials := signaling.NewCredentials(vogoServer, username, password)
+		err := sendCallAndConnect(callCtx, pc, credentials, recipient, candidates, errorChan)
 		if err != nil {
-			errorChan <- fmt.Errorf("error creating websocket: %w", err)
-			return
-		}
-
-		if err = signaling.CreateAndSendOffer(ws, pc, recipient); err != nil {
-			errorChan <- err
-			return
-		}
-
-		var iceWg sync.WaitGroup
-		iceCtx, cancelSendIce := context.WithCancel(callCtx)
-		defer func() {
-			cancelSendIce()
-			iceWg.Wait()
-		}()
-
-		// gather local ice candidates and write to websocket
-		iceWg.Go(func() {
-			defer cancelSendIce()
-			if err = sendCandidates(iceCtx, ws, candidates); err != nil {
-				errorChan <- err
-			}
-		})
-
-		// wait to recv answer
-		var answer webrtc.SessionDescription
-		if err = websocket.JSON.Receive(ws, &answer); err != nil {
-			errorChan <- fmt.Errorf("error reading answer from ws: %v", err)
-			return
-		}
-		if err = pc.SetRemoteDescription(answer); err != nil {
-			errorChan <- fmt.Errorf("error while setting remote description: %w", err)
-			return
-		}
-		log.Println("recieved answer")
-
-		var (
-			readWg              sync.WaitGroup
-			recipientCandidates = make(chan webrtc.ICECandidateInit)
-		)
-		defer signaling.CloseAndWait(ws, &readWg)
-
-		// read recipient candidates from ws as they come in
-		readWg.Go(func() {
-			signaling.ReadCandidates(ws, recipientCandidates)
-		})
-		if err = addCandidates(callCtx, pc, recipientCandidates); err != nil {
 			errorChan <- err
 			return
 		}
@@ -205,6 +156,67 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	case <-sigCtx.Done():
 		break
 	}
+}
+
+// sendCallAndConnect creates and establishes a voice call with a friend client, if
+// they answer the call. It uses a websocket connection to a vogo server to handle
+// signaling and connecting, and uses trickle-ICE for fast connection.
+func sendCallAndConnect(
+	ctx context.Context,
+	pc *webrtc.PeerConnection,
+	credentials *signaling.Credentials,
+	recipient string,
+	candidates <-chan webrtc.ICECandidateInit,
+	abort chan<- error,
+) error {
+	ws, err := signaling.NewConnection(ctx, credentials, "/call")
+	if err != nil {
+		return fmt.Errorf("error creating websocket: %w", err)
+	}
+
+	if err = signaling.CreateAndSendOffer(ws, pc, recipient); err != nil {
+		return err
+	}
+
+	var iceWg sync.WaitGroup
+	iceCtx, cancelSendIce := context.WithCancel(ctx)
+	defer func() {
+		cancelSendIce()
+		iceWg.Wait()
+	}()
+
+	// gather local ice candidates and write to websocket
+	iceWg.Go(func() {
+		defer cancelSendIce()
+		if err = sendCandidates(iceCtx, ws, candidates); err != nil {
+			abort <- err // this will cause surrounding function to cancel
+		}
+	})
+
+	// wait to recv answer
+	var answer webrtc.SessionDescription
+	if err = websocket.JSON.Receive(ws, &answer); err != nil {
+		return fmt.Errorf("error reading answer from ws: %v", err)
+	}
+	if err = pc.SetRemoteDescription(answer); err != nil {
+		return fmt.Errorf("error while setting remote description: %w", err)
+	}
+	log.Println("recieved answer")
+
+	var (
+		readWg              sync.WaitGroup
+		recipientCandidates = make(chan webrtc.ICECandidateInit)
+	)
+	defer signaling.CloseAndWait(ws, &readWg)
+
+	// read recipient candidates from ws as they come in
+	readWg.Go(func() {
+		signaling.ReadCandidates(ws, recipientCandidates)
+	})
+	if err = addCandidates(ctx, pc, recipientCandidates); err != nil {
+		return err
+	}
+	return nil
 }
 
 // sendCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.

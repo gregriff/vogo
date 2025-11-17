@@ -17,9 +17,10 @@ import (
 // with http basic auth headers.
 func NewConnection(
 	ctx context.Context,
-	baseUrl, username, password, endpoint string,
+	credentials *Credentials,
+	endpoint string,
 ) (*websocket.Conn, error) {
-	cfg, err := newWebsocketConfig(baseUrl, username, password, endpoint)
+	cfg, err := newWebsocketConfig(credentials, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -31,8 +32,8 @@ func NewConnection(
 }
 
 // newWebsocketConfig creates a new websocket.Config for the vogo server for a specific endpoint, with basic auth.
-func newWebsocketConfig(baseUrl, username, password, endpoint string) (*websocket.Config, error) {
-	loc := strings.Replace(baseUrl, "http", "ws", 1) + endpoint
+func newWebsocketConfig(c *Credentials, endpoint string) (*websocket.Config, error) {
+	loc := strings.Replace(c.baseURL, "http", "ws", 1) + endpoint
 	log.Println("ws url: ", loc)
 
 	cfg, err := websocket.NewConfig(loc, "app://vogo") // no real origin b/c we're not a browser
@@ -41,7 +42,7 @@ func newWebsocketConfig(baseUrl, username, password, endpoint string) (*websocke
 	}
 
 	// set basic auth for the http request that initates the ws connection
-	auth := username + ":" + password
+	auth := c.username + ":" + c.password
 	auth = base64.StdEncoding.EncodeToString([]byte(auth))
 	cfg.Header.Set("Authorization", "Basic "+auth)
 
