@@ -12,11 +12,10 @@ import (
 	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal"
 	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/cli/internal/services/signaling"
+	"github.com/gregriff/vogo/cli/internal/services/core"
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"golang.org/x/net/websocket"
 	// _ "net/http/pprof".
 )
 
@@ -70,12 +69,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		fmt.Printf("error creating peer connection %v", err)
 		return
 	}
-	defer func() {
-		log.Println("forcing close of caller connection")
-		if err := pc.Close(); err != nil {
-			fmt.Printf("cannot forcefully close caller connection: %v\n", err)
-		}
-	}()
+	defer configs.ClosePC(pc, true)
 
 	track, err := configs.CreateAudioTrack(pc, username)
 	if err != nil {
@@ -118,8 +112,8 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	callWg.Go(func() {
 		defer cancelCall()
 
-		credentials := signaling.NewCredentials(vogoServer, username, password)
-		err := sendCallAndConnect(callCtx, pc, credentials, recipient, candidates, errorChan)
+		credentials := core.NewCredentials(vogoServer, username, password)
+		err := core.SendCallAndConnect(callCtx, pc, credentials, recipient, candidates, errorChan)
 		if err != nil {
 			errorChan <- err
 			return
@@ -155,108 +149,5 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		break
 	case <-sigCtx.Done():
 		break
-	}
-}
-
-// sendCallAndConnect creates and establishes a voice call with a friend client, if
-// they answer the call. It uses a websocket connection to a vogo server to handle
-// signaling and connecting, and uses trickle-ICE for fast connection.
-func sendCallAndConnect(
-	ctx context.Context,
-	pc *webrtc.PeerConnection,
-	credentials *signaling.Credentials,
-	recipient string,
-	candidates <-chan webrtc.ICECandidateInit,
-	abort chan<- error,
-) error {
-	ws, err := signaling.NewConnection(ctx, credentials, "/call")
-	if err != nil {
-		return fmt.Errorf("error creating websocket: %w", err)
-	}
-
-	if err = signaling.CreateAndSendOffer(ws, pc, recipient); err != nil {
-		return err
-	}
-
-	var iceWg sync.WaitGroup
-	iceCtx, cancelSendIce := context.WithCancel(ctx)
-	defer func() {
-		cancelSendIce()
-		iceWg.Wait()
-	}()
-
-	// gather local ice candidates and write to websocket
-	iceWg.Go(func() {
-		defer cancelSendIce()
-		if err = sendCandidates(iceCtx, ws, candidates); err != nil {
-			abort <- err // this will cause surrounding function to cancel
-		}
-	})
-
-	// wait to recv answer
-	var answer webrtc.SessionDescription
-	if err = websocket.JSON.Receive(ws, &answer); err != nil {
-		return fmt.Errorf("error reading answer from ws: %v", err)
-	}
-	if err = pc.SetRemoteDescription(answer); err != nil {
-		return fmt.Errorf("error while setting remote description: %w", err)
-	}
-	log.Println("recieved answer")
-
-	var (
-		readWg              sync.WaitGroup
-		recipientCandidates = make(chan webrtc.ICECandidateInit)
-	)
-	defer signaling.CloseAndWait(ws, &readWg)
-
-	// read recipient candidates from ws as they come in
-	readWg.Go(func() {
-		signaling.ReadCandidates(ws, recipientCandidates)
-	})
-	if err = addCandidates(ctx, pc, recipientCandidates); err != nil {
-		return err
-	}
-	return nil
-}
-
-// sendCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.
-// It returns when there are no more candidates or the context is cancelled.
-func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.ICECandidateInit) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case candidate, ok := <-ch:
-			if err := websocket.JSON.Send(ws, candidate); err != nil {
-				return fmt.Errorf("error sending ice candidate: %w", err)
-			}
-			log.Println("sent candidate")
-			if !ok {
-				log.Println("ice gathering completed")
-				return nil
-			}
-		}
-	}
-}
-
-// addCandidates adds the recipient's ICE candidates from ch to the peer connection until
-// there are no more or the context is cancelled.
-func addCandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan webrtc.ICECandidateInit) error {
-	for {
-		select {
-		case <-ctx.Done():
-			log.Println("ws caller ctx cancelled")
-			return nil
-		case candidate, ok := <-ch: // from the websocket
-			if !ok {
-				log.Println("no more recipient candidates")
-				ch = nil
-				continue
-			}
-			log.Println("recv recipient candidate")
-			if err := pc.AddICECandidate(candidate); err != nil {
-				return fmt.Errorf("error recieving ICE candidate: %w", err)
-			}
-		}
 	}
 }

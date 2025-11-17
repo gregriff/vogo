@@ -1,4 +1,4 @@
-package signaling
+package core
 
 import (
 	"context"
@@ -13,11 +13,28 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-// NewConnection creates a websocket connection to the vogo server to a given endpoint,
+// credentials are for signaling and connecting
+type credentials struct {
+	baseURL,
+	username,
+	password string
+}
+
+// NewCredentials creates credentials needed to make websocket requests
+// to the vogo server for signaling/connecting.
+func NewCredentials(baseURL, username, password string) *credentials {
+	return &credentials{
+		baseURL:  baseURL,
+		username: username,
+		password: password,
+	}
+}
+
+// newWebsocket creates a websocket connection to the vogo server to a given endpoint,
 // with http basic auth headers.
-func NewConnection(
+func newWebsocket(
 	ctx context.Context,
-	credentials *Credentials,
+	credentials *credentials,
 	endpoint string,
 ) (*websocket.Conn, error) {
 	cfg, err := newWebsocketConfig(credentials, endpoint)
@@ -32,7 +49,7 @@ func NewConnection(
 }
 
 // newWebsocketConfig creates a new websocket.Config for the vogo server for a specific endpoint, with basic auth.
-func newWebsocketConfig(c *Credentials, endpoint string) (*websocket.Config, error) {
+func newWebsocketConfig(c *credentials, endpoint string) (*websocket.Config, error) {
 	loc := strings.Replace(c.baseURL, "http", "ws", 1) + endpoint
 	log.Println("ws url: ", loc)
 
@@ -49,10 +66,10 @@ func newWebsocketConfig(c *Credentials, endpoint string) (*websocket.Config, err
 	return cfg, nil
 }
 
-// ReadCandidates reads from ws in a loop, sending candidates read to the channel ch.
+// readCandidates reads from ws in a loop, sending candidates read to the channel ch.
 // When an empty candidate is read, the channel is closed, signalling that ICE gather on this
 // websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
-func ReadCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
+func readCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
 	var candidate webrtc.ICECandidateInit
 	for {
 		err := websocket.JSON.Receive(ws, &candidate)
@@ -74,9 +91,9 @@ func ReadCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
 	}
 }
 
-// CloseAndWait closes the websocket, unblocking any reads on it. wg should be the waitgroup
+// closeAndWait closes the websocket, unblocking any reads on it. wg should be the waitgroup
 // for the goroutine reading the websocket.
-func CloseAndWait(ws *websocket.Conn, wg *sync.WaitGroup) {
+func closeAndWait(ws *websocket.Conn, wg *sync.WaitGroup) {
 	if err := ws.Close(); err != nil {
 		log.Printf("error closing ws in defer: %v", err)
 	}

@@ -1,4 +1,4 @@
-package vogo
+package crud
 
 import (
 	"bytes"

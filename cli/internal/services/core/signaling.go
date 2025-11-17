@@ -1,4 +1,4 @@
-package signaling
+package core
 
 import (
 	"fmt"

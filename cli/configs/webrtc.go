@@ -2,6 +2,7 @@ package configs
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/pion/webrtc/v4"
@@ -82,4 +83,13 @@ func CreateAudioTrack(pc *webrtc.PeerConnection, trackID string) (*webrtc.TrackL
 	}
 	audioTrsv.Sender().ReplaceTrack(captureTrack)
 	return captureTrack, nil
+}
+
+func ClosePC(pc *webrtc.PeerConnection, verbose bool) {
+	if verbose {
+		log.Println("closing peer connection")
+	}
+	if err := pc.Close(); err != nil {
+		fmt.Printf("cannot close peer connection: %v", err)
+	}
 }
