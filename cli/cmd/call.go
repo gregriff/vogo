@@ -201,6 +201,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			errorChan <- fmt.Errorf("error while setting remote description: %w", sdErr)
 			return
 		}
+		log.Println("recieved answer")
 		close(callAnswered)
 
 		readWg.Go(func() {

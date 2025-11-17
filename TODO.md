@@ -1,6 +1,7 @@
 # TODOs
 
 ### Next:
+- oniceconnected, stop the call and answer goroutines
 - remove username get from answer endpoint
 - ensure that errorChan never blocks (if multiple errors are sent to it) 
 - server both call and answer requests should close. need to figure out how to cancel the request context

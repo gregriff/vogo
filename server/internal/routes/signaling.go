@@ -57,8 +57,7 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 		readChan = make(chan webrtc.ICECandidateInit)
 
 		// websocket messages
-		candidate webrtc.ICECandidateInit
-		offer     schemas.CallRequest
+		offer schemas.CallRequest
 		/////////////////////////////////////////////////
 	)
 	defer func() {
@@ -67,7 +66,6 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 			log.Println("error closing ws during defer: ", cErr)
 		}
 		readWg.Wait()
-		log.Println("readWg closed")
 	}()
 
 	// TODO: create a codec and quit using the buffer to read, since messages could queue and n is overwritten.
@@ -95,7 +93,7 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 	log.Println("call created")
 
 	readWg.Go(func() {
-		ReadForever(ws, candidate, readChan)
+		ReadCandidates(ws, readChan)
 	})
 
 	// this request will be canceled by the client once the call is successful,
@@ -121,19 +119,22 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 				log.Println("nil answer candidate sent, call will succeed")
 				return
 			}
-		case callerCandidate := <-readChan:
-			// TODO: could have readforever do this check and close the chan, and check closure here
-			if callerCandidate.Candidate == "" {
-				log.Println("empty candidate recieved: ", callerCandidate)
-				break
-			}
+		// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
+		// or maybe even then, caller candidates will be present for the answerer so will always finish first
+		case callerCandidate, ok := <-readChan:
+			// TODO: since chans are the only things interacted with, we can store the call outside of this loop
 			call, err := calls.Get(caller.Id)
 			if err != nil {
 				log.Print("call not found during trickle ice")
 				return
 			}
+			if !ok { // caller gather completed
+				close(call.From.CandidateChan)
+				readChan = nil
+				break
+			}
 			call.From.CandidateChan <- callerCandidate
-			fmt.Println("caller candidate sent to chan")
+			fmt.Println("caller candidate sent")
 		}
 	}
 }
@@ -178,8 +179,7 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 		readChan = make(chan webrtc.ICECandidateInit)
 
 		// websocket messages
-		candidate webrtc.ICECandidateInit
-		answer    schemas.AnswerRequest
+		answer schemas.AnswerRequest
 	)
 	defer func() {
 		cErr := ws.Close()
@@ -187,7 +187,6 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 			log.Println("error closing ws during defer: ", cErr)
 		}
 		readWg.Wait()
-		log.Println("readWg closed")
 	}()
 
 	readErr = websocket.JSON.Receive(ws, &answer)
@@ -218,7 +217,7 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 	call.AnswerChan <- answer.Sd
 
 	readWg.Go(func() {
-		ReadForever(ws, candidate, readChan)
+		ReadCandidates(ws, readChan)
 	})
 
 	ctx := ws.Request().Context()
@@ -228,35 +227,45 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 			log.Println("Answer req context done")
 			calls.Delete(caller.Id)
 			return
-		case candidate := <-call.From.CandidateChan:
+		// note: this needs to continue to run even if readchan is closed. this may always complete first tho...
+		case candidate, ok := <-call.From.CandidateChan:
+			if !ok {
+				call.From.CandidateChan = nil
+			}
 			if wErr := websocket.JSON.Send(ws, candidate); wErr != nil {
 				log.Printf("error writing answer: %v", wErr)
 				return
 			}
-		case answerCandidate := <-readChan:
+		case answerCandidate, ok := <-readChan:
+			if !ok { // answerer gather completed
+				close(call.To.CandidateChan)
+				readChan = nil
+				return
+			}
 			call, err := calls.Get(caller.Id)
 			if err != nil {
 				log.Print("answer: call not found during trickle ice")
 				return
 			}
-			// TODO: maybe dont send the empty candidate, so server is always the one to close the conn?
 			call.To.CandidateChan <- answerCandidate
-			fmt.Println("answer candidate sent to chan")
-			if answerCandidate.Candidate == "" {
-				log.Println("empty candidate recieved", answerCandidate)
-				close(call.To.CandidateChan)
-				return
-			}
+			fmt.Println("answer candidate sent")
 		}
 	}
 }
 
-// ReadForever reads from ws in a loop, sending the data read to the channel ch.
-// If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
-func ReadForever[T any](ws *websocket.Conn, data T, ch chan T) {
-	var err error
+// ReadCandidates reads from ws in a loop, sending candidates read to the channel ch.
+// When an empty candidate is read, the channel is closed, signalling that ICE gather on this
+// websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
+func ReadCandidates(
+	ws *websocket.Conn,
+	ch chan webrtc.ICECandidateInit,
+) {
+	var (
+		candidate webrtc.ICECandidateInit
+		err       error
+	)
 	for {
-		err = websocket.JSON.Receive(ws, &data)
+		err = websocket.JSON.Receive(ws, &candidate)
 		if err != nil {
 			if err == io.EOF {
 				return
@@ -267,6 +276,12 @@ func ReadForever[T any](ws *websocket.Conn, data T, ch chan T) {
 			}
 			return
 		}
-		ch <- data
+
+		if candidate.Candidate == "" {
+			close(ch)
+			log.Println("ice gather completed")
+			return
+		}
+		ch <- candidate
 	}
 }
