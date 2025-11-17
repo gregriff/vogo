@@ -88,7 +88,7 @@ func CreateCall(
 	callerSd webrtc.SessionDescription,
 	callerIceChan, recipientIceChan chan webrtc.ICECandidateInit,
 	answerChan chan webrtc.SessionDescription,
-) {
+) *Call {
 	callerClient := ClientInfo{
 		user:          caller,
 		Sd:            callerSd,
@@ -109,4 +109,5 @@ func CreateCall(
 	// add this call to pending map, using caller's ID since a client can only make one call at a time
 	calls := GetPendingCalls()
 	calls.Update(caller.Id, newCall)
+	return &newCall
 }

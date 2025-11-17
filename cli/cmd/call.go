@@ -92,11 +92,16 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	// 	return
 	// }
 
-	candidateChan := make(chan webrtc.ICECandidateInit, 10)
+	var (
+		candidateChan = make(chan webrtc.ICECandidateInit, 10)
+		connectedChan = make(chan struct{})
+	)
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		internal.OnICECandidate(c, candidateChan)
 	})
-	pc.OnConnectionStateChange(internal.OnConnectionStateChangeCaller) // TODO: remove
+	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		internal.OnConnectionStateChangeCaller(s, connectedChan)
+	})
 
 	// Create an offer to send to the other process
 	log.Println("Creating offer")
@@ -113,9 +118,6 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		fmt.Printf("error setting local description: %v", ldErr)
 		return
 	}
-
-	// notifies microphone capture goroutine to begin capture
-	callAnswered := make(chan struct{}, 1)
 
 	// sending an error on this channel will abort the call process
 	errorChan := make(chan error, 10)
@@ -145,22 +147,6 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			return
 		}
 
-		// for websocket reading
-		var (
-			readWg   sync.WaitGroup
-			readChan = make(chan webrtc.ICECandidateInit)
-
-			// websocket messages
-			candidate webrtc.ICECandidateInit
-			answer    webrtc.SessionDescription
-		)
-		defer func() {
-			if cErr := ws.Close(); cErr != nil {
-				log.Printf("error closing ws in defer: %v", cErr)
-			}
-			readWg.Wait()
-		}()
-
 		var sendIceWg sync.WaitGroup
 		sendIceCtx, cancelSendIce := context.WithCancel(callCtx)
 		defer func() {
@@ -168,6 +154,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			sendIceWg.Wait()
 		}()
 
+		// gather local ice candidates and write to websocket
 		sendIceWg.Go(func() {
 			defer cancelSendIce()
 			defer func() {
@@ -192,6 +179,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		})
 
 		// wait to recv answer
+		var answer webrtc.SessionDescription
 		readErr := websocket.JSON.Receive(ws, &answer)
 		if readErr != nil {
 			errorChan <- fmt.Errorf("error reading answer from ws: %v", readErr)
@@ -202,18 +190,36 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			return
 		}
 		log.Println("recieved answer")
-		close(callAnswered)
 
+		var (
+			readWg   sync.WaitGroup
+			readChan = make(chan webrtc.ICECandidateInit)
+		)
+		defer func() {
+			// ws.Close will unblock any reads on the connection
+			if cErr := ws.Close(); cErr != nil {
+				log.Printf("error closing ws in defer: %v", cErr)
+			}
+			readWg.Wait()
+		}()
 		readWg.Go(func() {
-			signaling.ReadForever(ws, candidate, readChan)
+			signaling.ReadCandidates(ws, readChan)
 		})
 
 		for {
 			select {
 			case <-callCtx.Done():
-				log.Println("ws answer connection cancelled")
+				log.Println("ws caller ctx cancelled")
 				return
-			case answerCandidate := <-readChan:
+			// recv answerer candidates from the websocket
+			case answerCandidate, ok := <-readChan:
+				// all answerer candidates have been gathered, now we just
+				// wait on the callCtx to cancel
+				if !ok {
+					readChan = nil
+					continue
+				}
+				log.Println("recv answerer candidate")
 				if iceErr := pc.AddICECandidate(answerCandidate); iceErr != nil {
 					errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
 					return
@@ -229,12 +235,13 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		captureWg.Wait()
 	}()
 
-	// setup microphone once call is answered and capture until cancelled
+	// setup microphone once call is connected and capture until cancelled
 	captureWg.Go(func() {
 		select {
 		case <-captureCtx.Done(): // if call fails
 			return
-		case <-callAnswered: // TODO: this should actually wait on the onICEConnected? event
+		case <-connectedChan:
+			cancelCall()
 			break
 		}
 		captureErr := audio.StartCapture(captureCtx, pc, track)

@@ -8,10 +8,12 @@ import (
 	"log"
 	"strings"
 
+	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
-// NewWebsocketConn creates a websocket connection to the vogo server.
+// NewWebsocketConn creates a websocket connection to the vogo server to a given endpoint,
+// with http basic auth headers.
 func NewWebsocketConn(
 	ctx context.Context,
 	baseUrl, username, password, endpoint string,
@@ -45,20 +47,29 @@ func newWebsocketConfig(baseUrl, username, password, endpoint string) (*websocke
 	return cfg, nil
 }
 
-// ReadForever reads from ws in a loop, sending the data read to the channel ch.
-// If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
-func ReadForever[T any](ws *websocket.Conn, data T, ch chan T) {
-	var err error
+// ReadCandidates reads from ws in a loop, sending candidates read to the channel ch.
+// When an empty candidate is read, the channel is closed, signalling that ICE gather on this
+// websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
+func ReadCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
+	var candidate webrtc.ICECandidateInit
 	for {
-		err = websocket.JSON.Receive(ws, &data)
+		err := websocket.JSON.Receive(ws, &candidate)
 		if err != nil {
 			if err == io.EOF {
 				return
 			}
 			log.Printf("error reading from ws: %v", err)
-			_ = ws.Close()
+			if closeErr := ws.Close(); closeErr != nil {
+				log.Printf("error closing ws: %v", closeErr)
+			}
 			return
 		}
-		ch <- data
+
+		if candidate.Candidate == "" {
+			close(ch)
+			log.Println("ice gather completed")
+			return
+		}
+		ch <- candidate
 	}
 }
