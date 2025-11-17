@@ -8,31 +8,44 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-func OnICECandidate(candidate *webrtc.ICECandidate) {
-	var addr string
+func OnICECandidate(candidate *webrtc.ICECandidate, ch chan<- webrtc.ICECandidateInit) {
+	addr := "nil!"
 	if candidate != nil {
 		addr = candidate.Address
-	} else {
-		addr = "nil!"
 	}
 	log.Printf("ICE candidate recieved: %s", addr)
+
+	if candidate == nil {
+		close(ch)
+		return
+	}
+	ch <- candidate.ToJSON()
 }
 
-func OnConnectionStateChange(state webrtc.PeerConnectionState) {
+func OnConnectionStateChange(state webrtc.PeerConnectionState, ch chan<- struct{}) {
 	fmt.Printf("Peer Connection State has changed: %s\n", state.String())
+
+	if state == webrtc.PeerConnectionStateConnected {
+		ch <- struct{}{}
+	}
+}
+
+func OnConnectionStateChangeCaller(state webrtc.PeerConnectionState, ch chan<- struct{}) {
+	fmt.Printf("Peer Connection State has changed: %s\n", state.String())
+
+	if state == webrtc.PeerConnectionStateConnected {
+		ch <- struct{}{}
+	}
 
 	if state == webrtc.PeerConnectionStateFailed {
 		// Wait until PeerConnection has had no network activity for 30 seconds or another failure.
 		// It may be reconnected using an ICE Restart.
 		// Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
 		// Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
-		fmt.Println("Peer Connection has gone to failed exiting")
 		os.Exit(0)
 	}
-
+	// if PeerConnection was explicitly closed, this usually happens from a DTLS CloseNotify
 	if state == webrtc.PeerConnectionStateClosed {
-		// PeerConnection was explicitly closed. This usually happens from a DTLS CloseNotify
-		fmt.Println("Peer Connection has gone to closed exiting")
 		os.Exit(0)
 	}
 }

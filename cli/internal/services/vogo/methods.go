@@ -20,7 +20,7 @@ func Register(client http.Client, username, password, inviteCode string) (string
 	newUser := NewUser{Username: username, Password: password, InviteCode: inviteCode}
 	payload, err := json.Marshal(newUser)
 	if err != nil {
-		panic(err)
+		return "", fmt.Errorf("json marshal error: %w", err)
 	}
 
 	res, err := client.Post(
@@ -42,7 +42,7 @@ func Register(client http.Client, username, password, inviteCode string) (string
 	}
 
 	if err := json.NewDecoder(res.Body).Decode(&username); err != nil {
-		panic(err)
+		return "", fmt.Errorf("json decode error: %w", err)
 	}
 	return username, nil
 }

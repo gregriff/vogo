@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/configs"
@@ -15,6 +16,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/net/websocket"
 	// _ "net/http/pprof".
 )
 
@@ -57,30 +59,21 @@ func answerCall(_ *cobra.Command, _ []string) {
 		viper.GetString("servers.stun-origin"),
 		viper.GetString("caller")
 
-	// TODO:
-	// - define audio information
-
-	// var candidatesMux sync.Mutex
-	// pendingCandidates := make([]*webrtc.ICECandidate, 0)
-
-	api := configs.NewWebRTC()
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{stunServer},
-			},
-		},
-	}
+	// parent context for all other contexts to be derived from
+	sigCtx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	log.Println("creating answerer connection")
-	pc, createErr := api.NewPeerConnection(config)
+	pc, createErr := configs.NewPeerConnection(stunServer)
 	if createErr != nil {
-		panic(createErr)
+		fmt.Printf("error creating peer connection %v", createErr)
+		return
 	}
 	defer func() {
-		log.Println("closing answerer connection")
+		fmt.Println("forcing close of answerer connection")
 		if cErr := pc.Close(); cErr != nil {
-			fmt.Printf("cannot close peerConnection: %v\n", cErr)
+			fmt.Printf("cannot forcefully close answerer connection: %v\n", cErr)
 		}
 	}()
 
@@ -88,98 +81,138 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// 	panic(err)
 	// }
 
+	track, tErr := configs.CreateAudioTrack(pc, username)
+	if tErr != nil {
+		log.Printf("error creating audio track: %v", tErr)
+		return
+	}
+
+	var playbackWg sync.WaitGroup
+
+	playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
+	defer audio.TeardownPlaybackResources(pc, playbackCtx, device, &playbackWg)
+	if playbackErr != nil {
+		fmt.Printf("error initializing playback system: %v", playbackErr)
+		return
+	}
+
 	var (
-		audioTrsv *webrtc.RTPTransceiver
-		tErr      error
+		candidateChan = make(chan webrtc.ICECandidateInit, 10)
+		connectedChan = make(chan struct{})
 	)
-	if audioTrsv, tErr = pc.AddTransceiverFromKind(
-		webrtc.RTPCodecTypeAudio,
-		webrtc.RTPTransceiverInit{
-			Direction: webrtc.RTPTransceiverDirectionSendrecv,
-		},
-	); tErr != nil {
-		panic(tErr)
-	}
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		internal.OnICECandidate(c, candidateChan)
+	})
+	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		internal.OnConnectionStateChange(s, connectedChan)
+	})
 
-	// setup microphone capture track
-	captureTrack, _ := webrtc.NewTrackLocalStaticSample(
-		configs.OpusCodecCapability,
-		"captureTrack",
-		"captureTrack"+username,
-	)
-	audioTrsv.Sender().ReplaceTrack(captureTrack)
+	var answerWg sync.WaitGroup
+	answerCtx, cancelAnswer := context.WithCancel(sigCtx)
+	defer func() { // wait for capture device teardown
+		cancelAnswer()
+		answerWg.Wait()
+	}()
+	errorChan := make(chan error, 10)
 
-	playbackCtx, device := audio.SetupPlayback(pc)
-	defer playbackCtx.Uninit()
-	defer playbackCtx.Free()
-	defer device.Uninit()
+	answerWg.Go(func() {
+		defer cancelAnswer()
+		endpoint := fmt.Sprintf("/answer/%s", caller)
+		ws, wsErr := signaling.NewWebsocketConn(answerCtx, vogoServer, username, password, endpoint)
+		if wsErr != nil {
+			errorChan <- fmt.Errorf("error creating websocket connection: %w", wsErr)
+			return
+		}
 
-	pc.OnICECandidate(internal.OnICECandidate)
+		// wait to recv offer
+		var offer webrtc.SessionDescription
+		readErr := websocket.JSON.Receive(ws, &offer)
+		if readErr != nil {
+			log.Printf("error reading offer from ws: %v", readErr)
+			return
+		}
+		aErr := signaling.CreateAndPostAnswer(ws, pc, &offer, caller)
+		if aErr != nil {
+			errorChan <- fmt.Errorf("error creating or posting answer: %w", aErr)
+			return
+		}
+		log.Println("answer sent")
 
-	// Set the handler for Peer connection state
-	// This will notify you when the peer has connected/disconnected
-	pc.OnConnectionStateChange(internal.OnConnectionStateChange)
+		var (
+			readWg   sync.WaitGroup
+			readChan = make(chan webrtc.ICECandidateInit)
+		)
+		defer func() {
+			// ws.Close will unblock any reads on the connection
+			if cErr := ws.Close(); cErr != nil {
+				log.Printf("error closing ws in defer: %v", cErr)
+			}
+			readWg.Wait()
+			log.Println("readWg closed")
+		}()
+		readWg.Go(func() {
+			signaling.ReadCandidates(ws, readChan)
+		})
 
-	log.Println("getting caller SD from vogo server, caller Name: ", caller)
-	sigClient := signaling.NewClient(vogoServer, username, password)
+		for {
+			select {
+			case <-answerCtx.Done():
+				log.Println("ws answer ctx cancelled")
+				return
+			case iceCandidate, ok := <-candidateChan:
+				if sErr := websocket.JSON.Send(ws, iceCandidate); sErr != nil {
+					errorChan <- fmt.Errorf("error sending ice candidate: %w", sErr)
+					return
+				}
+				log.Println("sent candidate")
+				if !ok {
+					log.Println("caller's ice gathering completed, channel closed")
+					candidateChan = nil
+					continue
+				}
+			// recv caller candidates from the websocket
+			case callerCandidate, ok := <-readChan:
+				if !ok {
+					readChan = nil
+					continue
+				}
+				log.Println("recv caller candidate")
+				if iceErr := pc.AddICECandidate(callerCandidate); iceErr != nil {
+					errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
+					return
+				}
+			}
+		}
+	})
 
-	callerSd := signaling.GetCallerSd(*sigClient, caller)
-
-	log.Println("setting caller's remote description")
-	if err := pc.SetRemoteDescription(*callerSd); err != nil {
-		log.Fatalf("error setting callers remote description: %v", err)
-	}
-
-	log.Println("answerer creating answer")
-	answer, aErr := pc.CreateAnswer(nil)
-	if aErr != nil {
-		log.Fatalf("error creating answer: %v", aErr)
-	}
-
-	// Sets the LocalDescription, and starts our UDP listeners
-	log.Println("answerer setting localDescription and listening for UDP")
-	aErr = pc.SetLocalDescription(answer)
-	if aErr != nil {
-		log.Fatalf("error setting local description: %v", aErr)
-	}
-
-	// Create a channel to wait for gathering and Wait for gathering to finish
-	// TODO: don't use this and impl ICE trickle with vogo-server
-	log.Println("waiting on gathering complete promise")
-	<-webrtc.GatheringCompletePromise(pc)
-	log.Println("waiting completed")
-
-	localDescription := *pc.LocalDescription()
-	signaling.PostAnswer(*sigClient, caller, localDescription)
-
-	// TODO: the above should run in a goroutine with a context and
-	// signal to the below that the ansewr has been completed.
-
-	// // setup microphone capture track
-	// captureTrack, _ := webrtc.NewTrackLocalStaticSample(
-	// 	configs.OpusCodecCapability,
-	// 	uuid.NewString(),
-	// 	uuid.NewString(),
-	// )
-	// audioTrsv.Sender().ReplaceTrack(captureTrack)
-
-	captureCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// setup mic and capture indefinitely
-	go func() {
-		audio.StartCapture(captureCtx, pc, captureTrack)
+	var captureWaitGroup sync.WaitGroup
+	captureCtx, cancelCapture := context.WithCancel(sigCtx)
+	defer func() { // wait for capture device teardown
+		cancelCapture()
+		captureWaitGroup.Wait()
 	}()
 
-	// Block forever
-	log.Println("Answer complete, mic initalized, blocking until ctrl C")
+	// setup microphone once call is connected and capture until cancelled
+	captureWaitGroup.Go(func() {
+		select {
+		case <-captureCtx.Done():
+			return
+		case <-connectedChan:
+			cancelAnswer()
+			break
+		}
+		captureErr := audio.StartCapture(captureCtx, pc, track)
+		if captureErr != nil {
+			errorChan <- fmt.Errorf("error with capture device: %v", captureErr)
+		}
+	})
 
-	// TODO: tie this to the context of the peer connection
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// block until ctrl C
-	<-sigChan
-
-	// all contexts defined above should now have their cancel funcs run
+	// block until ctrl C or an error in capture goroutine
+	select {
+	case err := <-errorChan:
+		fmt.Println(err)
+		break
+	case <-sigCtx.Done():
+		break
+	}
 }

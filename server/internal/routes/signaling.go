@@ -1,14 +1,17 @@
 package routes
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/server/internal/middleware"
 	"github.com/gregriff/vogo/server/internal/schemas"
+	"github.com/pion/webrtc/v4"
+	"golang.org/x/net/websocket"
 )
 
 // TODO:
@@ -20,101 +23,235 @@ import (
 // PUT /channel: modify channel properties
 // DELETE /channel
 
-// Call is used by a client to create a call.
-func (h *RouteHandler) Call(w http.ResponseWriter, req *http.Request) {
-	rData := schemas.CallRequest{}
-	if err := json.NewDecoder(req.Body).Decode(&rData); err != nil {
-		panic(err)
-	}
-
-	var (
-		caller,
-		recipient *schemas.User
-		sqlErr error
-	)
-	username := middleware.GetUsername(req)
-	if caller, sqlErr = dal.GetUserByUsername(h.db, username); sqlErr != nil {
+// CallWS lets the caller post an offer, and update it as their ICE candidates come in.
+// if the offer (sd) is updated and there are other clients listening for this call, the offer will be sent to them
+// via their websocket
+//
+// CallWS first gets the offer from the caller, and once the answerer is ready it sends this offer to the answerer.
+// from then on out, this func queues up ice candidates sent by the caller, that are sent to the answerer once theyre ready.
+// it returns once the call connects.
+// Note: the channel version of this func will need to stay open until the client exits the channel call.
+func (h *RouteHandler) CallWS(ws *websocket.Conn) {
+	username := middleware.GetUsernameWS(ws)
+	caller, sqlErr := dal.GetUserByUsername(h.db, username)
+	if sqlErr != nil {
 		log.Println(fmt.Errorf("error fetching caller: %w", sqlErr))
-		http.Error(w, "error finding caller", http.StatusInternalServerError)
+		ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
-	if recipient, sqlErr = dal.GetUserByUsername(h.db, rData.RecipientName); sqlErr != nil {
+
+	var offer schemas.CallRequest
+	readErr := websocket.JSON.Receive(ws, &offer)
+	if readErr != nil {
+		log.Printf("error reading offer from ws: %v", readErr)
+		ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+	if offer.Sd.SDP == "" {
+		log.Println("empty offer")
+		ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+	log.Println("callWS: offer recieved")
+	recipient, sqlErr := dal.GetUserByUsername(h.db, offer.RecipientName)
+	if sqlErr != nil {
 		log.Println(fmt.Errorf("error fetching recipient: %w", sqlErr))
-		http.Error(w, "error finding recipient", http.StatusBadRequest)
+		ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 
-	log.Println("waiting for call to be answered")
-	answererSd := <-schemas.CreateCallAndNotify(*caller, *recipient, rData.Sd)
-
-	log.Println("call has been answered")
-	WriteJSON(w, answererSd)
-	schemas.DeleteCall(caller.Id)
-}
-
-// Caller is a GET endpoint that the answerer calls when they want the SD of the caller
-func (h *RouteHandler) Caller(w http.ResponseWriter, req *http.Request) {
-	callerName := req.PathValue("name")
-
-	log.Println("caller name: ", callerName)
-
+	// create the call in memory, with chans to facilitate signaling
 	var (
-		caller *schemas.User
-		sqlErr error
-	)
-	username := middleware.GetUsername(req)
-	if _, sqlErr = dal.GetUserByUsername(h.db, username); sqlErr != nil {
-		log.Println(fmt.Errorf("error fetching recipient: %w", sqlErr))
-		http.Error(w, "error finding recipient", http.StatusInternalServerError)
-		return
-	}
-	if caller, sqlErr = dal.GetUserByUsername(h.db, callerName); sqlErr != nil {
-		log.Println(fmt.Errorf("error fetching caller: %w", sqlErr))
-		http.Error(w, "error finding caller", http.StatusBadRequest)
-		return
-	}
+		// TODO: with channel rooms, these chans will need to be per-client
+		answerChan = make(chan webrtc.SessionDescription, 1)
 
-	var (
-		call  schemas.Call
-		found bool
+		// the answerer will listen on this to recieve the callers ICE candidates
+		iceSendChan = make(chan webrtc.ICECandidateInit, 15) // 15 max ice candidates should be enough?
+
+		// we will listen on this to recieve answerer's ICE candidates as they trickle in
+		iceRecvChan = make(chan webrtc.ICECandidateInit, 15)
 	)
+	call := schemas.CreateCall(caller, recipient, offer.Sd, iceSendChan, iceRecvChan, answerChan)
 	calls := schemas.GetPendingCalls()
-	if call, found = calls[caller.Id]; !found {
-		err := fmt.Errorf("Call not found")
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	defer calls.Delete(caller.Id)
+	log.Println("call created")
 
-	// reply with caller's Sd. client will then use that to resume ICE
-	WriteJSON(w, &call.SdFrom)
+	// read incoming candidates
+	var (
+		readWg   sync.WaitGroup
+		readChan = make(chan webrtc.ICECandidateInit)
+	)
+	defer func() {
+		// ws.Close unblocks the ws reads
+		cErr := ws.Close()
+		if cErr != nil {
+			log.Println("error closing ws during defer: ", cErr)
+		}
+		readWg.Wait()
+	}()
+	readWg.Go(func() {
+		readCandidates(ws, readChan)
+	})
+
+	// this request will be canceled by the client once the call is successful,
+	// or it will timeout
+	// TODO: add the timeout
+	ctx := ws.Request().Context()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Call req context done")
+			return
+		case answerSd := <-answerChan:
+			if wErr := websocket.JSON.Send(ws, answerSd); wErr != nil {
+				log.Printf("error writing answer: %v", wErr)
+				return
+			}
+		case answerCandidate, ok := <-iceRecvChan:
+			if wErr := websocket.JSON.Send(ws, answerCandidate); wErr != nil {
+				log.Printf("error writing candidate: %v", wErr)
+				return
+			}
+			// we've sent the caller the answerer's last candidate. nothing left to do
+			if !ok {
+				return
+			}
+		// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
+		// or maybe even then, caller candidates will be present for the answerer so will always finish first
+		case callerCandidate, ok := <-readChan:
+			if !ok { // caller gather completed
+				close(call.From.CandidateChan)
+				readChan = nil
+				continue
+			}
+			call.From.CandidateChan <- callerCandidate
+			fmt.Println("caller candidate sent")
+		}
+	}
 }
 
-// Answer is used by a client to accept a pending call requested by another client.
-func (h *RouteHandler) Answer(w http.ResponseWriter, req *http.Request) {
-	aData := schemas.AnswerRequest{}
-	if err := json.NewDecoder(req.Body).Decode(&aData); err != nil {
-		panic(err)
-	}
-
-	var (
-		caller *schemas.User
-		sqlErr error
-	)
-	username := middleware.GetUsername(req)
-	if _, sqlErr = dal.GetUserByUsername(h.db, username); sqlErr != nil {
+// AnswerWS obtains the caller's name from the first ws message and sends the caller's offer Sd to the client.
+// It then waits for the clients answer, where it then facilitates trickle-ICE gathering between the two clients.
+func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
+	username := middleware.GetUsernameWS(ws)
+	_, sqlErr := dal.GetUserByUsername(h.db, username)
+	if sqlErr != nil {
 		log.Println(fmt.Errorf("error fetching recipient: %w", sqlErr))
-		http.Error(w, "error finding recipient", http.StatusBadRequest)
-		return
-	}
-	if caller, sqlErr = dal.GetUserByUsername(h.db, aData.CallerName); sqlErr != nil {
-		log.Println(fmt.Errorf("error fetching caller: %w", sqlErr))
-		http.Error(w, "error finding caller", http.StatusInternalServerError)
+		ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
 
-	if answerErr := schemas.AnswerCall(*caller, aData.Sd); answerErr != nil {
-		http.Error(w, answerErr.Error(), http.StatusBadRequest)
+	// ensure the pending call exists
+	callerName := ws.Request().PathValue("name")
+	caller, sqlErr := dal.GetUserByUsername(h.db, callerName)
+	if sqlErr != nil {
+		log.Println(fmt.Errorf("error fetching caller: %w", sqlErr))
+		ws.WriteClose(http.StatusBadRequest)
 		return
 	}
-	w.WriteHeader(200)
+	calls := schemas.GetPendingCalls()
+	call, err := calls.Get(caller.Id)
+	if err != nil {
+		log.Println("call not found")
+		ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+	defer calls.Delete(caller.Id)
+
+	// send caller's SD. client will then create an answer and post it to this ws
+	if wErr := websocket.JSON.Send(ws, call.From.Sd); wErr != nil {
+		log.Printf("error writing offer: %v", wErr)
+		return
+	}
+
+	// wait for answer from client
+	var answer schemas.AnswerRequest
+	recvErr := websocket.JSON.Receive(ws, &answer)
+	if recvErr != nil {
+		log.Printf("error reading answer from ws: %v", recvErr)
+		ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+	if answer.Sd.SDP == "" {
+		log.Println("empty answer")
+		ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+	log.Println("answerWS: answer recieved")
+	call.AnswerChan <- answer.Sd
+
+	// read incoming candidates
+	var (
+		readWg   sync.WaitGroup
+		readChan = make(chan webrtc.ICECandidateInit)
+	)
+	defer func() {
+		// ws.Close unblocks the ws reads
+		cErr := ws.Close()
+		if cErr != nil {
+			log.Println("error closing ws during defer: ", cErr)
+		}
+		readWg.Wait()
+	}()
+	readWg.Go(func() {
+		readCandidates(ws, readChan)
+	})
+
+	ctx := ws.Request().Context()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Answer req context done")
+			return
+		// note: this needs to continue to run even if readchan is closed. this may always complete first tho...
+		case candidate, ok := <-call.From.CandidateChan:
+			if !ok {
+				call.From.CandidateChan = nil
+			}
+			if wErr := websocket.JSON.Send(ws, candidate); wErr != nil {
+				log.Printf("error writing answer: %v", wErr)
+				return
+			}
+		case answerCandidate, ok := <-readChan:
+			if !ok { // answerer gather completed
+				close(call.To.CandidateChan)
+				// readChan = nil
+				return
+			}
+			call, err := calls.Get(caller.Id)
+			if err != nil {
+				log.Print("answer: call not found during trickle ice")
+				return
+			}
+			call.To.CandidateChan <- answerCandidate
+			fmt.Println("answer candidate sent")
+		}
+	}
+}
+
+// readCandidates reads from ws in a loop, sending candidates read to the channel ch.
+// When an empty candidate is read, the channel is closed, signalling that ICE gather on this
+// websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
+func readCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
+	var candidate webrtc.ICECandidateInit
+	for {
+		err := websocket.JSON.Receive(ws, &candidate)
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			log.Printf("error reading from ws: %v", err)
+			if closeErr := ws.Close(); closeErr != nil {
+				log.Printf("error closing ws: %v", closeErr)
+			}
+			return
+		}
+
+		if candidate.Candidate == "" {
+			close(ch)
+			log.Println("ice gather completed")
+			return
+		}
+		ch <- candidate
+	}
 }

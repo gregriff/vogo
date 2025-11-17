@@ -1,11 +1,13 @@
 package configs
 
 import (
+	"fmt"
+
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/pion/webrtc/v4"
 )
 
-var OpusCodecCapability = webrtc.RTPCodecCapability{
+var opusCodec = webrtc.RTPCodecCapability{
 	MimeType:     webrtc.MimeTypeOpus,
 	ClockRate:    audio.SampleRate,
 	Channels:     audio.NumChannels,
@@ -13,14 +15,14 @@ var OpusCodecCapability = webrtc.RTPCodecCapability{
 	RTCPFeedback: nil,
 }
 
-func NewWebRTC() *webrtc.API {
+func NewPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 	mediaEngine := &webrtc.MediaEngine{}
 	codecParams := webrtc.RTPCodecParameters{
-		RTPCodecCapability: OpusCodecCapability,
+		RTPCodecCapability: opusCodec,
 		PayloadType:        111, // should this be negotiated and not hard coded?
 	}
 	if err := mediaEngine.RegisterCodec(codecParams, webrtc.RTPCodecTypeAudio); err != nil {
-		panic(err)
+		return nil, fmt.Errorf("error registering codec: %w", err)
 	}
 
 	// Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
@@ -48,5 +50,36 @@ func NewWebRTC() *webrtc.API {
 		webrtc.WithMediaEngine(mediaEngine),
 		webrtc.WithSettingEngine(settingEngine),
 	)
-	return api
+	config := webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{
+			{
+				URLs: []string{stunServer},
+			},
+		},
+	}
+	return api.NewPeerConnection(config)
+}
+
+func CreateAudioTrack(pc *webrtc.PeerConnection, trackID string) (*webrtc.TrackLocalStaticSample, error) {
+	audioTrsv, err := pc.AddTransceiverFromKind(
+		webrtc.RTPCodecTypeAudio,
+		webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionSendrecv,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error adding transceiver: %v", err)
+	}
+
+	// setup microphone capture track
+	captureTrack, err := webrtc.NewTrackLocalStaticSample(
+		opusCodec,
+		"captureTrack",
+		"captureTrack"+trackID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error initalizing capture track: %v", err)
+	}
+	audioTrsv.Sender().ReplaceTrack(captureTrack)
+	return captureTrack, nil
 }

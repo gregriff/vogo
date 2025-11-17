@@ -14,6 +14,7 @@ import (
 	"github.com/gregriff/vogo/server/internal/db"
 	"github.com/gregriff/vogo/server/internal/middleware"
 	"github.com/gregriff/vogo/server/internal/routes"
+	"golang.org/x/net/websocket"
 )
 
 func CreateAndListen(debug bool, host string, port int) {
@@ -40,12 +41,13 @@ func CreateAndListen(debug bool, host string, port int) {
 		ReadHeaderTimeout: 500 * time.Millisecond,
 		ReadTimeout:       500 * time.Millisecond,
 		IdleTimeout:       500 * time.Millisecond,
-		Handler:           http.TimeoutHandler(handler, 30*time.Second, ""),
+		// Handler:           http.TimeoutHandler(handler, 30*time.Second, ""),
+		Handler: handler,
 	}
 
 	// graceful shutdown channel
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// run server
 	go func() {
@@ -63,16 +65,29 @@ func CreateAndListen(debug bool, host string, port int) {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("http shutdown error: %v", err)
+		log.Printf("http shutdown error: %v", err)
 	}
 	log.Println("Graceful shutdown complete.")
 }
 
 // createRoutes creates the routing rules for the webserver
 func createRoutes(mux *http.ServeMux, h *routes.RouteHandler) {
-	mux.HandleFunc("POST /call", h.Call)
-	mux.HandleFunc("POST /answer", h.Answer)
-	mux.HandleFunc("GET /caller/{name}", h.Caller)
-
 	mux.HandleFunc("POST /register", h.Register)
+
+	callHandler := websocket.Server{
+		Handshake: websocketHandshake,
+		Handler:   h.CallWS,
+	}
+
+	answerHandler := websocket.Server{
+		Handshake: websocketHandshake,
+		Handler:   func(ws *websocket.Conn) { h.AnswerWS(ws) },
+	}
+
+	// TODO: how does client dial ws? may need to serve them here differently, maybe specifyfing their origin in the server config
+	// TODO: will need to have different endpoints or logic for channels (multi-client calls)
+	mux.Handle("GET /call", callHandler)
+	mux.HandleFunc("GET /answer/{name}", answerHandler.ServeHTTP)
 }
+
+func websocketHandshake(_ *websocket.Config, _ *http.Request) error { return nil }
