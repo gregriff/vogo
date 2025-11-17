@@ -123,7 +123,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		}()
 		ws, err := signaling.NewConnection(callCtx, vogoServer, username, password, "/call")
 		if err != nil {
-			errorChan <- fmt.Errorf("error creating websocket connection: %w", err)
+			errorChan <- fmt.Errorf("error creating websocket: %w", err)
 			return
 		}
 
@@ -142,7 +142,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		// gather local ice candidates and write to websocket
 		iceWg.Go(func() {
 			defer cancelSendIce()
-			if err = sendICECandidates(iceCtx, ws, candidates); err != nil {
+			if err = sendCandidates(iceCtx, ws, candidates); err != nil {
 				errorChan <- err
 			}
 		})
@@ -165,11 +165,11 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		)
 		defer signaling.CloseAndWait(ws, &readWg)
 
-		// send ice candidates to ws as they are gathered
+		// read recipient candidates from ws as they come in
 		readWg.Go(func() {
 			signaling.ReadCandidates(ws, recipientCandidates)
 		})
-		if err = addICECandidates(callCtx, pc, recipientCandidates); err != nil {
+		if err = addCandidates(callCtx, pc, recipientCandidates); err != nil {
 			errorChan <- err
 			return
 		}
@@ -191,8 +191,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			cancelCall()
 			break
 		}
-		err := audio.StartCapture(captureCtx, pc, track)
-		if err != nil {
+		if err = audio.StartCapture(captureCtx, pc, track); err != nil {
 			errorChan <- fmt.Errorf("error with capture device: %w", err)
 			return
 		}
@@ -208,8 +207,9 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	}
 }
 
-// sendICECandidates sends each ICE candidate from ch to the websocket.
-func sendICECandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.ICECandidateInit) error {
+// sendCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.
+// It returns when there are no more candidates or the context is cancelled.
+func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.ICECandidateInit) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -220,16 +220,16 @@ func sendICECandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc
 			}
 			log.Println("sent candidate")
 			if !ok {
-				log.Println("caller's ice gathering completed, channel closed")
+				log.Println("ice gathering completed")
 				return nil
 			}
 		}
 	}
 }
 
-// addICECandidates adds the recipient's ICE candidates from ch to the peer connection until
+// addCandidates adds the recipient's ICE candidates from ch to the peer connection until
 // there are no more or the context is cancelled.
-func addICECandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan webrtc.ICECandidateInit) error {
+func addCandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan webrtc.ICECandidateInit) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -237,6 +237,7 @@ func addICECandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan 
 			return nil
 		case candidate, ok := <-ch: // from the websocket
 			if !ok {
+				log.Println("no more recipient candidates")
 				ch = nil
 				continue
 			}

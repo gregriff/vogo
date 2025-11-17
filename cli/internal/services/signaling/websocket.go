@@ -57,12 +57,10 @@ func ReadCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
 		err := websocket.JSON.Receive(ws, &candidate)
 		if err != nil {
 			if err == io.EOF {
+				log.Println("EOF reading ws")
 				return
 			}
 			log.Printf("error reading from ws: %v", err)
-			if closeErr := ws.Close(); closeErr != nil {
-				log.Printf("error closing ws: %v", closeErr)
-			}
 			return
 		}
 
