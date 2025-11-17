@@ -11,7 +11,7 @@ import (
 func TeardownPlaybackResources(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, device *malgo.Device, wg *sync.WaitGroup) {
 	// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
 	if closeErr := pc.GracefulClose(); closeErr != nil {
-		fmt.Printf("cannot gracefully close answerer connection: %v\n", closeErr)
+		fmt.Printf("cannot gracefully close recipient connection: %v\n", closeErr)
 	} else {
 		wg.Wait()
 	}

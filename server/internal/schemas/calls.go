@@ -67,8 +67,8 @@ type Call struct {
 
 	CreatedAt time.Time
 
-	// used to notify the event of the recipient answering the call
-	AnswerChan chan webrtc.SessionDescription
+	// recipient sends their answer here
+	Answer chan webrtc.SessionDescription
 }
 
 // ClientInfo is the information about a webrtc client needed to create a call or a channel.
@@ -80,31 +80,36 @@ type ClientInfo struct {
 	Sd webrtc.SessionDescription
 
 	// websockets will wait read from these to facilitate ICE trickle
-	CandidateChan chan webrtc.ICECandidateInit
+	Candidates chan webrtc.ICECandidateInit
 }
 
-func CreateCall(
-	caller, recipient *User,
-	callerSd webrtc.SessionDescription,
-	callerIceChan, recipientIceChan chan webrtc.ICECandidateInit,
-	answerChan chan webrtc.SessionDescription,
-) *Call {
+// Create Call creates a struct encapsulating a pending call that is stored in memory
+// until the caller and recipient exchange all their ICE candidates. Channels in this
+// struct facilitate offer/answer and ICE exchance between the /call and /answer endpoints.
+func CreateCall(caller, recipient *User, callerSd webrtc.SessionDescription) *Call {
+	const maxICECandidates = 10 // should be enough?
+	var (
+		// TODO: with channel rooms, these chans will need to be per-client
+		answerChan          = make(chan webrtc.SessionDescription, 1)
+		callerCandidates    = make(chan webrtc.ICECandidateInit, maxICECandidates)
+		recipientCandidates = make(chan webrtc.ICECandidateInit, maxICECandidates)
+	)
 	callerClient := ClientInfo{
-		user:          caller,
-		Sd:            callerSd,
-		CandidateChan: callerIceChan,
+		user:       caller,
+		Sd:         callerSd,
+		Candidates: callerCandidates,
 	}
 	recipientClient := ClientInfo{
-		user:          recipient,
-		Sd:            webrtc.SessionDescription{},
-		CandidateChan: recipientIceChan,
+		user:       recipient,
+		Sd:         webrtc.SessionDescription{},
+		Candidates: recipientCandidates,
 	}
 
 	newCall := Call{
-		From:       callerClient,
-		To:         recipientClient,
-		CreatedAt:  time.Now(),
-		AnswerChan: answerChan,
+		From:      callerClient,
+		To:        recipientClient,
+		CreatedAt: time.Now(),
+		Answer:    answerChan,
 	}
 	// add this call to pending map, using caller's ID since a client can only make one call at a time
 	calls := GetPendingCalls()

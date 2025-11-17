@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -64,16 +65,16 @@ func answerCall(_ *cobra.Command, _ []string) {
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Println("creating answerer connection")
-	pc, createErr := configs.NewPeerConnection(stunServer)
-	if createErr != nil {
-		fmt.Printf("error creating peer connection %v", createErr)
+	log.Println("creating recipient connection")
+	pc, err := configs.NewPeerConnection(stunServer)
+	if err != nil {
+		fmt.Printf("error creating peer connection %v", err)
 		return
 	}
 	defer func() {
-		fmt.Println("forcing close of answerer connection")
-		if cErr := pc.Close(); cErr != nil {
-			fmt.Printf("cannot forcefully close answerer connection: %v\n", cErr)
+		fmt.Println("forcing close of recipient connection")
+		if err := pc.Close(); err != nil {
+			fmt.Printf("cannot forcefully close recipient connection: %v\n", err)
 		}
 	}()
 
@@ -81,20 +82,21 @@ func answerCall(_ *cobra.Command, _ []string) {
 	// 	panic(err)
 	// }
 
-	track, tErr := configs.CreateAudioTrack(pc, username)
-	if tErr != nil {
-		log.Printf("error creating audio track: %v", tErr)
+	track, err := configs.CreateAudioTrack(pc, username)
+	if err != nil {
+		log.Printf("error creating audio track: %v", err)
 		return
 	}
 
+	log.Println("init playback device...")
 	var playbackWg sync.WaitGroup
-
-	playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
+	playbackCtx, device, err := audio.SetupPlayback(pc, &playbackWg)
 	defer audio.TeardownPlaybackResources(pc, playbackCtx, device, &playbackWg)
-	if playbackErr != nil {
-		fmt.Printf("error initializing playback system: %v", playbackErr)
+	if err != nil {
+		fmt.Printf("error initializing playback system: %v", err)
 		return
 	}
+	log.Println("playback device created")
 
 	var (
 		candidateChan = make(chan webrtc.ICECandidateInit, 10)
@@ -117,41 +119,41 @@ func answerCall(_ *cobra.Command, _ []string) {
 
 	answerWg.Go(func() {
 		defer cancelAnswer()
+		defer func() {
+			log.Println("answer goroutine COMPLETE")
+		}()
 		endpoint := fmt.Sprintf("/answer/%s", caller)
-		ws, wsErr := signaling.NewWebsocketConn(answerCtx, vogoServer, username, password, endpoint)
-		if wsErr != nil {
-			errorChan <- fmt.Errorf("error creating websocket connection: %w", wsErr)
+		ws, err := signaling.NewConnection(answerCtx, vogoServer, username, password, endpoint)
+		if err != nil {
+			errorChan <- fmt.Errorf("error creating websocket connection: %w", err)
 			return
 		}
 
 		// wait to recv offer
 		var offer webrtc.SessionDescription
-		readErr := websocket.JSON.Receive(ws, &offer)
-		if readErr != nil {
-			log.Printf("error reading offer from ws: %v", readErr)
+		if err = websocket.JSON.Receive(ws, &offer); err != nil {
+			if err == io.EOF {
+				errorChan <- fmt.Errorf("Call not found") // could make this a sentinal
+				return
+			}
+			errorChan <- fmt.Errorf("error reading offer from ws: %v", err)
 			return
 		}
-		aErr := signaling.CreateAndPostAnswer(ws, pc, &offer, caller)
-		if aErr != nil {
-			errorChan <- fmt.Errorf("error creating or posting answer: %w", aErr)
+		err = signaling.CreateAndSendAnswer(ws, pc, &offer, caller)
+		if err != nil {
+			errorChan <- fmt.Errorf("error creating or posting answer: %w", err)
 			return
 		}
 		log.Println("answer sent")
 
+		// send ice candidates to ws as they are gathered
 		var (
-			readWg   sync.WaitGroup
-			readChan = make(chan webrtc.ICECandidateInit)
+			readWg           sync.WaitGroup
+			callerCandidates = make(chan webrtc.ICECandidateInit)
 		)
-		defer func() {
-			// ws.Close will unblock any reads on the connection
-			if cErr := ws.Close(); cErr != nil {
-				log.Printf("error closing ws in defer: %v", cErr)
-			}
-			readWg.Wait()
-			log.Println("readWg closed")
-		}()
+		defer signaling.CloseAndWait(ws, &readWg)
 		readWg.Go(func() {
-			signaling.ReadCandidates(ws, readChan)
+			signaling.ReadCandidates(ws, callerCandidates)
 		})
 
 		for {
@@ -171,9 +173,9 @@ func answerCall(_ *cobra.Command, _ []string) {
 					continue
 				}
 			// recv caller candidates from the websocket
-			case callerCandidate, ok := <-readChan:
+			case callerCandidate, ok := <-callerCandidates:
 				if !ok {
-					readChan = nil
+					callerCandidates = nil
 					continue
 				}
 				log.Println("recv caller candidate")

@@ -2,48 +2,62 @@ package signaling
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
-type CallRequest struct {
+type callRequest struct {
 	RecipientName string
 	Sd            webrtc.SessionDescription
 }
 
-type AnswerRequest struct {
+type answerRequest struct {
 	CallerName string
 	Sd         webrtc.SessionDescription
 }
 
-func CreateAndPostAnswer(ws *websocket.Conn, pc *webrtc.PeerConnection, offer *webrtc.SessionDescription, callerName string) error {
-	log.Println("setting caller's remote description")
-	if err := pc.SetRemoteDescription(*offer); err != nil {
-		fmt.Printf("error setting callers remote description: %v", err)
-		return err
+// CreateAndSendOffer creates the offer, starts ICE gathering, and sends the offer over ws,
+// for the specified recipient (username)
+func CreateAndSendOffer(ws *websocket.Conn, pc *webrtc.PeerConnection, recipient string) error {
+	offer, err := pc.CreateOffer(nil)
+	if err != nil {
+		return fmt.Errorf("error creating offer: %v", err)
 	}
 
-	log.Println("answerer creating answer")
+	// starts ICE gathering and UDP listeners
+	if err = pc.SetLocalDescription(offer); err != nil {
+		return fmt.Errorf("error setting local description: %v", err)
+	}
+
+	callReq := callRequest{RecipientName: recipient, Sd: offer}
+	if err = websocket.JSON.Send(ws, callReq); err != nil {
+		return fmt.Errorf("error sending offer: %w", err)
+	}
+	return nil
+}
+
+// CreateAndSendAnswer sets the remote description of the caller given their offer, creates the answer,
+// starts ICE gathering, then sends the answer to ws
+func CreateAndSendAnswer(ws *websocket.Conn, pc *webrtc.PeerConnection, offer *webrtc.SessionDescription, callerName string) error {
+	if err := pc.SetRemoteDescription(*offer); err != nil {
+		return fmt.Errorf("error setting remote description: %v", err)
+	}
+
 	answer, err := pc.CreateAnswer(nil)
 	if err != nil {
-		fmt.Printf("error creating answer: %v", err)
-		return err
+		return fmt.Errorf("error creating answer: %v", err)
 	}
 
-	// Sets the LocalDescription, and starts our UDP listeners
-	log.Println("answerer setting localDescription and listening for UDP")
+	// starts ICE gathering and UDP listeners
 	err = pc.SetLocalDescription(answer)
 	if err != nil {
-		fmt.Printf("error setting local description: %v", err)
-		return err
+		return fmt.Errorf("error setting local description: %v", err)
 	}
 
-	// send answer
-	answerReq := AnswerRequest{CallerName: callerName, Sd: *pc.LocalDescription()}
+	answerReq := answerRequest{CallerName: callerName, Sd: *pc.LocalDescription()}
 	if err = websocket.JSON.Send(ws, answerReq); err != nil {
-		return err
+		return fmt.Errorf("error sending answer: %w", err)
 	}
 	return nil
 }

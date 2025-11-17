@@ -7,14 +7,15 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
-// NewWebsocketConn creates a websocket connection to the vogo server to a given endpoint,
+// NewConnection creates a websocket connection to the vogo server to a given endpoint,
 // with http basic auth headers.
-func NewWebsocketConn(
+func NewConnection(
 	ctx context.Context,
 	baseUrl, username, password, endpoint string,
 ) (*websocket.Conn, error) {
@@ -72,4 +73,13 @@ func ReadCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
 		}
 		ch <- candidate
 	}
+}
+
+// CloseAndWait closes the websocket, unblocking any reads on it. wg should be the waitgroup
+// for the goroutine reading the websocket.
+func CloseAndWait(ws *websocket.Conn, wg *sync.WaitGroup) {
+	if err := ws.Close(); err != nil {
+		log.Printf("error closing ws in defer: %v", err)
+	}
+	wg.Wait()
 }

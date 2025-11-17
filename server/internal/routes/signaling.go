@@ -16,22 +16,17 @@ import (
 
 // TODO:
 // GET /status: returns to the client any calls or channels currently open and associated with the client
-// POST /call: allow client to create a call to one other client. client B will need to accept the call for it to begin. call properties
-// 			   stored in memory and wiped when all parties leave it
 // POST /channel: allow a client to open a channel. this is persisted to sqlite, including who is invited to join it.
 // 				  channels are given a unique name, where the CLI can change properties (who's invited) using the PUT
 // PUT /channel: modify channel properties
 // DELETE /channel
 
-// CallWS lets the caller post an offer, and update it as their ICE candidates come in.
-// if the offer (sd) is updated and there are other clients listening for this call, the offer will be sent to them
-// via their websocket
-//
-// CallWS first gets the offer from the caller, and once the answerer is ready it sends this offer to the answerer.
-// from then on out, this func queues up ice candidates sent by the caller, that are sent to the answerer once theyre ready.
-// it returns once the call connects.
+// Call initiates signaling for a voice call that may only be accepted by the intended recipient. The caller's
+// ICE candidates are stored in memory until the recipient answers, where they are then forwarded. Call then
+// recieves the recipient's ICE candidates and forwards them to the caller. When candidates have been fully
+// exchanged Call deletes the signaling data from memory and returns.
 // Note: the channel version of this func will need to stay open until the client exits the channel call.
-func (h *RouteHandler) CallWS(ws *websocket.Conn) {
+func (h *RouteHandler) Call(ws *websocket.Conn) {
 	username := middleware.GetUsernameWS(ws)
 	caller, sqlErr := dal.GetUserByUsername(h.db, username)
 	if sqlErr != nil {
@@ -60,18 +55,8 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 		return
 	}
 
-	// create the call in memory, with chans to facilitate signaling
-	var (
-		// TODO: with channel rooms, these chans will need to be per-client
-		answerChan = make(chan webrtc.SessionDescription, 1)
-
-		// the answerer will listen on this to recieve the callers ICE candidates
-		iceSendChan = make(chan webrtc.ICECandidateInit, 15) // 15 max ice candidates should be enough?
-
-		// we will listen on this to recieve answerer's ICE candidates as they trickle in
-		iceRecvChan = make(chan webrtc.ICECandidateInit, 15)
-	)
-	call := schemas.CreateCall(caller, recipient, offer.Sd, iceSendChan, iceRecvChan, answerChan)
+	// create the call in memory, delete once answered
+	call := schemas.CreateCall(caller, recipient, offer.Sd)
 	calls := schemas.GetPendingCalls()
 	defer calls.Delete(caller.Id)
 	log.Println("call created")
@@ -102,37 +87,37 @@ func (h *RouteHandler) CallWS(ws *websocket.Conn) {
 		case <-ctx.Done():
 			log.Println("Call req context done")
 			return
-		case answerSd := <-answerChan:
+		case answerSd := <-call.Answer:
 			if wErr := websocket.JSON.Send(ws, answerSd); wErr != nil {
 				log.Printf("error writing answer: %v", wErr)
 				return
 			}
-		case answerCandidate, ok := <-iceRecvChan:
+		case answerCandidate, ok := <-call.To.Candidates:
 			if wErr := websocket.JSON.Send(ws, answerCandidate); wErr != nil {
 				log.Printf("error writing candidate: %v", wErr)
 				return
 			}
-			// we've sent the caller the answerer's last candidate. nothing left to do
+			// we've sent the caller the recipient's last candidate. nothing left to do
 			if !ok {
 				return
 			}
 		// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
-		// or maybe even then, caller candidates will be present for the answerer so will always finish first
+		// or maybe even then, caller candidates will be present for the recipient so will always finish first
 		case callerCandidate, ok := <-readChan:
 			if !ok { // caller gather completed
-				close(call.From.CandidateChan)
+				close(call.From.Candidates)
 				readChan = nil
 				continue
 			}
-			call.From.CandidateChan <- callerCandidate
+			call.From.Candidates <- callerCandidate
 			fmt.Println("caller candidate sent")
 		}
 	}
 }
 
-// AnswerWS obtains the caller's name from the first ws message and sends the caller's offer Sd to the client.
+// Answer obtains the caller's name from the first ws message and sends the caller's offer Sd to the client.
 // It then waits for the clients answer, where it then facilitates trickle-ICE gathering between the two clients.
-func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
+func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	username := middleware.GetUsernameWS(ws)
 	_, sqlErr := dal.GetUserByUsername(h.db, username)
 	if sqlErr != nil {
@@ -178,7 +163,7 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 		return
 	}
 	log.Println("answerWS: answer recieved")
-	call.AnswerChan <- answer.Sd
+	call.Answer <- answer.Sd
 
 	// read incoming candidates
 	var (
@@ -204,18 +189,17 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 			log.Println("Answer req context done")
 			return
 		// note: this needs to continue to run even if readchan is closed. this may always complete first tho...
-		case candidate, ok := <-call.From.CandidateChan:
+		case candidate, ok := <-call.From.Candidates:
 			if !ok {
-				call.From.CandidateChan = nil
+				call.From.Candidates = nil
 			}
 			if wErr := websocket.JSON.Send(ws, candidate); wErr != nil {
 				log.Printf("error writing answer: %v", wErr)
 				return
 			}
 		case answerCandidate, ok := <-readChan:
-			if !ok { // answerer gather completed
-				close(call.To.CandidateChan)
-				// readChan = nil
+			if !ok { // recipient gather completed
+				close(call.To.Candidates)
 				return
 			}
 			call, err := calls.Get(caller.Id)
@@ -223,7 +207,7 @@ func (h *RouteHandler) AnswerWS(ws *websocket.Conn) {
 				log.Print("answer: call not found during trickle ice")
 				return
 			}
-			call.To.CandidateChan <- answerCandidate
+			call.To.Candidates <- answerCandidate
 			fmt.Println("answer candidate sent")
 		}
 	}
@@ -238,6 +222,7 @@ func readCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
 		err := websocket.JSON.Receive(ws, &candidate)
 		if err != nil {
 			if err == io.EOF {
+				log.Println("EOF during ws read")
 				return
 			}
 			log.Printf("error reading from ws: %v", err)

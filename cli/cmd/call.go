@@ -65,21 +65,21 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	defer stop()
 
 	log.Println("creating caller connection")
-	pc, createErr := configs.NewPeerConnection(stunServer)
-	if createErr != nil {
-		fmt.Printf("error creating peer connection %v", createErr)
+	pc, err := configs.NewPeerConnection(stunServer)
+	if err != nil {
+		fmt.Printf("error creating peer connection %v", err)
 		return
 	}
 	defer func() {
 		log.Println("forcing close of caller connection")
-		if cErr := pc.Close(); cErr != nil {
-			fmt.Printf("cannot forcefully close caller connection: %v\n", cErr)
+		if err := pc.Close(); err != nil {
+			fmt.Printf("cannot forcefully close caller connection: %v\n", err)
 		}
 	}()
 
-	track, tErr := configs.CreateAudioTrack(pc, username)
-	if tErr != nil {
-		log.Printf("error creating audio track: %v", tErr)
+	track, err := configs.CreateAudioTrack(pc, username)
+	if err != nil {
+		log.Printf("error creating audio track: %v", err)
 		return
 	}
 
@@ -93,31 +93,16 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	// }
 
 	var (
-		candidateChan = make(chan webrtc.ICECandidateInit, 10)
-		connectedChan = make(chan struct{})
+		// our client's ice candidates
+		candidates = make(chan webrtc.ICECandidateInit, 10)
+		connected  = make(chan struct{})
 	)
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		internal.OnICECandidate(c, candidateChan)
+		internal.OnICECandidate(c, candidates)
 	})
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		internal.OnConnectionStateChangeCaller(s, connectedChan)
+		internal.OnConnectionStateChangeCaller(s, connected)
 	})
-
-	// Create an offer to send to the other process
-	log.Println("Creating offer")
-	offer, oErr := pc.CreateOffer(nil)
-	if oErr != nil {
-		fmt.Printf("error creating offer: %v", oErr)
-		return
-	}
-
-	// Sets the LocalDescription, and starts our UDP listeners
-	// Note: this will start the gathering of ICE candidates
-	log.Println("setting local description")
-	if ldErr := pc.SetLocalDescription(offer); ldErr != nil {
-		fmt.Printf("error setting local description: %v", ldErr)
-		return
-	}
 
 	// sending an error on this channel will abort the call process
 	errorChan := make(chan error, 10)
@@ -133,98 +118,60 @@ func initiateCall(_ *cobra.Command, _ []string) {
 
 	callWg.Go(func() {
 		defer cancelCall()
-		ws, wsErr := signaling.NewWebsocketConn(callCtx, vogoServer, username, password, "/call")
-		if wsErr != nil {
-			errorChan <- fmt.Errorf("error creating websocket connection: %w", wsErr)
+		defer func() {
+			log.Println("call goroutine COMPLETE")
+		}()
+		ws, err := signaling.NewConnection(callCtx, vogoServer, username, password, "/call")
+		if err != nil {
+			errorChan <- fmt.Errorf("error creating websocket connection: %w", err)
 			return
 		}
 
-		// send offer
-		callReq := signaling.CallRequest{RecipientName: recipient, Sd: offer}
-		log.Println("wrote offer to ws")
-		if sErr := websocket.JSON.Send(ws, callReq); sErr != nil {
-			errorChan <- sErr
+		if err = signaling.CreateAndSendOffer(ws, pc, recipient); err != nil {
+			errorChan <- err
 			return
 		}
 
-		var sendIceWg sync.WaitGroup
-		sendIceCtx, cancelSendIce := context.WithCancel(callCtx)
+		var iceWg sync.WaitGroup
+		iceCtx, cancelSendIce := context.WithCancel(callCtx)
 		defer func() {
 			cancelSendIce()
-			sendIceWg.Wait()
+			iceWg.Wait()
 		}()
 
 		// gather local ice candidates and write to websocket
-		sendIceWg.Go(func() {
+		iceWg.Go(func() {
 			defer cancelSendIce()
-			defer func() {
-				log.Println("sendIce goroutine finished")
-			}()
-			for {
-				select {
-				case <-sendIceCtx.Done():
-					return
-				case iceCandidate, ok := <-candidateChan:
-					if sErr := websocket.JSON.Send(ws, iceCandidate); sErr != nil {
-						errorChan <- fmt.Errorf("error sending ice candidate: %w", sErr)
-						return
-					}
-					log.Println("sent candidate")
-					if !ok {
-						log.Println("caller's ice gathering completed, channel closed")
-						return
-					}
-				}
+			if err = sendICECandidates(iceCtx, ws, candidates); err != nil {
+				errorChan <- err
 			}
 		})
 
 		// wait to recv answer
 		var answer webrtc.SessionDescription
-		readErr := websocket.JSON.Receive(ws, &answer)
-		if readErr != nil {
-			errorChan <- fmt.Errorf("error reading answer from ws: %v", readErr)
+		if err = websocket.JSON.Receive(ws, &answer); err != nil {
+			errorChan <- fmt.Errorf("error reading answer from ws: %v", err)
 			return
 		}
-		if sdErr := pc.SetRemoteDescription(answer); sdErr != nil {
-			errorChan <- fmt.Errorf("error while setting remote description: %w", sdErr)
+		if err = pc.SetRemoteDescription(answer); err != nil {
+			errorChan <- fmt.Errorf("error while setting remote description: %w", err)
 			return
 		}
 		log.Println("recieved answer")
 
 		var (
-			readWg   sync.WaitGroup
-			readChan = make(chan webrtc.ICECandidateInit)
+			readWg              sync.WaitGroup
+			recipientCandidates = make(chan webrtc.ICECandidateInit)
 		)
-		defer func() {
-			// ws.Close will unblock any reads on the connection
-			if cErr := ws.Close(); cErr != nil {
-				log.Printf("error closing ws in defer: %v", cErr)
-			}
-			readWg.Wait()
-		}()
-		readWg.Go(func() {
-			signaling.ReadCandidates(ws, readChan)
-		})
+		defer signaling.CloseAndWait(ws, &readWg)
 
-		for {
-			select {
-			case <-callCtx.Done():
-				log.Println("ws caller ctx cancelled")
-				return
-			// recv answerer candidates from the websocket
-			case answerCandidate, ok := <-readChan:
-				// all answerer candidates have been gathered, now we just
-				// wait on the callCtx to cancel
-				if !ok {
-					readChan = nil
-					continue
-				}
-				log.Println("recv answerer candidate")
-				if iceErr := pc.AddICECandidate(answerCandidate); iceErr != nil {
-					errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
-					return
-				}
-			}
+		// send ice candidates to ws as they are gathered
+		readWg.Go(func() {
+			signaling.ReadCandidates(ws, recipientCandidates)
+		})
+		if err = addICECandidates(callCtx, pc, recipientCandidates); err != nil {
+			errorChan <- err
+			return
 		}
 	})
 
@@ -240,13 +187,14 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		select {
 		case <-captureCtx.Done(): // if call fails
 			return
-		case <-connectedChan:
+		case <-connected:
 			cancelCall()
 			break
 		}
-		captureErr := audio.StartCapture(captureCtx, pc, track)
-		if captureErr != nil {
-			errorChan <- fmt.Errorf("error with capture device: %w", captureErr)
+		err := audio.StartCapture(captureCtx, pc, track)
+		if err != nil {
+			errorChan <- fmt.Errorf("error with capture device: %w", err)
+			return
 		}
 	})
 
@@ -257,5 +205,45 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		break
 	case <-sigCtx.Done():
 		break
+	}
+}
+
+// sendICECandidates sends each ICE candidate from ch to the websocket.
+func sendICECandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.ICECandidateInit) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case candidate, ok := <-ch:
+			if err := websocket.JSON.Send(ws, candidate); err != nil {
+				return fmt.Errorf("error sending ice candidate: %w", err)
+			}
+			log.Println("sent candidate")
+			if !ok {
+				log.Println("caller's ice gathering completed, channel closed")
+				return nil
+			}
+		}
+	}
+}
+
+// addICECandidates adds the recipient's ICE candidates from ch to the peer connection until
+// there are no more or the context is cancelled.
+func addICECandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan webrtc.ICECandidateInit) error {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("ws caller ctx cancelled")
+			return nil
+		case candidate, ok := <-ch: // from the websocket
+			if !ok {
+				ch = nil
+				continue
+			}
+			log.Println("recv recipient candidate")
+			if err := pc.AddICECandidate(candidate); err != nil {
+				return fmt.Errorf("error recieving ICE candidate: %w", err)
+			}
+		}
 	}
 }
