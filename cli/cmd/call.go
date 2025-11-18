@@ -10,10 +10,8 @@ import (
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/configs"
-	"github.com/gregriff/vogo/cli/internal"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/core"
-	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	// _ "net/http/pprof".
@@ -63,31 +61,11 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Println("creating caller connection")
-	pc, err := configs.NewPeerConnection(stunServer)
+	pc, track, candidates, connected, err := configs.NewAudioPeerConnection(stunServer, username, true)
 	if err != nil {
-		fmt.Printf("error creating peer connection %v", err)
-		return
+		fmt.Printf("error initializing webrtc: %v", err)
 	}
 	defer configs.ClosePC(pc, true)
-
-	track, err := configs.CreateAudioTrack(pc, username)
-	if err != nil {
-		log.Printf("error creating audio track: %v", err)
-		return
-	}
-
-	var (
-		// our client's ice candidates
-		candidates = make(chan webrtc.ICECandidateInit, 10)
-		connected  = make(chan struct{})
-	)
-	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		internal.OnICECandidate(c, candidates)
-	})
-	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		internal.OnConnectionStateChangeCaller(s, connected)
-	})
 
 	// var playbackWg sync.WaitGroup
 	// playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
@@ -98,7 +76,7 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	// }
 
 	// sending an error on this channel will abort the call process
-	errorChan := make(chan error, 10)
+	abort := make(chan error, 10)
 
 	var callWg sync.WaitGroup
 	callCtx, cancelCall := context.WithCancel(sigCtx)
@@ -112,9 +90,9 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		defer cancelCall()
 
 		credentials := core.NewCredentials(vogoServer, username, password)
-		err := core.SendCallAndConnect(callCtx, pc, credentials, recipient, candidates, errorChan)
+		err := core.SendCallAndConnect(callCtx, pc, credentials, recipient, candidates, abort)
 		if err != nil {
-			errorChan <- err
+			abort <- err
 			return
 		}
 	})
@@ -136,14 +114,14 @@ func initiateCall(_ *cobra.Command, _ []string) {
 			break
 		}
 		if err = audio.StartCapture(captureCtx, pc, track); err != nil {
-			errorChan <- fmt.Errorf("error with capture device: %w", err)
+			abort <- fmt.Errorf("error with capture device: %w", err)
 			return
 		}
 	})
 
 	// block until sigint or error in goroutines above
 	select {
-	case err := <-errorChan:
+	case err := <-abort:
 		fmt.Println(err)
 		break
 	case <-sigCtx.Done():

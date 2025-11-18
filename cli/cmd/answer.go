@@ -10,10 +10,8 @@ import (
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/configs"
-	"github.com/gregriff/vogo/cli/internal"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/core"
-	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	// _ "net/http/pprof".
@@ -63,34 +61,12 @@ func answerCall(_ *cobra.Command, _ []string) {
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Println("creating recipient connection")
-	pc, err := configs.NewPeerConnection(stunServer)
+	pc, track, candidates, connected, err := configs.NewAudioPeerConnection(stunServer, username, true)
 	if err != nil {
-		fmt.Printf("error creating peer connection %v", err)
+		log.Printf("error initializing webrtc: %v", err)
 		return
 	}
 	defer configs.ClosePC(pc, true)
-
-	// if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
-	// 	panic(err)
-	// }
-
-	track, err := configs.CreateAudioTrack(pc, username)
-	if err != nil {
-		log.Printf("error creating audio track: %v", err)
-		return
-	}
-
-	var (
-		candidates = make(chan webrtc.ICECandidateInit, 10)
-		connected  = make(chan struct{})
-	)
-	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		internal.OnICECandidate(c, candidates)
-	})
-	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		internal.OnConnectionStateChange(s, connected)
-	})
 
 	log.Println("init playback device...")
 	var playbackWg sync.WaitGroup
@@ -109,7 +85,7 @@ func answerCall(_ *cobra.Command, _ []string) {
 		answerWg.Wait()
 		log.Println("answer wg completed")
 	}()
-	errorChan := make(chan error, 10)
+	abort := make(chan error, 10)
 
 	answerWg.Go(func() {
 		defer cancelAnswer()
@@ -117,7 +93,7 @@ func answerCall(_ *cobra.Command, _ []string) {
 		credentials := core.NewCredentials(vogoServer, username, password)
 		err = core.AnswerAndConnect(answerCtx, pc, credentials, caller, candidates)
 		if err != nil {
-			errorChan <- err
+			abort <- err
 			return
 		}
 	})
@@ -139,13 +115,13 @@ func answerCall(_ *cobra.Command, _ []string) {
 			break
 		}
 		if err = audio.StartCapture(captureCtx, pc, track); err != nil {
-			errorChan <- fmt.Errorf("error with capture device: %v", err)
+			abort <- fmt.Errorf("error with capture device: %v", err)
 		}
 	})
 
 	// block until ctrl C or an error in capture goroutine
 	select {
-	case err := <-errorChan:
+	case err := <-abort:
 		fmt.Println(err)
 		break
 	case <-sigCtx.Done():

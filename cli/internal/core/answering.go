@@ -28,11 +28,11 @@ func AnswerAndConnect(
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
 
-	offer, err := RecieveOffer(ws)
+	offer, err := recieveOffer(ws)
 	if err != nil {
 		return fmt.Errorf("error recieving offer: %w", err)
 	}
-	err = CreateAndSendAnswer(ws, pc, offer, caller)
+	err = createAndSendAnswer(ws, pc, offer, caller)
 	if err != nil {
 		return fmt.Errorf("error creating or posting answer %w", err)
 	}

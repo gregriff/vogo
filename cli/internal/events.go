@@ -22,19 +22,15 @@ func OnICECandidate(candidate *webrtc.ICECandidate, ch chan<- webrtc.ICECandidat
 	ch <- candidate.ToJSON()
 }
 
-func OnConnectionStateChange(state webrtc.PeerConnectionState, ch chan<- struct{}) {
+func OnConnectionStateChange(state webrtc.PeerConnectionState, ch chan<- struct{}, exitOnFail bool) {
 	fmt.Printf("Peer Connection State has changed: %s\n", state.String())
 
 	if state == webrtc.PeerConnectionStateConnected {
 		ch <- struct{}{}
 	}
-}
 
-func OnConnectionStateChangeCaller(state webrtc.PeerConnectionState, ch chan<- struct{}) {
-	fmt.Printf("Peer Connection State has changed: %s\n", state.String())
-
-	if state == webrtc.PeerConnectionStateConnected {
-		ch <- struct{}{}
+	if !exitOnFail {
+		return
 	}
 
 	if state == webrtc.PeerConnectionStateFailed {

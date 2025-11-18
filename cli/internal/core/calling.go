@@ -1,4 +1,3 @@
-// package core contains code wrapping websockets and webrtc signaling and connecting.
 package core
 
 import (
@@ -28,7 +27,7 @@ func SendCallAndConnect(
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
 
-	if err = CreateAndSendOffer(ws, pc, recipient); err != nil {
+	if err = createAndSendOffer(ws, pc, recipient); err != nil {
 		return err
 	}
 
