@@ -1,10 +1,9 @@
-package configs
+package wrtc
 
 import (
 	"fmt"
 	"log"
 
-	"github.com/gregriff/vogo/cli/internal"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/pion/webrtc/v4"
 )
@@ -51,10 +50,10 @@ func NewAudioPeerConnection(stunServer, username string, exitOnFail bool) (
 		connected = make(chan struct{})
 	)
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		internal.OnICECandidate(c, candidates)
+		onICECandidate(c, candidates)
 	})
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		internal.OnConnectionStateChange(s, connected, exitOnFail)
+		onConnectionStateChange(s, connected, exitOnFail)
 	})
 	return pc, track, candidates, connected, nil
 }

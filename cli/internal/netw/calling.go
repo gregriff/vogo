@@ -1,4 +1,4 @@
-package core
+package netw
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"log"
 	"sync"
 
+	"github.com/gregriff/vogo/cli/internal/wrtc"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
@@ -27,7 +28,7 @@ func SendCallAndConnect(
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
 
-	if err = createAndSendOffer(ws, pc, recipient); err != nil {
+	if err = wrtc.CreateAndSendOffer(ws, pc, recipient); err != nil {
 		return err
 	}
 

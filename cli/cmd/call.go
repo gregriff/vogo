@@ -9,9 +9,9 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/cli/internal/core"
+	"github.com/gregriff/vogo/cli/internal/netw"
+	"github.com/gregriff/vogo/cli/internal/wrtc"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	// _ "net/http/pprof".
@@ -61,11 +61,11 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pc, track, candidates, connected, err := configs.NewAudioPeerConnection(stunServer, username, true)
+	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(stunServer, username, true)
 	if err != nil {
 		fmt.Printf("error initializing webrtc: %v", err)
 	}
-	defer configs.ClosePC(pc, true)
+	defer wrtc.ClosePC(pc, true)
 
 	// var playbackWg sync.WaitGroup
 	// playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
@@ -89,8 +89,8 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	callWg.Go(func() {
 		defer cancelCall()
 
-		credentials := core.NewCredentials(vogoServer, username, password)
-		err := core.SendCallAndConnect(callCtx, pc, credentials, recipient, candidates, abort)
+		credentials := netw.NewCredentials(vogoServer, username, password)
+		err := netw.SendCallAndConnect(callCtx, pc, credentials, recipient, candidates, abort)
 		if err != nil {
 			abort <- err
 			return

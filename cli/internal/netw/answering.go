@@ -1,5 +1,6 @@
-// package core contains code wrapping websockets and webrtc signaling and connecting.
-package core
+// package netw implements high-level networking functionality to enable p2p voice chat.
+// It handles the client-side connection process, using the wrtc package for signaling.
+package netw
 
 import (
 	"context"
@@ -7,6 +8,7 @@ import (
 	"log"
 	"sync"
 
+	"github.com/gregriff/vogo/cli/internal/wrtc"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
@@ -28,11 +30,11 @@ func AnswerAndConnect(
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
 
-	offer, err := recieveOffer(ws)
+	offer, err := wrtc.RecieveOffer(ws)
 	if err != nil {
 		return fmt.Errorf("error recieving offer: %w", err)
 	}
-	err = createAndSendAnswer(ws, pc, offer, caller)
+	err = wrtc.CreateAndSendAnswer(ws, pc, offer, caller)
 	if err != nil {
 		return fmt.Errorf("error creating or posting answer %w", err)
 	}

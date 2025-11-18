@@ -1,4 +1,4 @@
-package core
+package wrtc
 
 import (
 	"fmt"
@@ -18,9 +18,9 @@ type answerRequest struct {
 	Sd         webrtc.SessionDescription
 }
 
-// createAndSendOffer creates the offer, starts ICE gathering, and sends the offer over ws,
+// CreateAndSendOffer creates the offer, starts ICE gathering, and sends the offer over ws,
 // for the specified recipient (username)
-func createAndSendOffer(ws *websocket.Conn, pc *webrtc.PeerConnection, recipient string) error {
+func CreateAndSendOffer(ws *websocket.Conn, pc *webrtc.PeerConnection, recipient string) error {
 	offer, err := pc.CreateOffer(nil)
 	if err != nil {
 		return fmt.Errorf("error creating offer: %v", err)
@@ -38,9 +38,9 @@ func createAndSendOffer(ws *websocket.Conn, pc *webrtc.PeerConnection, recipient
 	return nil
 }
 
-// recieveOffer reads the caller's offer from the websocket and returns it.
+// RecieveOffer reads the caller's offer from the websocket and returns it.
 // It blocks while waiting to read from the ws.
-func recieveOffer(ws *websocket.Conn) (*webrtc.SessionDescription, error) {
+func RecieveOffer(ws *websocket.Conn) (*webrtc.SessionDescription, error) {
 	var offer webrtc.SessionDescription
 	if err := websocket.JSON.Receive(ws, &offer); err != nil {
 		if err == io.EOF {
@@ -51,9 +51,9 @@ func recieveOffer(ws *websocket.Conn) (*webrtc.SessionDescription, error) {
 	return &offer, nil
 }
 
-// createAndSendAnswer sets the remote description of the caller given their offer, creates the answer,
+// CreateAndSendAnswer sets the remote description of the caller given their offer, creates the answer,
 // starts ICE gathering, then sends the answer to ws
-func createAndSendAnswer(ws *websocket.Conn, pc *webrtc.PeerConnection, offer *webrtc.SessionDescription, callerName string) error {
+func CreateAndSendAnswer(ws *websocket.Conn, pc *webrtc.PeerConnection, offer *webrtc.SessionDescription, callerName string) error {
 	if err := pc.SetRemoteDescription(*offer); err != nil {
 		return fmt.Errorf("error setting remote description: %v", err)
 	}
