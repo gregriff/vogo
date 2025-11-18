@@ -10,16 +10,87 @@ import (
 	"log"
 	"sync"
 
+	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
-// AnswerAndConnect answers and establishes a voice call with a friend client. It
+// Answer establishes a bidirectional voice call with a caller if a call is pending.
+// Signaling, speaker init, connecting and microphone init are all run concurrently,
+// organized with waitgroups and synchronized with channels. The entire process can
+// be cancelled with the provided context, and the first error encountered will be returned.
+func AnswerCall(ctx context.Context, credentials *credentials, caller string) error {
+	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(credentials.stunServer, credentials.username, true)
+	if err != nil {
+		return fmt.Errorf("error initializing webrtc: %w", err)
+	}
+	defer wrtc.ClosePC(pc, true)
+
+	log.Println("init playback device...")
+	var playbackWg sync.WaitGroup
+	playbackCtx, device, err := audio.SetupPlayback(pc, &playbackWg)
+	defer audio.UninitPlayback(pc, playbackCtx, device, &playbackWg)
+	if err != nil {
+		return fmt.Errorf("error initializing playback system: %w", err)
+	}
+	log.Println("playback device created")
+
+	var answer sync.WaitGroup
+	answerCtx, cancelAnswer := context.WithCancel(ctx)
+	defer func() { // wait for capture device teardown
+		cancelAnswer()
+		answer.Wait()
+		log.Println("answer wg completed")
+	}()
+	abort := make(chan error, 10)
+
+	answer.Go(func() {
+		defer cancelAnswer()
+
+		err = answerAndConnect(answerCtx, pc, credentials, caller, candidates)
+		if err != nil {
+			abort <- err
+			return
+		}
+	})
+
+	var capture sync.WaitGroup
+	captureCtx, cancelCapture := context.WithCancel(ctx)
+	defer func() {
+		cancelCapture()
+		capture.Wait()
+	}()
+
+	// setup microphone once call is connected and capture until cancelled
+	capture.Go(func() {
+		select {
+		case <-captureCtx.Done():
+			return
+		case <-connected:
+			cancelAnswer()
+			break
+		}
+		if err = audio.StartCapture(captureCtx, pc, track); err != nil {
+			abort <- fmt.Errorf("error with capture device: %w", err)
+			return
+		}
+	})
+
+	// block until ctrl C or an error in capture goroutine
+	select {
+	case err := <-abort:
+		return fmt.Errorf("call aborted: %w", err)
+	case <-ctx.Done():
+		return nil
+	}
+}
+
+// answerAndConnect answers and establishes a voice call with a friend client. It
 // uses a websocket connection to a vogo server to handle signaling and connecting.
 // It uses trickle-ICE for fast connection. It assumes a PeerConnection set up
 // correctly for opus audio.
-func AnswerAndConnect(
+func answerAndConnect(
 	ctx context.Context,
 	pc *webrtc.PeerConnection,
 	credentials *credentials,

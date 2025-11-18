@@ -21,7 +21,7 @@ var opusCodec = webrtc.RTPCodecCapability{
 // one for recieving the client's ICE candidates as they're gathered, and the other for signaling
 // when the PeerConnection moves to a connected state.
 // TODO: create a struct for this retval
-func NewAudioPeerConnection(stunServer, username string, exitOnFail bool) (
+func NewAudioPeerConnection(stunServer, trackID string, exitOnFail bool) (
 	*webrtc.PeerConnection,
 	*webrtc.TrackLocalStaticSample,
 	chan webrtc.ICECandidateInit,
@@ -36,7 +36,7 @@ func NewAudioPeerConnection(stunServer, username string, exitOnFail bool) (
 	// if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
 	// 	panic(err)
 	// }
-	track, err := createAudioTrack(pc, username)
+	track, err := createAudioTrack(pc, trackID)
 	if err != nil {
 		ClosePC(pc, true)
 		return pc, track, nil, nil, fmt.Errorf("error creating audio track: %w", err)

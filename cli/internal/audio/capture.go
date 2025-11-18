@@ -22,7 +22,7 @@ type AudioBuffer struct {
 
 func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) error {
 	deviceCtx, device, pcm, initErr := initCaptureDevice()
-	defer teardownCaptureResources(deviceCtx, device)
+	defer uninitCapture(deviceCtx, device)
 	if initErr != nil {
 		return fmt.Errorf("error initalizing capture device: %w", initErr)
 	}
@@ -115,7 +115,7 @@ func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm
 	return
 }
 
-func teardownCaptureResources(ctx *malgo.AllocatedContext, device *malgo.Device) {
+func uninitCapture(ctx *malgo.AllocatedContext, device *malgo.Device) {
 	if device != nil {
 		device.Uninit()
 	}

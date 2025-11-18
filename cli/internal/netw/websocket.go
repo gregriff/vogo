@@ -15,6 +15,7 @@ import (
 
 // credentials are for signaling and connecting
 type credentials struct {
+	stunServer,
 	baseURL,
 	username,
 	password string
@@ -22,18 +23,18 @@ type credentials struct {
 
 // NewCredentials creates credentials needed to make websocket requests
 // to the vogo server for signaling/connecting.
-func NewCredentials(baseURL, username, password string) *credentials {
+func NewCredentials(stunServer, baseURL, username, password string) *credentials {
 	return &credentials{
-		baseURL:  baseURL,
-		username: username,
-		password: password,
+		stunServer: stunServer,
+		baseURL:    baseURL,
+		username:   username,
+		password:   password,
 	}
 }
 
 // newWebsocket creates a websocket connection to the vogo server to a given endpoint,
 // with http basic auth headers.
-func newWebsocket(
-	ctx context.Context,
+func newWebsocket(ctx context.Context,
 	credentials *credentials,
 	endpoint string,
 ) (*websocket.Conn, error) {

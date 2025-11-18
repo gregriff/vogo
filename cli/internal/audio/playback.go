@@ -114,7 +114,11 @@ func initPlaybackDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pc
 	return
 }
 
-func TeardownPlaybackResources(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, device *malgo.Device, wg *sync.WaitGroup) {
+// UninitPlayback uninitializes the malgo playback device and frees all its resources. First, it attempts a graceful close
+// of the PeerConnection, in order to unblock the playback goroutine, which blocks while it reads packets from the network.
+// The playback wg is then waited on, while the goroutines reading from the network (RemoteTracks) complete. Regardless
+// of the result of the graceful close, the malgo device is torn down.
+func UninitPlayback(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, device *malgo.Device, wg *sync.WaitGroup) {
 	// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
 	if closeErr := pc.GracefulClose(); closeErr != nil {
 		fmt.Printf("cannot gracefully close recipient connection: %v\n", closeErr)
