@@ -1,4 +1,5 @@
-package vogo
+// package crud implements RESTful requests to the vogo server
+package crud
 
 import (
 	"net/http"

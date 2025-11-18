@@ -1,4 +1,5 @@
-package internal
+// package wrtc wraps pion webrtc capabilities
+package wrtc
 
 import (
 	"fmt"
@@ -8,7 +9,7 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-func OnICECandidate(candidate *webrtc.ICECandidate, ch chan<- webrtc.ICECandidateInit) {
+func onICECandidate(candidate *webrtc.ICECandidate, ch chan<- webrtc.ICECandidateInit) {
 	addr := "nil!"
 	if candidate != nil {
 		addr = candidate.Address
@@ -22,19 +23,15 @@ func OnICECandidate(candidate *webrtc.ICECandidate, ch chan<- webrtc.ICECandidat
 	ch <- candidate.ToJSON()
 }
 
-func OnConnectionStateChange(state webrtc.PeerConnectionState, ch chan<- struct{}) {
+func onConnectionStateChange(state webrtc.PeerConnectionState, ch chan<- struct{}, exitOnFail bool) {
 	fmt.Printf("Peer Connection State has changed: %s\n", state.String())
 
 	if state == webrtc.PeerConnectionStateConnected {
 		ch <- struct{}{}
 	}
-}
 
-func OnConnectionStateChangeCaller(state webrtc.PeerConnectionState, ch chan<- struct{}) {
-	fmt.Printf("Peer Connection State has changed: %s\n", state.String())
-
-	if state == webrtc.PeerConnectionStateConnected {
-		ch <- struct{}{}
+	if !exitOnFail {
+		return
 	}
 
 	if state == webrtc.PeerConnectionStateFailed {

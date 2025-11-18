@@ -1,4 +1,4 @@
-package signaling
+package netw
 
 import (
 	"context"
@@ -7,18 +7,37 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
-// NewWebsocketConn creates a websocket connection to the vogo server to a given endpoint,
+// credentials are for signaling and connecting
+type credentials struct {
+	baseURL,
+	username,
+	password string
+}
+
+// NewCredentials creates credentials needed to make websocket requests
+// to the vogo server for signaling/connecting.
+func NewCredentials(baseURL, username, password string) *credentials {
+	return &credentials{
+		baseURL:  baseURL,
+		username: username,
+		password: password,
+	}
+}
+
+// newWebsocket creates a websocket connection to the vogo server to a given endpoint,
 // with http basic auth headers.
-func NewWebsocketConn(
+func newWebsocket(
 	ctx context.Context,
-	baseUrl, username, password, endpoint string,
+	credentials *credentials,
+	endpoint string,
 ) (*websocket.Conn, error) {
-	cfg, err := newWebsocketConfig(baseUrl, username, password, endpoint)
+	cfg, err := newWebsocketConfig(credentials, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -30,8 +49,8 @@ func NewWebsocketConn(
 }
 
 // newWebsocketConfig creates a new websocket.Config for the vogo server for a specific endpoint, with basic auth.
-func newWebsocketConfig(baseUrl, username, password, endpoint string) (*websocket.Config, error) {
-	loc := strings.Replace(baseUrl, "http", "ws", 1) + endpoint
+func newWebsocketConfig(c *credentials, endpoint string) (*websocket.Config, error) {
+	loc := strings.Replace(c.baseURL, "http", "ws", 1) + endpoint
 	log.Println("ws url: ", loc)
 
 	cfg, err := websocket.NewConfig(loc, "app://vogo") // no real origin b/c we're not a browser
@@ -40,28 +59,26 @@ func newWebsocketConfig(baseUrl, username, password, endpoint string) (*websocke
 	}
 
 	// set basic auth for the http request that initates the ws connection
-	auth := username + ":" + password
+	auth := c.username + ":" + c.password
 	auth = base64.StdEncoding.EncodeToString([]byte(auth))
 	cfg.Header.Set("Authorization", "Basic "+auth)
 
 	return cfg, nil
 }
 
-// ReadCandidates reads from ws in a loop, sending candidates read to the channel ch.
+// readCandidates reads from ws in a loop, sending candidates read to the channel ch.
 // When an empty candidate is read, the channel is closed, signalling that ICE gather on this
 // websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
-func ReadCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
+func readCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
 	var candidate webrtc.ICECandidateInit
 	for {
 		err := websocket.JSON.Receive(ws, &candidate)
 		if err != nil {
 			if err == io.EOF {
+				log.Println("EOF reading ws")
 				return
 			}
 			log.Printf("error reading from ws: %v", err)
-			if closeErr := ws.Close(); closeErr != nil {
-				log.Printf("error closing ws: %v", closeErr)
-			}
 			return
 		}
 
@@ -72,4 +89,13 @@ func ReadCandidates(ws *websocket.Conn, ch chan webrtc.ICECandidateInit) {
 		}
 		ch <- candidate
 	}
+}
+
+// closeAndWait closes the websocket, unblocking any reads on it. wg should be the waitgroup
+// for the goroutine reading the websocket.
+func closeAndWait(ws *websocket.Conn, wg *sync.WaitGroup) {
+	if err := ws.Close(); err != nil {
+		log.Printf("error closing ws in defer: %v", err)
+	}
+	wg.Wait()
 }

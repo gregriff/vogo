@@ -1,10 +1,9 @@
 # TODOs
 
 ### Next:
-- oniceconnected, stop the call and answer goroutines
-- remove username get from answer endpoint
+- ensure onTrack for speaker mixes audio, pull out so that it can be added to speaker after speaker init?
+- parallelize speaker init and signal its completion (its slow)
 - ensure that errorChan never blocks (if multiple errors are sent to it) 
-- server both call and answer requests should close. need to figure out how to cancel the request context
 - add a edit-config command that invokes default text editor (how do i do this on windows?)
 - manually impl a timeout cancel of /call ws request
 - remove/fix xdg config in client to match server

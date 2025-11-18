@@ -6,7 +6,7 @@ import (
 	"log"
 	"regexp"
 
-	"github.com/gregriff/vogo/cli/internal/services/vogo"
+	"github.com/gregriff/vogo/cli/internal/services/crud"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	// _ "net/http/pprof".
@@ -60,8 +60,8 @@ func registerUser(_ *cobra.Command, _ []string) {
 		log.Fatal(msg.Error())
 	}
 
-	vogoClient := vogo.NewClient(vogoServer, "", "")
-	username, err := vogo.Register(*vogoClient, username, password, inviteCode)
+	vogoClient := crud.NewClient(vogoServer, "", "")
+	username, err := crud.Register(*vogoClient, username, password, inviteCode)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error during registration: %w", err).Error())
 	}

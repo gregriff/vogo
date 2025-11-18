@@ -9,14 +9,11 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/gregriff/vogo/cli/configs"
-	"github.com/gregriff/vogo/cli/internal"
 	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/cli/internal/services/signaling"
-	"github.com/pion/webrtc/v4"
+	"github.com/gregriff/vogo/cli/internal/netw"
+	"github.com/gregriff/vogo/cli/internal/wrtc"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"golang.org/x/net/websocket"
 	// _ "net/http/pprof".
 )
 
@@ -64,152 +61,67 @@ func answerCall(_ *cobra.Command, _ []string) {
 		os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Println("creating answerer connection")
-	pc, createErr := configs.NewPeerConnection(stunServer)
-	if createErr != nil {
-		fmt.Printf("error creating peer connection %v", createErr)
+	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(stunServer, username, true)
+	if err != nil {
+		log.Printf("error initializing webrtc: %v", err)
 		return
 	}
-	defer func() {
-		fmt.Println("forcing close of answerer connection")
-		if cErr := pc.Close(); cErr != nil {
-			fmt.Printf("cannot forcefully close answerer connection: %v\n", cErr)
-		}
-	}()
+	defer wrtc.ClosePC(pc, true)
 
-	// if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
-	// 	panic(err)
-	// }
-
-	track, tErr := configs.CreateAudioTrack(pc, username)
-	if tErr != nil {
-		log.Printf("error creating audio track: %v", tErr)
-		return
-	}
-
+	log.Println("init playback device...")
 	var playbackWg sync.WaitGroup
-
-	playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
+	playbackCtx, device, err := audio.SetupPlayback(pc, &playbackWg)
 	defer audio.TeardownPlaybackResources(pc, playbackCtx, device, &playbackWg)
-	if playbackErr != nil {
-		fmt.Printf("error initializing playback system: %v", playbackErr)
+	if err != nil {
+		fmt.Printf("error initializing playback system: %v", err)
 		return
 	}
-
-	var (
-		candidateChan = make(chan webrtc.ICECandidateInit, 10)
-		connectedChan = make(chan struct{})
-	)
-	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		internal.OnICECandidate(c, candidateChan)
-	})
-	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		internal.OnConnectionStateChange(s, connectedChan)
-	})
+	log.Println("playback device created")
 
 	var answerWg sync.WaitGroup
 	answerCtx, cancelAnswer := context.WithCancel(sigCtx)
 	defer func() { // wait for capture device teardown
 		cancelAnswer()
 		answerWg.Wait()
+		log.Println("answer wg completed")
 	}()
-	errorChan := make(chan error, 10)
+	abort := make(chan error, 10)
 
 	answerWg.Go(func() {
 		defer cancelAnswer()
-		endpoint := fmt.Sprintf("/answer/%s", caller)
-		ws, wsErr := signaling.NewWebsocketConn(answerCtx, vogoServer, username, password, endpoint)
-		if wsErr != nil {
-			errorChan <- fmt.Errorf("error creating websocket connection: %w", wsErr)
-			return
-		}
 
-		// wait to recv offer
-		var offer webrtc.SessionDescription
-		readErr := websocket.JSON.Receive(ws, &offer)
-		if readErr != nil {
-			log.Printf("error reading offer from ws: %v", readErr)
+		credentials := netw.NewCredentials(vogoServer, username, password)
+		err = netw.AnswerAndConnect(answerCtx, pc, credentials, caller, candidates)
+		if err != nil {
+			abort <- err
 			return
-		}
-		aErr := signaling.CreateAndPostAnswer(ws, pc, &offer, caller)
-		if aErr != nil {
-			errorChan <- fmt.Errorf("error creating or posting answer: %w", aErr)
-			return
-		}
-		log.Println("answer sent")
-
-		var (
-			readWg   sync.WaitGroup
-			readChan = make(chan webrtc.ICECandidateInit)
-		)
-		defer func() {
-			// ws.Close will unblock any reads on the connection
-			if cErr := ws.Close(); cErr != nil {
-				log.Printf("error closing ws in defer: %v", cErr)
-			}
-			readWg.Wait()
-			log.Println("readWg closed")
-		}()
-		readWg.Go(func() {
-			signaling.ReadCandidates(ws, readChan)
-		})
-
-		for {
-			select {
-			case <-answerCtx.Done():
-				log.Println("ws answer ctx cancelled")
-				return
-			case iceCandidate, ok := <-candidateChan:
-				if sErr := websocket.JSON.Send(ws, iceCandidate); sErr != nil {
-					errorChan <- fmt.Errorf("error sending ice candidate: %w", sErr)
-					return
-				}
-				log.Println("sent candidate")
-				if !ok {
-					log.Println("caller's ice gathering completed, channel closed")
-					candidateChan = nil
-					continue
-				}
-			// recv caller candidates from the websocket
-			case callerCandidate, ok := <-readChan:
-				if !ok {
-					readChan = nil
-					continue
-				}
-				log.Println("recv caller candidate")
-				if iceErr := pc.AddICECandidate(callerCandidate); iceErr != nil {
-					errorChan <- fmt.Errorf("error recieving ICE candidate: %w", iceErr)
-					return
-				}
-			}
 		}
 	})
 
-	var captureWaitGroup sync.WaitGroup
+	var captureWg sync.WaitGroup
 	captureCtx, cancelCapture := context.WithCancel(sigCtx)
 	defer func() { // wait for capture device teardown
 		cancelCapture()
-		captureWaitGroup.Wait()
+		captureWg.Wait()
 	}()
 
 	// setup microphone once call is connected and capture until cancelled
-	captureWaitGroup.Go(func() {
+	captureWg.Go(func() {
 		select {
 		case <-captureCtx.Done():
 			return
-		case <-connectedChan:
+		case <-connected:
 			cancelAnswer()
 			break
 		}
-		captureErr := audio.StartCapture(captureCtx, pc, track)
-		if captureErr != nil {
-			errorChan <- fmt.Errorf("error with capture device: %v", captureErr)
+		if err = audio.StartCapture(captureCtx, pc, track); err != nil {
+			abort <- fmt.Errorf("error with capture device: %v", err)
 		}
 	})
 
 	// block until ctrl C or an error in capture goroutine
 	select {
-	case err := <-errorChan:
+	case err := <-abort:
 		fmt.Println(err)
 		break
 	case <-sigCtx.Done():
