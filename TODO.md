@@ -1,6 +1,7 @@
 # TODOs
 
 ### Next:
+- ensure onTrack for speaker mixes audio, pull out so that it can be added to speaker after speaker init?
 - parallelize speaker init and signal its completion (its slow)
 - ensure that errorChan never blocks (if multiple errors are sent to it) 
 - add a edit-config command that invokes default text editor (how do i do this on windows?)

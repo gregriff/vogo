@@ -12,7 +12,7 @@ import (
 	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal"
 	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/cli/internal/services/core"
+	"github.com/gregriff/vogo/cli/internal/core"
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -77,15 +77,6 @@ func initiateCall(_ *cobra.Command, _ []string) {
 		return
 	}
 
-	// var playbackWg sync.WaitGroup
-
-	// playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
-	// defer audio.TeardownPlaybackResources(pc, playbackCtx, device, &playbackWg)
-	// if playbackErr != nil {
-	// 	fmt.Printf("error initializing playback system: %v", playbackErr)
-	// 	return
-	// }
-
 	var (
 		// our client's ice candidates
 		candidates = make(chan webrtc.ICECandidateInit, 10)
@@ -97,6 +88,14 @@ func initiateCall(_ *cobra.Command, _ []string) {
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		internal.OnConnectionStateChangeCaller(s, connected)
 	})
+
+	// var playbackWg sync.WaitGroup
+	// playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
+	// defer audio.TeardownPlaybackResources(pc, playbackCtx, device, &playbackWg)
+	// if playbackErr != nil {
+	// 	fmt.Printf("error initializing playback system: %v", playbackErr)
+	// 	return
+	// }
 
 	// sending an error on this channel will abort the call process
 	errorChan := make(chan error, 10)

@@ -36,6 +36,7 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 	// this is where the decoder writes pcm from the network
 	// note: realize that this code will run multiple times if more than one remote track is connected (multi-user voice chat)
 	// note: this callback should not panic
+	// TODO: mix audio here, maybe pull out
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		wg.Add(1)
 		defer wg.Done()

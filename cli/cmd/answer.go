@@ -12,7 +12,7 @@ import (
 	"github.com/gregriff/vogo/cli/configs"
 	"github.com/gregriff/vogo/cli/internal"
 	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/cli/internal/services/core"
+	"github.com/gregriff/vogo/cli/internal/core"
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -81,16 +81,6 @@ func answerCall(_ *cobra.Command, _ []string) {
 		return
 	}
 
-	log.Println("init playback device...")
-	var playbackWg sync.WaitGroup
-	playbackCtx, device, err := audio.SetupPlayback(pc, &playbackWg)
-	defer audio.TeardownPlaybackResources(pc, playbackCtx, device, &playbackWg)
-	if err != nil {
-		fmt.Printf("error initializing playback system: %v", err)
-		return
-	}
-	log.Println("playback device created")
-
 	var (
 		candidates = make(chan webrtc.ICECandidateInit, 10)
 		connected  = make(chan struct{})
@@ -101,6 +91,16 @@ func answerCall(_ *cobra.Command, _ []string) {
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		internal.OnConnectionStateChange(s, connected)
 	})
+
+	log.Println("init playback device...")
+	var playbackWg sync.WaitGroup
+	playbackCtx, device, err := audio.SetupPlayback(pc, &playbackWg)
+	defer audio.TeardownPlaybackResources(pc, playbackCtx, device, &playbackWg)
+	if err != nil {
+		fmt.Printf("error initializing playback system: %v", err)
+		return
+	}
+	log.Println("playback device created")
 
 	var answerWg sync.WaitGroup
 	answerCtx, cancelAnswer := context.WithCancel(sigCtx)
