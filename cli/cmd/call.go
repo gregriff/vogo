@@ -11,7 +11,7 @@ import (
 
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw"
-	"github.com/gregriff/vogo/cli/internal/wrtc"
+	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	// _ "net/http/pprof".

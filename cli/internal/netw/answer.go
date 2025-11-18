@@ -1,5 +1,7 @@
 // package netw implements high-level networking functionality to enable p2p voice chat.
 // It handles the client-side connection process, using the wrtc package for signaling.
+// In addition, CRUD operations with the vogo server are contained here.
+// Many of the public functions in netw map directly to cli commands.
 package netw
 
 import (
@@ -8,7 +10,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/gregriff/vogo/cli/internal/wrtc"
+	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )

@@ -114,6 +114,24 @@ func initPlaybackDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pc
 	return
 }
 
+func TeardownPlaybackResources(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, device *malgo.Device, wg *sync.WaitGroup) {
+	// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
+	if closeErr := pc.GracefulClose(); closeErr != nil {
+		fmt.Printf("cannot gracefully close recipient connection: %v\n", closeErr)
+	} else {
+		wg.Wait()
+	}
+
+	if device != nil {
+		device.Uninit()
+	}
+	if err := ctx.Uninit(); err != nil {
+		fmt.Printf("error uninitializing playback device context: %v", err)
+	}
+	ctx.Free()
+	fmt.Println("uninit and freed playback device")
+}
+
 // int16ToBytes converts an int16 slice to a byte slice of PCM audio. TODO: can be reimpl with unsafe
 func int16ToBytes(s []int16) []byte {
 	result := make([]byte, len(s)*2)

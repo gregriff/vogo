@@ -1,5 +1,6 @@
 package crud
 
+// users.go implements user-related CRUD.
 import (
 	"bytes"
 	"encoding/json"
@@ -8,16 +9,16 @@ import (
 	"net/http"
 )
 
-type NewUser struct {
-	Username,
-	Password string
-	InviteCode string
+type newUser struct {
+	username,
+	password string
+	inviteCode string
 }
 
 // Register asks the vogo-server to create a new user given the provided credentials and returns
 // the official username and friend code if sucessful. It will exit if an error is encountered.
 func Register(client http.Client, username, password, inviteCode string) (string, error) {
-	newUser := NewUser{Username: username, Password: password, InviteCode: inviteCode}
+	newUser := newUser{username: username, password: password, inviteCode: inviteCode}
 	payload, err := json.Marshal(newUser)
 	if err != nil {
 		return "", fmt.Errorf("json marshal error: %w", err)

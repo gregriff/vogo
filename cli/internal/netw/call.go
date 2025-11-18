@@ -6,7 +6,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/gregriff/vogo/cli/internal/wrtc"
+	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
