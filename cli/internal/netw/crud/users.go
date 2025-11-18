@@ -17,7 +17,7 @@ type newUser struct {
 
 // Register asks the vogo-server to create a new user given the provided credentials and returns
 // the official username and friend code if sucessful. It will exit if an error is encountered.
-func Register(client http.Client, username, password, inviteCode string) (string, error) {
+func Register(client *http.Client, username, password, inviteCode string) (string, error) {
 	newUser := newUser{username: username, password: password, inviteCode: inviteCode}
 	payload, err := json.Marshal(newUser)
 	if err != nil {

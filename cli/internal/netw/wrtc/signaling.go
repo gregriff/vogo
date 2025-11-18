@@ -31,8 +31,8 @@ func CreateAndSendOffer(ws *websocket.Conn, pc *webrtc.PeerConnection, recipient
 		return fmt.Errorf("error setting local description: %v", err)
 	}
 
-	callReq := callRequest{RecipientName: recipient, Sd: offer}
-	if err = websocket.JSON.Send(ws, callReq); err != nil {
+	req := callRequest{RecipientName: recipient, Sd: offer}
+	if err = websocket.JSON.Send(ws, req); err != nil {
 		return fmt.Errorf("error sending offer: %w", err)
 	}
 	return nil
@@ -69,8 +69,8 @@ func CreateAndSendAnswer(ws *websocket.Conn, pc *webrtc.PeerConnection, offer *w
 		return fmt.Errorf("error setting local description: %v", err)
 	}
 
-	answerReq := answerRequest{CallerName: callerName, Sd: *pc.LocalDescription()}
-	if err = websocket.JSON.Send(ws, answerReq); err != nil {
+	req := answerRequest{CallerName: callerName, Sd: *pc.LocalDescription()}
+	if err = websocket.JSON.Send(ws, req); err != nil {
 		return fmt.Errorf("error sending answer: %w", err)
 	}
 	return nil

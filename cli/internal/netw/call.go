@@ -23,16 +23,25 @@ func CallFriend(ctx context.Context, credentials *credentials, recipient string)
 	}
 	defer wrtc.ClosePC(pc, true)
 
-	// var playbackWg sync.WaitGroup
-	// playbackCtx, device, playbackErr := audio.SetupPlayback(pc, &playbackWg)
-	// defer audio.TeardownPlaybackResources(pc, playbackCtx, device, &playbackWg)
-	// if playbackErr != nil {
-	// 	fmt.Printf("error initializing playback system: %v", playbackErr)
-	// 	return
-	// }
-
 	// sending an error on this channel will abort the call process
 	abort := make(chan error, 10)
+
+	// initalize speaker asynchronously
+	// var (
+	// 	playbackWg  sync.WaitGroup
+	// 	playbackCtx *malgo.AllocatedContext
+	// 	speaker     *malgo.Device
+	// )
+	// go func() {
+	// 	// TODO: mic capture needs to start after this is completed. add a noti chan
+	// 	playbackCtx, speaker, err = audio.SetupPlayback(pc, &playbackWg)
+	// 	if err != nil {
+	// 		abort <- fmt.Errorf("error initializing playback system: %w", err)
+	// 		return
+	// 	}
+	// 	log.Println("playback device created")
+	// }()
+	// defer audio.UninitPlayback(pc, playbackCtx, speaker, &playbackWg)
 
 	var call sync.WaitGroup
 	callCtx, cancelCall := context.WithCancel(ctx)

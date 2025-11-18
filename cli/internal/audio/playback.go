@@ -126,6 +126,10 @@ func UninitPlayback(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, devi
 		wg.Wait()
 	}
 
+	if ctx == nil {
+		fmt.Println("playback ctx uninit before init")
+		return
+	}
 	if device != nil {
 		device.Uninit()
 	}

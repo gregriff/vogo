@@ -61,7 +61,7 @@ func registerUser(_ *cobra.Command, _ []string) {
 	}
 
 	vogoClient := crud.NewClient(vogoServer, "", "")
-	username, err := crud.Register(*vogoClient, username, password, inviteCode)
+	username, err := crud.Register(vogoClient, username, password, inviteCode)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error during registration: %w", err).Error())
 	}
