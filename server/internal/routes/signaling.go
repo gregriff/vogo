@@ -28,7 +28,7 @@ import (
 // Note: the channel version of this func will need to stay open until the client exits the channel call.
 func (h *RouteHandler) Call(ws *websocket.Conn) {
 	username := middleware.GetUsernameWS(ws)
-	caller, sqlErr := dal.GetUserByUsername(h.db, username)
+	caller, sqlErr := dal.GetUser(h.db, username)
 	if sqlErr != nil {
 		log.Println(fmt.Errorf("error fetching caller: %w", sqlErr))
 		ws.WriteClose(http.StatusInternalServerError)
@@ -48,7 +48,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		return
 	}
 	log.Println("callWS: offer recieved")
-	recipient, sqlErr := dal.GetUserByUsername(h.db, offer.RecipientName)
+	recipient, sqlErr := dal.GetUser(h.db, offer.RecipientName)
 	if sqlErr != nil {
 		log.Println(fmt.Errorf("error fetching recipient: %w", sqlErr))
 		ws.WriteClose(http.StatusBadRequest)
@@ -119,7 +119,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 // It then waits for the clients answer, where it then facilitates trickle-ICE gathering between the two clients.
 func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	username := middleware.GetUsernameWS(ws)
-	_, sqlErr := dal.GetUserByUsername(h.db, username)
+	_, sqlErr := dal.GetUser(h.db, username)
 	if sqlErr != nil {
 		log.Println(fmt.Errorf("error fetching recipient: %w", sqlErr))
 		ws.WriteClose(http.StatusInternalServerError)
@@ -128,7 +128,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 
 	// ensure the pending call exists
 	callerName := ws.Request().PathValue("name")
-	caller, sqlErr := dal.GetUserByUsername(h.db, callerName)
+	caller, sqlErr := dal.GetUser(h.db, callerName)
 	if sqlErr != nil {
 		log.Println(fmt.Errorf("error fetching caller: %w", sqlErr))
 		ws.WriteClose(http.StatusBadRequest)

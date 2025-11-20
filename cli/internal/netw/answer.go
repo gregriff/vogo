@@ -41,6 +41,7 @@ func AnswerCall(ctx context.Context, credentials *credentials, caller string) er
 		// TODO: mic capture needs to start after this is completed. add a noti chan.
 		// also, find slowest part of speaker init with logging.
 		// also, manually start mic once speaker is started. but let mic init async
+		// also, manually start devices onPeerStateConnecting
 		playbackCtx, speaker, err = audio.SetupPlayback(pc, &playbackWg)
 		if err != nil {
 			abort <- fmt.Errorf("error initializing playback system: %w", err)

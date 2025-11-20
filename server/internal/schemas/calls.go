@@ -1,3 +1,5 @@
+// package schemas contains structs representing database records, http request data,
+// or core internal state of the server.
 package schemas
 
 import (

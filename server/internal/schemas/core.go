@@ -4,26 +4,29 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gregriff/vogo/server/internal/schemas/public"
 )
 
-// User stores information about a vogo client
+// User is the database representation of public.User, without the password column.
 type User struct {
-	// for DB storage, never changes. Not given to anyone
-	Id uuid.UUID
+	public.User
 
-	// public username. should be unique (small groups), but might change
-	// format: [name]#XX
-	Name string
-
-	// hashed password
-	Password string
-
+	Id        uuid.UUID
 	CreatedAt time.Time
 }
 
-type InviteCode struct {
-	Id               uuid.UUID
-	Code             string
-	RegisteredUserId uuid.UUID
-	createdAt        time.Time
+// UserWithPassword is the full database representation of User
+type UserWithPassword struct {
+	User
+
+	// hashed password
+	Password string
+}
+
+// Channel is the database representation of public.Channel
+type Channel struct {
+	public.Channel
+
+	Id        uuid.UUID
+	CreatedAt time.Time
 }

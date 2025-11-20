@@ -31,7 +31,7 @@ func GetDB() *sql.DB {
 	return db
 }
 
-// opens the sqlite database, creating it if needed.
+// createDB opens the sqlite database, creating it if needed.
 func createDB() (*sql.DB, error) {
 	db, err := sql.Open("pgx", "") // use config file or PG env vars to set db url
 	if err != nil {
@@ -42,7 +42,10 @@ func createDB() (*sql.DB, error) {
 	}
 
 	// Create tables
-	schema, _ := sqlFiles.ReadFile("schema.sql")
+	schema, err := sqlFiles.ReadFile("schema.sql")
+	if err != nil {
+		return nil, fmt.Errorf("error reading ddl file: %w", err)
+	}
 	_, err = db.Exec(string(schema))
 	if err != nil {
 		return nil, fmt.Errorf("error creating tables: %w", err)

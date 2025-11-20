@@ -10,7 +10,6 @@ import (
 
 	"github.com/gregriff/vogo/server/internal/crypto"
 	"github.com/gregriff/vogo/server/internal/dal"
-	"github.com/gregriff/vogo/server/internal/schemas"
 	"golang.org/x/net/websocket"
 )
 
@@ -34,8 +33,7 @@ func BasicAuth(next http.Handler, db *sql.DB) http.Handler {
 			return
 		}
 
-		user := &schemas.User{}
-		user, err := dal.GetUserByUsername(db, username)
+		user, err := dal.GetUserWithPassword(db, username)
 		if err != nil || crypto.CompareHashAndPassword(user.Password, password) != nil {
 			log.Println(fmt.Errorf("auth error: %w", err))
 			writeAuthError(w)
@@ -59,6 +57,7 @@ func GetUsername(r *http.Request) string {
 	return username
 }
 
+// GetUsernameWS gets the username from http basic auth from a request upgraded to a websocket connection.
 func GetUsernameWS(ws *websocket.Conn) string {
 	username, _ := ws.Request().Context().Value(authKey).(string)
 	return username

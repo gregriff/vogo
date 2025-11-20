@@ -3,43 +3,76 @@ package routes
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/gregriff/vogo/server/internal/crypto"
 	"github.com/gregriff/vogo/server/internal/dal"
+	"github.com/gregriff/vogo/server/internal/middleware"
 	"github.com/gregriff/vogo/server/internal/schemas"
+	"github.com/gregriff/vogo/server/internal/schemas/public"
 	"github.com/gregriff/vogo/server/internal/validation"
 )
 
 func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
-	rData := schemas.NewUserRequest{}
-	if err := json.NewDecoder(req.Body).Decode(&rData); err != nil {
+	data := schemas.NewUserRequest{}
+	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
 		panic(err)
 	}
-	log.Printf("new user parsed: %#v", rData)
+	log.Printf("new user parsed: %#v", data)
 
-	vErr, statusCode := validation.CheckRegistrationCredentials(h.db, rData.InviteCode, rData.Username, rData.Password)
-	if vErr != nil {
-		http.Error(w, vErr.Error(), statusCode)
+	err, statusCode := validation.CheckRegistrationCredentials(h.db, data.InviteCode, data.Username, data.Password)
+	if err != nil {
+		http.Error(w, err.Error(), statusCode)
 		return
 	}
 
-	hashedPassword, hashErr := crypto.HashPassword(rData.Password)
-	if hashErr != nil {
-		log.Println(hashErr.Error())
-		err := errors.New("password error")
+	hashedPassword, err := crypto.HashPassword(data.Password)
+	if err != nil {
+		log.Println(err.Error())
+		err = errors.New("password error")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	username, sqlErr := dal.CreateUser(h.db, rData.Username, hashedPassword, rData.InviteCode)
-	if sqlErr != nil {
-		log.Println(sqlErr.Error())
-		err := errors.New("error creating new user")
+	username, err := dal.CreateUser(h.db, data.Username, hashedPassword, data.InviteCode)
+	if err != nil {
+		log.Println(err.Error())
+		err = errors.New("error creating new user")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	WriteJSON(w, &username)
+}
+
+func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
+	username := middleware.GetUsername(req)
+
+	user, err := dal.GetUser(h.db, username)
+	if err != nil {
+		err = fmt.Errorf("error getting user: %w", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userId := user.Id.String()
+	friends, err := dal.GetFriends(h.db, userId)
+	if err != nil {
+		err = fmt.Errorf("error getting friends: %w", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	channels, err := dal.GetChannels(h.db, userId)
+	if err != nil {
+		err = fmt.Errorf("error getting channels: %w", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// TODO: check for any pending calls with callMap
+	res := public.StatusResponse{Friends: friends, Channels: channels}
+	WriteJSON(w, res)
 }
