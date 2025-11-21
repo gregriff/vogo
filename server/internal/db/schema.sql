@@ -30,9 +30,9 @@ CREATE TABLE IF NOT EXISTS friendships (
   CHECK (user_one < user_two) -- one row per friendship, application must enforce ordering on insert
 );
 
-CREATE INDEX idx_friendships_user_one_status ON friendships(user_one, status);
+CREATE INDEX IF NOT EXISTS idx_friendships_user_one_status ON friendships(user_one, status);
 
-CREATE INDEX idx_friendships_user_two_status ON friendships(user_two, status);
+CREATE INDEX IF NOT EXISTS idx_friendships_user_two_status ON friendships(user_two, status);
 
 CREATE TABLE IF NOT EXISTS invite_codes (
   id UUID PRIMARY KEY,
@@ -49,9 +49,9 @@ CREATE TABLE IF NOT EXISTS channels (
   owner_id UUID NOT NULL,
   name VARCHAR(20) NOT NULL,
   description VARCHAR(100),
-  capacity INTEGER DEFAULT 6 CHECK (capacity BETWEEN 1 AND 10)
+  capacity INTEGER DEFAULT 6 CHECK (capacity BETWEEN 1 AND 10),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE
+  FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE,
   UNIQUE (owner_id, name)
 );
 

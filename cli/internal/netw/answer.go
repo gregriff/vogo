@@ -7,6 +7,7 @@ package netw
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"sync"
 
@@ -117,7 +118,7 @@ func answerAndConnect(
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
 
-	offer, err := wrtc.RecieveOffer(ws)
+	offer, err := recieveOffer(ctx, ws)
 	if err != nil {
 		return fmt.Errorf("error recieving offer: %w", err)
 	}
@@ -129,19 +130,38 @@ func answerAndConnect(
 
 	// read caller candidates from ws as they come in
 	var (
-		readWg           sync.WaitGroup
-		callerCandidates = make(chan webrtc.ICECandidateInit)
+		readIce                   sync.WaitGroup
+		readIceCtx, cancelReadIce = context.WithCancel(ctx)
+		callerCandidates          = make(chan webrtc.ICECandidateInit)
 	)
-	defer closeAndWait(ws, &readWg)
+	defer closeAndWait(ws, &readIce)
+	defer cancelReadIce()
 
-	readWg.Go(func() {
-		readCandidates(ws, callerCandidates)
+	readIce.Go(func() {
+		defer cancelReadIce()
+		err := readCandidates(readIceCtx, ws, callerCandidates)
+		if err != nil {
+			log.Println("error during readICE: %w", err)
+		}
 	})
 	err = exchangeCandidates(ctx, ws, pc, candidates, callerCandidates)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// recieveOffer reads the caller's offer from the websocket and returns it.
+// It blocks while waiting to read from the ws.
+func recieveOffer(ctx context.Context, ws *websocket.Conn) (*webrtc.SessionDescription, error) {
+	var offer webrtc.SessionDescription
+	if err := receiveWithContext(ctx, ws, &offer); err != nil {
+		if err == io.EOF {
+			return nil, fmt.Errorf("call not found") // could make this a sentinal
+		}
+		return nil, fmt.Errorf("error reading from ws: %v", err)
+	}
+	return &offer, nil
 }
 
 // exchangeCandidates handles sending the client's ICE candidates to the websocket to be
@@ -156,7 +176,6 @@ func exchangeCandidates(
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("ws answer ctx cancelled")
 			return nil
 		case candidate, ok := <-candidates:
 			if err := websocket.JSON.Send(ws, candidate); err != nil {

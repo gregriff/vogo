@@ -51,6 +51,13 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 				continue // Temporary error, keep trying
 			}
 
+			// TODO: track.ID()
+			// - use track.id to store pcm in a buf for only this track
+			// - then mix PCM from each track before writing to speaker
+			// - each track's PCM needs a lock and so does the mixing PCM
+			// - just do naive mixing at first, dont do any fancy timing
+			// - itd be nice to extract some of this state out into a struct with funcs
+
 			// TODO: check for 0 samples decoded and call PLC?
 			samplesDecoded, decodeErr := decoder.Decode(packet.Payload, pcmBuffer)
 			if decodeErr != nil {

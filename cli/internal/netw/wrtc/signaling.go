@@ -2,7 +2,6 @@ package wrtc
 
 import (
 	"fmt"
-	"io"
 
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
@@ -36,19 +35,6 @@ func CreateAndSendOffer(ws *websocket.Conn, pc *webrtc.PeerConnection, recipient
 		return fmt.Errorf("error sending offer: %w", err)
 	}
 	return nil
-}
-
-// RecieveOffer reads the caller's offer from the websocket and returns it.
-// It blocks while waiting to read from the ws.
-func RecieveOffer(ws *websocket.Conn) (*webrtc.SessionDescription, error) {
-	var offer webrtc.SessionDescription
-	if err := websocket.JSON.Receive(ws, &offer); err != nil {
-		if err == io.EOF {
-			return nil, fmt.Errorf("call not found") // could make this a sentinal
-		}
-		return nil, fmt.Errorf("error reading from ws: %v", err)
-	}
-	return &offer, nil
 }
 
 // CreateAndSendAnswer sets the remote description of the caller given their offer, creates the answer,

@@ -25,6 +25,15 @@ func CallFriend(ctx context.Context, credentials *credentials, recipient string)
 
 	// sending an error on this channel will abort the call process
 	abort := make(chan error, 10)
+	defer func() {
+		log.Println("ABORT ERRS:")
+		select {
+		case err := <-abort:
+			log.Println(err)
+		default:
+			return
+		}
+	}()
 
 	// initalize speaker asynchronously
 	// var (
@@ -48,7 +57,6 @@ func CallFriend(ctx context.Context, credentials *credentials, recipient string)
 	defer func() {
 		cancelCall()
 		call.Wait()
-		log.Println("call wg completed")
 	}()
 
 	call.Go(func() {
@@ -108,29 +116,30 @@ func sendCallAndConnect(
 	if err != nil {
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
+	defer closeAndWait(ws, nil)
 
 	if err = wrtc.CreateAndSendOffer(ws, pc, recipient); err != nil {
 		return err
 	}
 
-	var iceWg sync.WaitGroup
-	iceCtx, cancelSendIce := context.WithCancel(ctx)
+	var sendIce sync.WaitGroup
+	sendIceCtx, cancelSendIce := context.WithCancel(ctx)
 	defer func() {
 		cancelSendIce()
-		iceWg.Wait()
+		sendIce.Wait()
 	}()
 
 	// gather local ice candidates and write to websocket
-	iceWg.Go(func() {
+	sendIce.Go(func() {
 		defer cancelSendIce()
-		if err = sendCandidates(iceCtx, ws, candidates); err != nil {
+		if err = sendCandidates(sendIceCtx, ws, candidates); err != nil {
 			abort <- err // this will cause surrounding function to cancel
 		}
 	})
 
 	// wait to recv answer
 	var answer webrtc.SessionDescription
-	if err = websocket.JSON.Receive(ws, &answer); err != nil {
+	if err = receiveWithContext(ctx, ws, &answer); err != nil {
 		return fmt.Errorf("error reading answer from ws: %v", err)
 	}
 	if err = pc.SetRemoteDescription(answer); err != nil {
@@ -139,14 +148,20 @@ func sendCallAndConnect(
 	log.Println("recieved answer")
 
 	var (
-		readWg              sync.WaitGroup
-		recipientCandidates = make(chan webrtc.ICECandidateInit)
+		readIce                   sync.WaitGroup
+		readIceCtx, cancelReadIce = context.WithCancel(ctx)
+		recipientCandidates       = make(chan webrtc.ICECandidateInit)
 	)
-	defer closeAndWait(ws, &readWg)
+	defer closeAndWait(ws, &readIce)
+	defer cancelReadIce()
 
 	// read recipient candidates from ws as they come in
-	readWg.Go(func() {
-		readCandidates(ws, recipientCandidates)
+	readIce.Go(func() {
+		defer cancelReadIce()
+		err := readCandidates(readIceCtx, ws, recipientCandidates)
+		if err != nil {
+			abort <- fmt.Errorf("error during readICE: %w", err)
+		}
 	})
 	if err = addCandidates(ctx, pc, recipientCandidates); err != nil {
 		return err
@@ -157,6 +172,7 @@ func sendCallAndConnect(
 // sendCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.
 // It returns when there are no more candidates or the context is cancelled.
 func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.ICECandidateInit) error {
+	defer log.Println("ice gathering completed")
 	for {
 		select {
 		case <-ctx.Done():
@@ -167,20 +183,18 @@ func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.IC
 			}
 			log.Println("sent candidate")
 			if !ok {
-				log.Println("ice gathering completed")
 				return nil
 			}
 		}
 	}
 }
 
-// addCandidates adds the recipient's ICE candidates from ch to the peer connection until
-// there are no more or the context is cancelled.
+// addCandidates adds the recipient's ICE candidates from ch to the peer connection. This function will continue
+// until its context is cancelled even once all candidates are exhausted.
 func addCandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan webrtc.ICECandidateInit) error {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("ws caller ctx cancelled")
 			return nil
 		case candidate, ok := <-ch: // from the websocket
 			if !ok {
