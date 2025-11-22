@@ -34,7 +34,8 @@ func NewCredentials(stunServer, baseURL, username, password string) *credentials
 
 // newWebsocket creates a websocket connection to the vogo server to a given endpoint,
 // with http basic auth headers.
-func newWebsocket(ctx context.Context,
+func newWebsocket(
+	ctx context.Context,
 	credentials *credentials,
 	endpoint string,
 ) (*websocket.Conn, error) {

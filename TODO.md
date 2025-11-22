@@ -1,12 +1,8 @@
 # TODOs
 
 ### Next:
-- ensure server cancels req when client closes it
 - ensure onTrack for speaker mixes audio, pull out so that it can be added to speaker after speaker init?
-- ensure that errorChan never blocks (if multiple errors are sent to it) 
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
-- 
-- manually impl a timeout cancel of /call ws request
 - remove/fix xdg config in client to match server
 - determine how friends should refer to eachother (include friend code?)
 - impl status cmd

@@ -36,27 +36,30 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	caller, err := dal.GetUser(h.db, username)
 	if err != nil {
 		log.Println(fmt.Errorf("error fetching caller: %w", err))
-		ws.WriteClose(http.StatusInternalServerError)
+		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
 
 	var offer schemas.CallRequest
 	err = receiveWithContext(ctx, ws, &offer)
 	if err != nil {
+		if err == io.EOF {
+			return
+		}
 		log.Printf("error reading offer from ws: %v", err)
-		ws.WriteClose(http.StatusBadRequest)
+		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 	if offer.Sd.SDP == "" {
 		log.Println("empty offer")
-		ws.WriteClose(http.StatusBadRequest)
+		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 	log.Println("callWS: offer recieved")
 	recipient, err := dal.GetUser(h.db, offer.RecipientName)
 	if err != nil {
 		log.Println(fmt.Errorf("error fetching recipient: %w", err))
-		ws.WriteClose(http.StatusBadRequest)
+		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 
@@ -69,31 +72,55 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	// read incoming candidates
 	var (
 		readIce                   sync.WaitGroup
-		readChan                  = make(chan webrtc.ICECandidateInit)
 		readIceCtx, cancelReadIce = context.WithCancel(ctx)
+		readChan                  = make(chan webrtc.ICECandidateInit)
+		canListenForClose         = make(chan struct{}, 1)
 	)
 	defer func() {
 		cancelReadIce()
-		if err := ws.Close(); err != nil {
-			log.Println("error closing ws during defer: ", err)
-		}
+		_ = ws.Close()
 		readIce.Wait()
 	}()
 	readIce.Go(func() {
+		defer close(canListenForClose)
 		defer cancelReadIce()
 		err := readCandidates(readIceCtx, ws, readChan)
 		if err != nil {
+			if err == io.EOF {
+				cancel()
+				return
+			}
 			log.Println("error during ice reading: ", err)
 		}
+		canListenForClose <- struct{}{}
 	})
 
-	// TODO: could run another recvWithContext to listen for the close frame from the client,
-	// since we know the only thing the clinet could possibly send at this point is a close frame
+	// listen for the close frame from the client, since we know the only
+	// thing the client could possibly send after ICE gather is a close frame
+	var (
+		listen sync.WaitGroup
+		closed = make(chan struct{}, 1)
+	)
+	defer listen.Wait()
+	listen.Go(func() {
+		// wait for ice gather to complete
+		if _, ok := <-canListenForClose; !ok {
+			return
+		}
+		err := receiveWithContext(ctx, ws, struct{}{})
+		if err == io.EOF {
+			log.Println("listenForClose EOF")
+			closed <- struct{}{}
+		} else if err != nil {
+			log.Println("listenForClose NON EOF ERR: ", err)
+		}
+	})
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Call req context done")
+		case <-closed:
+			log.Println("Call req context done or conn closed")
 			cancel()
 			return
 		case answerSd := <-call.Answer:
@@ -134,7 +161,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	_, err := dal.GetUser(h.db, username)
 	if err != nil {
 		log.Println(fmt.Errorf("error fetching recipient: %w", err))
-		ws.WriteClose(http.StatusInternalServerError)
+		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
 
@@ -143,14 +170,14 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	caller, err := dal.GetUser(h.db, callerName)
 	if err != nil {
 		log.Println(fmt.Errorf("error fetching caller: %w", err))
-		ws.WriteClose(http.StatusBadRequest)
+		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 	calls := schemas.GetPendingCalls()
 	call, err := calls.Get(caller.Id)
 	if err != nil {
 		log.Println("call not found")
-		ws.WriteClose(http.StatusBadRequest)
+		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 	defer calls.Delete(caller.Id)
@@ -165,13 +192,16 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	var answer schemas.AnswerRequest
 	err = receiveWithContext(ctx, ws, &answer)
 	if err != nil {
+		if err == io.EOF {
+			return
+		}
 		log.Printf("error reading answer from ws: %v", err)
-		ws.WriteClose(http.StatusBadRequest)
+		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 	if answer.Sd.SDP == "" {
 		log.Println("empty answer")
-		ws.WriteClose(http.StatusBadRequest)
+		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 	log.Println("answerWS: answer recieved")
@@ -180,28 +210,55 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	// read incoming candidates
 	var (
 		readIce                   sync.WaitGroup
-		readChan                  = make(chan webrtc.ICECandidateInit)
 		readIceCtx, cancelReadIce = context.WithCancel(ctx)
+		readChan                  = make(chan webrtc.ICECandidateInit)
+		canListenForClose         = make(chan struct{}, 1)
 	)
 	defer func() {
 		cancelReadIce()
-		if err := ws.Close(); err != nil {
-			log.Println("error closing ws during defer: ", err)
-		}
+		_ = ws.Close()
 		readIce.Wait()
 	}()
 	readIce.Go(func() {
+		defer close(canListenForClose)
 		defer cancelReadIce()
 		err := readCandidates(readIceCtx, ws, readChan)
 		if err != nil {
+			if err == io.EOF {
+				cancel()
+				return
+			}
 			log.Println("error during ice reading: ", err)
+		}
+		canListenForClose <- struct{}{}
+	})
+
+	// listen for the close frame from the client, since we know the only
+	// thing the client could possibly send after ICE gather is a close frame
+	var (
+		listen sync.WaitGroup
+		closed = make(chan struct{}, 1)
+	)
+	defer listen.Wait()
+	listen.Go(func() {
+		// wait for ice gather to complete
+		if _, ok := <-canListenForClose; !ok {
+			return
+		}
+		err := receiveWithContext(ctx, ws, struct{}{})
+		if err == io.EOF {
+			log.Println("listenForClose EOF")
+			closed <- struct{}{}
+		} else if err != nil {
+			log.Println("listenForClose NON EOF ERR: ", err)
 		}
 	})
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Answer req context done")
+		case <-closed:
+			log.Println("Answer req context done or conn closed")
 			cancel()
 			return
 		// note: this needs to continue to run even if readchan is closed. this may always complete first tho...
@@ -237,13 +294,12 @@ func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICEC
 	for {
 		if err := receiveWithContext(ctx, ws, &candidate); err != nil {
 			if err == io.EOF {
-				return fmt.Errorf("EOF during ws read")
+				return err // ws closed, propogate up
 			}
-			log.Printf("error reading from ws: %v", err)
-			if err := ws.Close(); err != nil {
-				return fmt.Errorf("error closing ws: %v", err)
+			if cErr := ws.Close(); cErr != nil {
+				return fmt.Errorf("error closing ws: %v, after err: %v", cErr, err)
 			}
-			return nil
+			return err
 		}
 
 		if candidate.Candidate == "" {
