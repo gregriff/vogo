@@ -90,3 +90,45 @@ func Status(client *http.Client) (status *statusResponse, err error) {
 	}
 	return
 }
+
+type addFriendResponse struct {
+	Name string
+}
+
+// AddFriend adds a friend
+func AddFriend(client *http.Client, friendName string) (status *addFriendResponse, err error) {
+	req := struct {
+		Name string
+	}{Name: friendName}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		err = fmt.Errorf("json marshal err")
+		return
+	}
+
+	res, err := client.Post("/friend",
+		"application/json; charset=utf-8",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		err = fmt.Errorf("request error: %w", err)
+		return
+	}
+
+	defer func() {
+		_ = res.Body.Close()
+	}()
+
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		err = fmt.Errorf("request failed: %s", string(body))
+		return
+	}
+
+	if err = json.NewDecoder(res.Body).Decode(&status); err != nil {
+		err = fmt.Errorf("json decode error: %w", err)
+		return
+	}
+	return
+}

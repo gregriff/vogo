@@ -18,7 +18,8 @@ import (
 func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 	data := schemas.NewUserRequest{}
 	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	log.Printf("new user parsed: %#v", data)
 
@@ -74,5 +75,32 @@ func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
 
 	// TODO: check for any pending calls with callMap
 	res := public.StatusResponse{Friends: friends, Channels: channels}
-	WriteJSON(w, res)
+	WriteJSON(w, &res)
+}
+
+// AddFriend creates or accepts a friend request with another user.
+func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
+	username := middleware.GetUsername(req)
+
+	user, err := dal.GetUser(h.db, username)
+	if err != nil {
+		err = fmt.Errorf("error getting user: %w", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := schemas.AddFriendRequest{}
+	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	friend, err := dal.AddFriend(h.db, user.Id, data.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	res := public.User{Name: friend.Name}
+	WriteJSON(w, &res)
 }

@@ -12,13 +12,22 @@ ANSWERER_CONFIG_PATH := ./configs/dev.answerer.toml
 
 # note: X=1 uses deferred evaluation, so X could change every time its used
 
-register-caller:
-	go run . register --code=$(CODE) --config=$(CALLER_CONFIG_PATH)
+register-caller: build
+	$(OUT_DIR)/vogo register --code=$(CODE) --config=$(CALLER_CONFIG_PATH)
 
-register-answerer:
-	go run . register --code=$(CODE) --config=$(ANSWERER_CONFIG_PATH)
+register-answerer: build
+	$(OUT_DIR)/vogo register --code=$(CODE) --config=$(ANSWERER_CONFIG_PATH)
 
-call: build
+status: build
+	$(OUT_DIR)/vogo status --config=$(CALLER_CONFIG_PATH)
+
+add-caller: build
+	$(OUT_DIR)/vogo add-friend --name=$(CALLER_NAME) --config=$(ANSWERER_CONFIG_PATH)
+
+add-answerer: build
+	$(OUT_DIR)/vogo add-friend --name=$(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
+
+call: add-caller add-answerer
 	$(OUT_DIR)/vogo call $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
 
 answer: build

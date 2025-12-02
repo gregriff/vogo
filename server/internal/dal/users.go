@@ -54,6 +54,7 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 	return &dbUsername, nil
 }
 
+// GetUser returns a user from the database given their username.
 func GetUser(db *sql.DB, username string) (*schemas.User, error) {
 	var user schemas.User
 	username = strings.ToLower(username)
@@ -69,6 +70,7 @@ func GetUser(db *sql.DB, username string) (*schemas.User, error) {
 	return &user, nil
 }
 
+// GetUserWithPassword returns a friend from the database with their hashed password given their username.
 func GetUserWithPassword(db *sql.DB, username string) (*schemas.UserWithPassword, error) {
 	var user schemas.UserWithPassword
 	username = strings.ToLower(username)
@@ -167,4 +169,29 @@ func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
 	}
 
 	return channels, rows.Err()
+}
+
+// AddFriend adds a friend with a given name.
+func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, error) {
+	friend := public.User{}
+
+	dbFriend, err := GetUser(db, friendName)
+	if err != nil {
+		return &friend, fmt.Errorf("friend not found: %w", err)
+	}
+
+	// if the request is already pending, update it to accepted
+	query := `
+		INSERT INTO friendships (user_one, user_two, status)
+		VALUES (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid), 'pending')
+		ON CONFLICT (user_one, user_two)
+		DO UPDATE SET status = 'accepted'
+    	WHERE friendships.status = 'pending'
+       `
+	_, err = db.Exec(query, userId, dbFriend.Id)
+	if err != nil {
+		return nil, fmt.Errorf("error during add friend query: %w", err)
+	}
+	friend.Name = dbFriend.Name
+	return &friend, nil
 }

@@ -73,6 +73,8 @@ func CreateAndListen(debug bool, host string, port int) {
 // createRoutes creates the routing rules for the webserver
 func createRoutes(mux *http.ServeMux, h *routes.RouteHandler) {
 	mux.HandleFunc("POST /register", h.Register)
+	mux.HandleFunc("GET /status", h.Status)
+	mux.HandleFunc("POST /friend", h.AddFriend)
 
 	callHandler := websocket.Server{
 		Handshake: websocketHandshake,
