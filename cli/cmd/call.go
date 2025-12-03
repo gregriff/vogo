@@ -14,9 +14,12 @@ import (
 )
 
 var callCmd = &cobra.Command{
-	Use:   "call",
+	Use:   "call [username]",
 	Short: "Call a friend",
-	Args:  cobra.MaximumNArgs(1),
+	Long: `Arguments:
+      name    The username of the friend to call (required)
+	`,
+	Args: cobra.ExactArgs(1),
 	PreRunE: func(_ *cobra.Command, args []string) error {
 		username, password := viper.GetString("user.name"), viper.GetString("user.password")
 		if len(username) == 0 {

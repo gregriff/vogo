@@ -1,7 +1,8 @@
 # TODOs
 
 ### Next:
-- impl add friend, channel invite, channel accept, check pending calls in status, add poll to status
+- impl friend checking for call and answer requests
+- impl channel invite, channel accept, check pending calls in status, add poll to status
 - ensure onTrack for speaker mixes audio, pull out so that it can be added to speaker after speaker init?
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
 - remove/fix xdg config in client to match server

@@ -11,14 +11,22 @@ import (
 )
 
 var addFriendCmd = &cobra.Command{
-	Use:   "add-friend",
+	Use:   "add-friend [username]",
 	Short: "Add a friend given their username",
-	Args:  cobra.MaximumNArgs(1),
+	Long: `Arguments:
+      name    The username of the friend to add (required)
+	`,
+	Args: cobra.ExactArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		friendName := viper.GetString("name")
+		friendName := args[0]
+		if len(friendName) > 16 {
+			return fmt.Errorf("friend's name too long")
+		}
 		if friendName == "" {
 			return fmt.Errorf("must specify a friend's username")
 		}
+
+		viper.Set("friendName", friendName)
 		return nil
 	},
 	Run: addFriend,
@@ -26,12 +34,6 @@ var addFriendCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(addFriendCmd)
-	var flagName string
-
-	flagName = "name"
-	addFriendCmd.PersistentFlags().String(flagName, "", "username of a friend")
-	_ = viper.BindPFlag(flagName, addFriendCmd.PersistentFlags().Lookup(flagName))
-
 }
 
 func addFriend(_ *cobra.Command, _ []string) {

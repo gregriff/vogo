@@ -63,6 +63,18 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		return
 	}
 
+	friends, err := dal.AreFriends(h.db, caller.Id, recipient.Id)
+	if err != nil {
+		log.Println(fmt.Errorf("error checking friendship status: %w", err))
+		_ = ws.WriteClose(http.StatusInternalServerError)
+		return
+	}
+	if !friends {
+		log.Println(fmt.Errorf("caller not friends with recipient: %w", err))
+		_ = ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+
 	// create the call in memory, delete once answered
 	call := schemas.CreateCall(caller, recipient, offer.Sd)
 	calls := schemas.GetPendingCalls()
@@ -107,7 +119,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		if _, ok := <-canListenForClose; !ok {
 			return
 		}
-		err := receiveWithContext(ctx, ws, struct{}{})
+		err := receiveWithContext(ctx, ws, &struct{}{})
 		if err == io.EOF {
 			log.Println("listenForClose EOF")
 			closed <- struct{}{}
@@ -158,7 +170,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	defer cancel()
 
 	username := middleware.GetUsernameWS(ws)
-	_, err := dal.GetUser(h.db, username)
+	recipient, err := dal.GetUser(h.db, username)
 	if err != nil {
 		log.Println(fmt.Errorf("error fetching recipient: %w", err))
 		_ = ws.WriteClose(http.StatusInternalServerError)
@@ -173,6 +185,18 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
+	friends, err := dal.AreFriends(h.db, caller.Id, recipient.Id)
+	if err != nil {
+		log.Println(fmt.Errorf("error checking friendship status: %w", err))
+		_ = ws.WriteClose(http.StatusInternalServerError)
+		return
+	}
+	if !friends {
+		log.Println(fmt.Errorf("recipient not friends with caller: %w", err))
+		_ = ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+
 	calls := schemas.GetPendingCalls()
 	call, err := calls.Get(caller.Id)
 	if err != nil {
@@ -245,7 +269,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 		if _, ok := <-canListenForClose; !ok {
 			return
 		}
-		err := receiveWithContext(ctx, ws, struct{}{})
+		err := receiveWithContext(ctx, ws, &struct{}{})
 		if err == io.EOF {
 			log.Println("listenForClose EOF")
 			closed <- struct{}{}

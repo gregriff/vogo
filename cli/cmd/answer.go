@@ -14,9 +14,12 @@ import (
 )
 
 var answerCmd = &cobra.Command{
-	Use:   "answer",
+	Use:   "answer [username]",
 	Short: "Answer a call from a friend",
-	Args:  cobra.MaximumNArgs(1),
+	Long: `Arguments:
+      name    The username of the friend to answer (required)
+	`,
+	Args: cobra.ExactArgs(1),
 	PreRunE: func(_ *cobra.Command, args []string) error {
 		username, password := viper.GetString("user.name"), viper.GetString("user.password")
 		if len(username) == 0 {

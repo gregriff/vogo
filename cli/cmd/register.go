@@ -15,7 +15,7 @@ import (
 var registerCmd = &cobra.Command{
 	Use:   "register",
 	Short: "Register this client with a new user",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  cobra.NoArgs,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		inviteCode := viper.GetString("code")
 		if inviteCode == "" {

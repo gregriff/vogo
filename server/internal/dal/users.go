@@ -102,7 +102,7 @@ func GetUserById(db *sql.DB, id string) (*schemas.User, error) {
 
 // GetFriends returns the names of the friends of a user with a given id.
 func GetFriends(db *sql.DB, userId string) ([]public.User, error) {
-	friends := make([]public.User, 10)
+	friends := make([]public.User, 0, 10)
 	query := `
         SELECT u.username
         FROM users u
@@ -134,7 +134,7 @@ func GetFriends(db *sql.DB, userId string) ([]public.User, error) {
 // GetChannels returns the channels a user with a given id is a member of.
 // The result contains the user names of the channel members as a property of each channel.
 func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
-	channels := make([]public.Channel, 10)
+	channels := make([]public.Channel, 0, 10)
 	query := `
         SELECT
             c.id, owner_user.username as owner_name, c.name, c.description,
@@ -194,4 +194,23 @@ func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, e
 	}
 	friend.Name = dbFriend.Name
 	return &friend, nil
+}
+
+// AreFriends returns true if the two users are friends.
+func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
+	query := `
+	    SELECT EXISTS(
+	        SELECT 1 FROM friendships
+	        WHERE (user_one, user_two) = (LEAST($1, $2), GREATEST($1, $2))
+	        AND status = 'accepted'
+	        AND whos_blocked IS NULL
+		)`
+
+	var areFriends bool
+	err := db.QueryRow(query, userId, friendId).Scan(&areFriends)
+	if err != nil {
+		return false, fmt.Errorf("query error: %w", err)
+	}
+
+	return areFriends, nil
 }

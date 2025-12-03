@@ -3,6 +3,7 @@ package cmd
 // TODO: status should authenticate and issue a JWT
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
@@ -14,7 +15,7 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Check for pending calls or open channels",
-	Args:  cobra.MaximumNArgs(0),
+	Args:  cobra.NoArgs,
 	Run:   getStatus,
 }
 
@@ -28,12 +29,31 @@ func getStatus(_ *cobra.Command, _ []string) {
 		viper.GetString("user.password"),
 		viper.GetString("servers.vogo-origin")
 
-	log.Println("getting status from vogo server")
 	vogoClient := crud.NewClient(vogoServer, username, password)
 	status, err := crud.Status(vogoClient)
 	if err != nil {
 		log.Printf("error fetching status: %v", err)
 		return
 	}
-	log.Println(status)
+
+	if len(status.Friends) == 0 {
+		fmt.Println("\nNo Friends")
+		return
+	}
+	fmt.Println("\nFriends: ")
+	for _, friend := range status.Friends {
+		fmt.Println(friend.Name)
+	}
+
+	if len(status.Channels) == 0 {
+		fmt.Println("\nNo Channels")
+		return
+	}
+	fmt.Println("\nChannels: ")
+	for _, channel := range status.Channels {
+		fmt.Printf("%s (%d)\n", channel.Name, channel.Capacity)
+		for _, member := range channel.MemberNames {
+			fmt.Printf("- %s\n", member)
+		}
+	}
 }

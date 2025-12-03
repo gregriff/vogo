@@ -49,21 +49,22 @@ func Register(client *http.Client, username, password, inviteCode string) (strin
 }
 
 type user struct {
-	name string
+	Name string
 }
 
 type channel struct {
-	owner,
-	name,
-	description string
-	capacity int
+	Owner,
+	Name,
+	Description string
 
-	members []string
+	Capacity int
+
+	MemberNames []string
 }
 
 type statusResponse struct {
-	friends  []user
-	channels []channel
+	Friends  []user
+	Channels []channel
 }
 
 // Status fetches friends, channels, and incoming calls.

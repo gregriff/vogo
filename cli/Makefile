@@ -21,13 +21,11 @@ register-answerer: build
 status: build
 	$(OUT_DIR)/vogo status --config=$(CALLER_CONFIG_PATH)
 
-add-caller: build
+friends: build
 	$(OUT_DIR)/vogo add-friend --name=$(CALLER_NAME) --config=$(ANSWERER_CONFIG_PATH)
-
-add-answerer: build
 	$(OUT_DIR)/vogo add-friend --name=$(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
 
-call: add-caller add-answerer
+call: build
 	$(OUT_DIR)/vogo call $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
 
 answer: build
