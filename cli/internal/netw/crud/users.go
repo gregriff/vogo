@@ -10,15 +10,15 @@ import (
 )
 
 type newUser struct {
-	name,
-	password string
-	inviteCode string
+	Name,
+	Password string
+	InviteCode string
 }
 
 // Register asks the vogo-server to create a new user given the provided credentials and returns
 // the official username and friend code if sucessful. It will exit if an error is encountered.
 func Register(client *http.Client, username, password, inviteCode string) (string, error) {
-	newUser := newUser{name: username, password: password, inviteCode: inviteCode}
+	newUser := newUser{Name: username, Password: password, InviteCode: inviteCode}
 	payload, err := json.Marshal(newUser)
 	if err != nil {
 		return "", fmt.Errorf("json marshal error: %w", err)
@@ -52,7 +52,12 @@ type user struct {
 	Name string
 }
 
-type channel struct {
+type Friend struct {
+	user
+	Status string
+}
+
+type Channel struct {
 	Owner,
 	Name,
 	Description string
@@ -63,8 +68,8 @@ type channel struct {
 }
 
 type statusResponse struct {
-	Friends  []user
-	Channels []channel
+	Friends  []Friend
+	Channels []Channel
 }
 
 // Status fetches friends, channels, and incoming calls.

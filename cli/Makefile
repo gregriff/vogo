@@ -22,8 +22,8 @@ status: build
 	$(OUT_DIR)/vogo status --config=$(CALLER_CONFIG_PATH)
 
 friends: build
-	$(OUT_DIR)/vogo add-friend --name=$(CALLER_NAME) --config=$(ANSWERER_CONFIG_PATH)
-	$(OUT_DIR)/vogo add-friend --name=$(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
+	$(OUT_DIR)/vogo add-friend $(CALLER_NAME) --config=$(ANSWERER_CONFIG_PATH)
+	$(OUT_DIR)/vogo add-friend $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
 
 call: build
 	$(OUT_DIR)/vogo call $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)

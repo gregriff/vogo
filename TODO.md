@@ -1,14 +1,11 @@
 # TODOs
 
 ### Next:
-- impl friend checking for call and answer requests
-- impl channel invite, channel accept, check pending calls in status, add poll to status
+- impl channel invite, channel accept, add poll to status
 - ensure onTrack for speaker mixes audio, pull out so that it can be added to speaker after speaker init?
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
+- add query/status functionality to get outgoing friend requests
 - remove/fix xdg config in client to match server
-- determine how friends should refer to eachother (include friend code?)
-- impl status cmd
-- impl adding friends
 - impl PLC?
 - ensure DTLS is working correctly and encrypting
 - look here https://github.com/pion/webrtc/blob/master/examples/README.md#media-api to see info about rtcp media stats

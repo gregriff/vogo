@@ -40,7 +40,7 @@ func addFriend(_ *cobra.Command, _ []string) {
 	_, username, password, friendName, vogoServer := viper.GetBool("debug"),
 		viper.GetString("user.name"),
 		viper.GetString("user.password"),
-		viper.GetString("name"),
+		viper.GetString("friendName"),
 		viper.GetString("servers.vogo-origin")
 
 	vogoClient := crud.NewClient(vogoServer, username, password)

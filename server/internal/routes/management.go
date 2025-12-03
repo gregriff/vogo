@@ -23,7 +23,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 	}
 	log.Printf("new user parsed: %#v", data)
 
-	err, statusCode := validation.CheckRegistrationCredentials(h.db, data.InviteCode, data.Username, data.Password)
+	err, statusCode := validation.CheckRegistrationCredentials(h.db, data.InviteCode, data.Name, data.Password)
 	if err != nil {
 		http.Error(w, err.Error(), statusCode)
 		return
@@ -37,7 +37,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	username, err := dal.CreateUser(h.db, data.Username, hashedPassword, data.InviteCode)
+	username, err := dal.CreateUser(h.db, data.Name, hashedPassword, data.InviteCode)
 	if err != nil {
 		log.Println(err.Error())
 		err = errors.New("error creating new user")
@@ -59,7 +59,7 @@ func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
 	}
 
 	userId := user.Id.String()
-	friends, err := dal.GetFriends(h.db, userId)
+	friends, err := dal.GetFriends(h.db, userId, true)
 	if err != nil {
 		err = fmt.Errorf("error getting friends: %w", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -92,6 +92,12 @@ func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
 	data := schemas.AddFriendRequest{}
 	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if len(data.Name) == 0 {
+		err = errors.New("no name specified")
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

@@ -101,17 +101,24 @@ func GetUserById(db *sql.DB, id string) (*schemas.User, error) {
 }
 
 // GetFriends returns the names of the friends of a user with a given id.
-func GetFriends(db *sql.DB, userId string) ([]public.User, error) {
-	friends := make([]public.User, 0, 10)
-	query := `
-        SELECT u.username
-        FROM users u
-        WHERE u.id IN (
-            SELECT CASE WHEN user_one = $1 THEN user_two ELSE user_one END
-            FROM friendships
-            WHERE (user_one = $1 OR user_two = $1) AND status = 'accepted'
-        )
+// Use pending to control returning incoming friend requests.
+func GetFriends(db *sql.DB, userId string, pending bool) ([]public.Friend, error) {
+	friends := make([]public.Friend, 0, 10)
+
+	template := `
+    	SELECT u.username, f.status
+        FROM friendships f
+        JOIN users u ON u.id = CASE WHEN f.user_one = $1 THEN f.user_two ELSE f.user_one END
+        WHERE (f.user_one = $1 OR f.user_two = $1) AND %s
     `
+	var filter string
+	if pending { // also return incoming friend requests
+		filter = "(status = 'accepted' OR (status = 'pending' AND added_by != $1))"
+	} else {
+		filter = "status = 'accepted'"
+	}
+
+	query := fmt.Sprintf(template, filter)
 	rows, err := db.Query(query, userId)
 	if err != nil {
 		return nil, err
@@ -121,11 +128,11 @@ func GetFriends(db *sql.DB, userId string) ([]public.User, error) {
 	}()
 
 	for rows.Next() {
-		var u public.User
-		if err := rows.Scan(&u.Name); err != nil {
+		var f public.Friend
+		if err := rows.Scan(&f.Name, &f.Status); err != nil {
 			return nil, err
 		}
-		friends = append(friends, u)
+		friends = append(friends, f)
 	}
 
 	return friends, rows.Err()
@@ -182,8 +189,8 @@ func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, e
 
 	// if the request is already pending, update it to accepted
 	query := `
-		INSERT INTO friendships (user_one, user_two, status)
-		VALUES (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid), 'pending')
+		INSERT INTO friendships (user_one, user_two, status, added_by)
+		VALUES (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid), 'pending', $1)
 		ON CONFLICT (user_one, user_two)
 		DO UPDATE SET status = 'accepted'
     	WHERE friendships.status = 'pending'
@@ -201,7 +208,7 @@ func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
 	query := `
 	    SELECT EXISTS(
 	        SELECT 1 FROM friendships
-	        WHERE (user_one, user_two) = (LEAST($1, $2), GREATEST($1, $2))
+	        WHERE (user_one, user_two) = (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid))
 	        AND status = 'accepted'
 	        AND whos_blocked IS NULL
 		)`

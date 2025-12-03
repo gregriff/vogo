@@ -6,7 +6,7 @@ import (
 
 // NewUserRequest is the request data to register a new client with the server.
 type NewUserRequest struct {
-	Username,
+	Name,
 	Password,
 	InviteCode string
 }

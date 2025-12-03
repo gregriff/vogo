@@ -36,21 +36,46 @@ func getStatus(_ *cobra.Command, _ []string) {
 		return
 	}
 
-	if len(status.Friends) == 0 {
+	printFriends(status.Friends)
+	printChannels(status.Channels)
+}
+
+func printFriends(friends []crud.Friend) {
+	if len(friends) == 0 {
 		fmt.Println("\nNo Friends")
 		return
 	}
-	fmt.Println("\nFriends: ")
-	for _, friend := range status.Friends {
-		fmt.Println(friend.Name)
+
+	incomingRequests := make([]crud.Friend, 0, 2)
+	for _, friend := range friends {
+		if friend.Status == "pending" {
+			incomingRequests = append(incomingRequests, friend)
+			continue
+		}
 	}
 
-	if len(status.Channels) == 0 {
+	// if we have no incoming requests, but do have active friendships
+	if len(incomingRequests) == 0 {
+		fmt.Println("\nFriends: ")
+		for _, friend := range friends {
+			fmt.Println(friend.Name)
+		}
+		return
+	}
+
+	fmt.Println("\nIncoming Friend Requests:")
+	for _, req := range incomingRequests {
+		fmt.Println(req.Name)
+	}
+}
+
+func printChannels(channels []crud.Channel) {
+	if len(channels) == 0 {
 		fmt.Println("\nNo Channels")
 		return
 	}
 	fmt.Println("\nChannels: ")
-	for _, channel := range status.Channels {
+	for _, channel := range channels {
 		fmt.Printf("%s (%d)\n", channel.Name, channel.Capacity)
 		for _, member := range channel.MemberNames {
 			fmt.Printf("- %s\n", member)

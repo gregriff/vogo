@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS friendships (
   status friend_status DEFAULT 'pending',
   whos_blocked blocked_status,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  added_by UUID NOT NULL,
   PRIMARY KEY (user_one, user_two),
   FOREIGN KEY (user_one) REFERENCES users (id) ON DELETE CASCADE,
   FOREIGN KEY (user_two) REFERENCES users (id) ON DELETE CASCADE,

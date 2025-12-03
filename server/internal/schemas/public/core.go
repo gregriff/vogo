@@ -11,6 +11,11 @@ type User struct {
 	Name string
 }
 
+type Friend struct {
+	User
+	Status string
+}
+
 // Channel represents a chat room of multiple Users. It is created
 // by a User, and any member can invite new Users.
 type Channel struct {

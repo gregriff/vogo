@@ -21,14 +21,6 @@ var registerCmd = &cobra.Command{
 		if inviteCode == "" {
 			return fmt.Errorf("must specify an invite code to register")
 		}
-
-		friendCode := viper.GetString("friend-code")
-		if friendCode != "" {
-			return fmt.Errorf(
-				"existing friend code detected in config file, have you already registered a user with this client? "+
-					"to register a new user, please delete the friend code from your config file (%s)", ConfigFile,
-			)
-		}
 		return nil
 	},
 	Run: registerUser,
