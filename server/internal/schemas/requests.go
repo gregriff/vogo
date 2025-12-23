@@ -26,3 +26,9 @@ type AnswerRequest struct {
 	CallerName string
 	Sd         webrtc.SessionDescription
 }
+
+type CreateChannelRequest struct {
+	Name,
+	Description string
+	Capacity int
+}

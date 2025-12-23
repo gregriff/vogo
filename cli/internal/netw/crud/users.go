@@ -101,7 +101,7 @@ type addFriendResponse struct {
 	Name string
 }
 
-// AddFriend adds a friend
+// AddFriend adds a friend. TODO: make this return a friend
 func AddFriend(client *http.Client, friendName string) (status *addFriendResponse, err error) {
 	req := struct {
 		Name string
@@ -133,6 +133,46 @@ func AddFriend(client *http.Client, friendName string) (status *addFriendRespons
 	}
 
 	if err = json.NewDecoder(res.Body).Decode(&status); err != nil {
+		err = fmt.Errorf("json decode error: %w", err)
+		return
+	}
+	return
+}
+
+// CreateChannel creates a persistent voice-chat channel.
+func CreateChannel(client *http.Client, name, desc string, cap int) (channel *Channel, err error) {
+	req := struct {
+		Name,
+		Description string
+		Capacity int
+	}{Name: name}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		err = fmt.Errorf("json marshal err")
+		return
+	}
+
+	res, err := client.Post("/channel",
+		"application/json; charset=utf-8",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		err = fmt.Errorf("request error: %w", err)
+		return
+	}
+
+	defer func() {
+		_ = res.Body.Close()
+	}()
+
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		err = fmt.Errorf("request failed: %s", string(body))
+		return
+	}
+
+	if err = json.NewDecoder(res.Body).Decode(&channel); err != nil {
 		err = fmt.Errorf("json decode error: %w", err)
 		return
 	}

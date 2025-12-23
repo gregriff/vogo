@@ -75,6 +75,7 @@ func createRoutes(mux *http.ServeMux, h *routes.RouteHandler) {
 	mux.HandleFunc("POST /register", h.Register)
 	mux.HandleFunc("GET /status", h.Status)
 	mux.HandleFunc("POST /friend", h.AddFriend)
+	mux.HandleFunc("POST /channel", h.CreateChannel)
 
 	callHandler := websocket.Server{
 		Handshake: websocketHandshake,

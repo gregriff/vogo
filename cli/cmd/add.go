@@ -11,7 +11,7 @@ import (
 )
 
 var addFriendCmd = &cobra.Command{
-	Use:   "add-friend [username]",
+	Use:   "add [username]",
 	Short: "Add a friend given their username",
 	Long: `Arguments:
       name    The username of the friend to add (required)

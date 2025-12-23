@@ -78,6 +78,42 @@ func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
 	WriteJSON(w, &res)
 }
 
+// CreateChannel creates a persistent voice-chat channel.
+func (h *RouteHandler) CreateChannel(w http.ResponseWriter, req *http.Request) {
+	username := middleware.GetUsername(req)
+
+	user, err := dal.GetUser(h.db, username)
+	if err != nil {
+		err = fmt.Errorf("error getting user: %w", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	channel := schemas.CreateChannelRequest{}
+	if err := json.NewDecoder(req.Body).Decode(&channel); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if len(channel.Name) == 0 {
+		err = errors.New("no channel name specified")
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if channel.Capacity < 2 {
+		channel.Capacity = 6
+	}
+
+	dbChannel, err := dal.CreateChannel(h.db, user.Id, channel)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	WriteJSON(w, &dbChannel)
+}
+
 // AddFriend creates or accepts a friend request with another user.
 func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
 	username := middleware.GetUsername(req)

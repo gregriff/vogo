@@ -221,3 +221,23 @@ func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
 
 	return areFriends, nil
 }
+
+// CreateChannel creates a channel in the database. TODO: handle onconflict, tell user to use PUT to edit.
+func CreateChannel(db *sql.DB, ownerId uuid.UUID, data schemas.CreateChannelRequest) (*public.Channel, error) {
+	var channel public.Channel
+
+	query := `
+		INSERT INTO channels (id, owner_id, name, description, capacity)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT DO NOTHING RETURNING name, description, capacity
+	`
+	err := db.QueryRow(query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
+		Scan(&channel.Name, &channel.Description, &channel.Capacity)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("channel already exists")
+		}
+		return nil, err
+	}
+	return &channel, nil
+}
