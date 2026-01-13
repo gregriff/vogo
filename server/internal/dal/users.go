@@ -4,7 +4,9 @@ package dal
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
@@ -17,7 +19,6 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 	userId := uuid.New()
 	username = strings.ToLower(username)
 
-	// Basic transaction pattern
 	tx, tErr := db.Begin()
 	if tErr != nil {
 		return nil, tErr
@@ -163,10 +164,11 @@ func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
 		_ = rows.Close()
 	}()
 
+	var tmpId uuid.UUID
 	for rows.Next() {
 		var ch public.Channel
-		err := rows.Scan(
-			&ch.Owner, &ch.Name, &ch.Description,
+		err = rows.Scan(
+			&tmpId, &ch.Owner, &ch.Name, &ch.Description,
 			&ch.Capacity, &ch.MemberNames,
 		)
 		if err != nil {
@@ -225,19 +227,73 @@ func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
 // CreateChannel creates a channel in the database. TODO: handle onconflict, tell user to use PUT to edit.
 func CreateChannel(db *sql.DB, ownerId uuid.UUID, data schemas.CreateChannelRequest) (*public.Channel, error) {
 	var channel public.Channel
+	var channelId uuid.UUID
+
+	tx, tErr := db.Begin()
+	if tErr != nil {
+		return nil, tErr
+	}
+	defer tx.Rollback()
 
 	query := `
 		INSERT INTO channels (id, owner_id, name, description, capacity)
 		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT DO NOTHING RETURNING name, description, capacity
+		ON CONFLICT DO NOTHING RETURNING id, name, description, capacity
 	`
-	err := db.QueryRow(query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
-		Scan(&channel.Name, &channel.Description, &channel.Capacity)
+	err := tx.QueryRow(query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
+		Scan(&channelId, &channel.Name, &channel.Description, &channel.Capacity)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("channel already exists")
 		}
 		return nil, err
 	}
+
+	query = `
+		INSERT INTO channel_members (channel_id, user_id, invited_by)
+		VALUES ($1, $2, $3)
+		ON CONFLICT DO NOTHING
+	`
+	_, err = tx.Exec(query, channelId, ownerId, ownerId)
+	if err != nil {
+		return nil, fmt.Errorf("error adding creator as a member of channel")
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
 	return &channel, nil
+}
+
+// InviteFriend adds a friend to an existing channel. Only the owner can invite.
+func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) (*public.User, error) {
+	friend := public.User{}
+
+	dbFriend, err := GetUser(db, friendName)
+	if err != nil {
+		return &friend, fmt.Errorf("friend not found: %w", err)
+	}
+
+	query := `
+   		WITH channel_check AS (
+          SELECT c.id
+          FROM channels c
+          WHERE c.owner_id = $2 AND c.name = $1
+        )
+        INSERT INTO channel_members (channel_id, user_id, invited_by)
+        SELECT id, $3, $2
+        FROM channel_check
+        RETURNING channel_id;
+    `
+
+	var channelId uuid.UUID
+	err = db.QueryRow(query, channelName, userId, dbFriend.Id).Scan(&channelId)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.New("channel not found or inviter is not owner")
+		}
+		log.Printf("%v", fmt.Errorf("error during invite friend query: %w", err))
+		return nil, errors.New("error during invite friend query: user probably already in channel")
+	}
+	friend.Name = dbFriend.Name
+	return &friend, nil
 }

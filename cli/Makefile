@@ -5,6 +5,7 @@ build:
 	go build -tags nolibopusfile -o $(OUT_DIR)/vogo main.go
 
 # testing
+CHANNEL_NAME := test
 CALLER_NAME := greg
 ANSWERER_NAME := tim
 CALLER_CONFIG_PATH := ./configs/dev.caller.toml
@@ -26,7 +27,10 @@ friends: build
 	$(OUT_DIR)/vogo add $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
 
 channel: build
-	$(OUT_DIR)/vogo create-channel test --config=$(CALLER_CONFIG_PATH)
+	$(OUT_DIR)/vogo create-channel $(CHANNEL_NAME) --config=$(CALLER_CONFIG_PATH)
+
+invite: build
+	$(OUT_DIR)/vogo invite $(ANSWERER_NAME) $(CHANNEL_NAME) --config=$(CALLER_CONFIG_PATH)
 
 call: build
 	$(OUT_DIR)/vogo call $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)

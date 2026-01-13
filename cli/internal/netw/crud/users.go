@@ -64,7 +64,7 @@ type Channel struct {
 
 	Capacity int
 
-	MemberNames []string
+	MemberNames string
 }
 
 type statusResponse struct {
@@ -173,6 +173,48 @@ func CreateChannel(client *http.Client, name, desc string, cap int) (channel *Ch
 	}
 
 	if err = json.NewDecoder(res.Body).Decode(&channel); err != nil {
+		err = fmt.Errorf("json decode error: %w", err)
+		return
+	}
+	return
+}
+
+type inviteFriendResponse struct {
+	Name string
+}
+
+func InviteFriend(client *http.Client, channelName, friendName string) (friend *inviteFriendResponse, err error) {
+	req := struct {
+		ChannelName,
+		FriendName string
+	}{ChannelName: channelName, FriendName: friendName}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		err = fmt.Errorf("json marshal err")
+		return
+	}
+
+	res, err := client.Post("/invite",
+		"application/json; charset=utf-8",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		err = fmt.Errorf("request error: %w", err)
+		return
+	}
+
+	defer func() {
+		_ = res.Body.Close()
+	}()
+
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		err = fmt.Errorf("request failed: %s", string(body))
+		return
+	}
+
+	if err = json.NewDecoder(res.Body).Decode(&friend); err != nil {
 		err = fmt.Errorf("json decode error: %w", err)
 		return
 	}

@@ -5,6 +5,7 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
@@ -74,11 +75,10 @@ func printChannels(channels []crud.Channel) {
 		fmt.Println("\nNo Channels")
 		return
 	}
+
 	fmt.Println("\nChannels: ")
 	for _, channel := range channels {
-		fmt.Printf("%s (%d)\n", channel.Name, channel.Capacity)
-		for _, member := range channel.MemberNames {
-			fmt.Printf("- %s\n", member)
-		}
+		memberNames := strings.Trim(channel.MemberNames, "{}")
+		fmt.Printf("%s (%d) - members: %s\n", channel.Name, channel.Capacity, memberNames)
 	}
 }

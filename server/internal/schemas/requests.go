@@ -15,6 +15,11 @@ type AddFriendRequest struct {
 	Name string
 }
 
+type InviteFriendRequest struct {
+	ChannelName,
+	FriendName string
+}
+
 // CallRequest is the request data used to create a call from one client to another.
 type CallRequest struct {
 	RecipientName string

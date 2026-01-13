@@ -48,6 +48,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 	WriteJSON(w, &username)
 }
 
+// Status writes a response containing the user's friends and any channels they are a member of
 func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
 	username := middleware.GetUsername(req)
 
@@ -143,6 +144,42 @@ func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	res := public.User{Name: friend.Name}
-	WriteJSON(w, &res)
+	WriteJSON(w, &friend)
+}
+
+// InviteFriend invites a friend to an existing channel
+func (h *RouteHandler) InviteFriend(w http.ResponseWriter, req *http.Request) {
+	username := middleware.GetUsername(req)
+
+	user, err := dal.GetUser(h.db, username)
+	if err != nil {
+		err = fmt.Errorf("error getting user: %w", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := schemas.InviteFriendRequest{}
+	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if len(data.ChannelName) == 0 {
+		err = errors.New("no channel name specified")
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(data.FriendName) == 0 {
+		err = errors.New("no friend name specified")
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	friend, err := dal.InviteFriend(h.db, user.Id, data.ChannelName, data.FriendName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	WriteJSON(w, &friend)
 }

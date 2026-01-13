@@ -7,7 +7,6 @@ package public
 // User stores information about the user of a vogo client
 type User struct {
 	// public username. should be unique (small groups), but might change
-	// format: [name]#XX
 	Name string
 }
 
@@ -26,5 +25,5 @@ type Channel struct {
 	// Defaults to 6 (db enforced), due to WebRTC limitations
 	Capacity int
 
-	MemberNames []string
+	MemberNames string
 }

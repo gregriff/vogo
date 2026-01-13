@@ -7,7 +7,6 @@ import (
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	// _ "net/http/pprof".
 )
 
 var createChannelCmd = &cobra.Command{
