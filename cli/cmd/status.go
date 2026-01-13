@@ -5,8 +5,9 @@ package cmd
 import (
 	"fmt"
 	"log"
-	"net/http"
+	"strings"
 
+	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	// _ "net/http/pprof".
@@ -15,7 +16,7 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Check for pending calls or open channels",
-	Args:  cobra.MaximumNArgs(0),
+	Args:  cobra.NoArgs,
 	Run:   getStatus,
 }
 
@@ -24,13 +25,60 @@ func init() {
 }
 
 func getStatus(_ *cobra.Command, _ []string) {
-	_, vogoServer := viper.GetBool("debug"), viper.GetString("vogo-server")
+	_, username, password, vogoServer := viper.GetBool("debug"),
+		viper.GetString("user.name"),
+		viper.GetString("user.password"),
+		viper.GetString("servers.vogo-origin")
 
-	log.Println("getting status from vogo server")
-	res, hErr := http.Get(fmt.Sprintf("http://%s/status", vogoServer))
-	if hErr != nil {
-		panic(hErr)
+	vogoClient := crud.NewClient(vogoServer, username, password)
+	status, err := crud.Status(vogoClient)
+	if err != nil {
+		log.Printf("error fetching status: %v", err)
+		return
 	}
-	log.Println("status res: ", res)
-	// TODO:
+
+	printFriends(status.Friends)
+	printChannels(status.Channels)
+}
+
+func printFriends(friends []crud.Friend) {
+	if len(friends) == 0 {
+		fmt.Println("\nNo Friends")
+		return
+	}
+
+	incomingRequests := make([]crud.Friend, 0, 2)
+	for _, friend := range friends {
+		if friend.Status == "pending" {
+			incomingRequests = append(incomingRequests, friend)
+			continue
+		}
+	}
+
+	// if we have no incoming requests, but do have active friendships
+	if len(incomingRequests) == 0 {
+		fmt.Println("\nFriends: ")
+		for _, friend := range friends {
+			fmt.Println(friend.Name)
+		}
+		return
+	}
+
+	fmt.Println("\nIncoming Friend Requests:")
+	for _, req := range incomingRequests {
+		fmt.Println(req.Name)
+	}
+}
+
+func printChannels(channels []crud.Channel) {
+	if len(channels) == 0 {
+		fmt.Println("\nNo Channels")
+		return
+	}
+
+	fmt.Println("\nChannels: ")
+	for _, channel := range channels {
+		memberNames := strings.Trim(channel.MemberNames, "{}")
+		fmt.Printf("%s (%d) - members: %s\n", channel.Name, channel.Capacity, memberNames)
+	}
 }

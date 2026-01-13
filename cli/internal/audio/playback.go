@@ -51,6 +51,13 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 				continue // Temporary error, keep trying
 			}
 
+			// TODO: track.ID()
+			// - use track.id to store pcm in a buf for only this track
+			// - then mix PCM from each track before writing to speaker
+			// - each track's PCM needs a lock and so does the mixing PCM
+			// - just do naive mixing at first, dont do any fancy timing
+			// - itd be nice to extract some of this state out into a struct with funcs
+
 			// TODO: check for 0 samples decoded and call PLC?
 			samplesDecoded, decodeErr := decoder.Decode(packet.Payload, pcmBuffer)
 			if decodeErr != nil {
@@ -112,6 +119,32 @@ func initPlaybackDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pc
 		err = fmt.Errorf("error starting playback device: %w", err)
 	}
 	return
+}
+
+// UninitPlayback uninitializes the malgo playback device and frees all its resources. First, it attempts a graceful close
+// of the PeerConnection, in order to unblock the playback goroutine, which blocks while it reads packets from the network.
+// The playback wg is then waited on, while the goroutines reading from the network (RemoteTracks) complete. Regardless
+// of the result of the graceful close, the malgo device is torn down.
+func UninitPlayback(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, device *malgo.Device, wg *sync.WaitGroup) {
+	// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
+	if closeErr := pc.GracefulClose(); closeErr != nil {
+		fmt.Printf("cannot gracefully close recipient connection: %v\n", closeErr)
+	} else {
+		wg.Wait()
+	}
+
+	if ctx == nil {
+		fmt.Println("playback ctx uninit before init")
+		return
+	}
+	if device != nil {
+		device.Uninit()
+	}
+	if err := ctx.Uninit(); err != nil {
+		fmt.Printf("error uninitializing playback device context: %v", err)
+	}
+	ctx.Free()
+	fmt.Println("uninit and freed playback device")
 }
 
 // int16ToBytes converts an int16 slice to a byte slice of PCM audio. TODO: can be reimpl with unsafe

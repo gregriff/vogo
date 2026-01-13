@@ -48,9 +48,9 @@ func init() {
 	defaultConfigFilePath := fmt.Sprintf("%s/vogo.toml", configDir)
 	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config", defaultConfigFilePath, "config file")
 
-	rootCmd.PersistentFlags().String("stun-server", "stun:stun.l.google.com:19302", "STUN Server Origin")
-	rootCmd.PersistentFlags().String("vogo-server", "", "Vogo Server Address")
-	rootCmd.PersistentFlags().Bool("debug", false, "Print debugging information")
+	rootCmd.PersistentFlags().String("stun-server", "stun:stun.l.google.com:19302", "STUN server origin")
+	rootCmd.PersistentFlags().String("vogo-server", "", "vogo Server Address")
+	rootCmd.PersistentFlags().Bool("debug", false, "print debugging information")
 
 	// expose to application via viper
 	_ = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))

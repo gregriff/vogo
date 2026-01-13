@@ -4,11 +4,14 @@ package dal
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/server/internal/schemas"
+	"github.com/gregriff/vogo/server/internal/schemas/public"
 )
 
 // CreateUser adds a user to the database and associates them with their invite code.
@@ -16,7 +19,6 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 	userId := uuid.New()
 	username = strings.ToLower(username)
 
-	// Basic transaction pattern
 	tx, tErr := db.Begin()
 	if tErr != nil {
 		return nil, tErr
@@ -53,8 +55,25 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 	return &dbUsername, nil
 }
 
-func GetUserByUsername(db *sql.DB, username string) (*schemas.User, error) {
+// GetUser returns a user from the database given their username.
+func GetUser(db *sql.DB, username string) (*schemas.User, error) {
 	var user schemas.User
+	username = strings.ToLower(username)
+
+	query := "SELECT id, username, created_at FROM users WHERE username = $1"
+	err := db.QueryRow(query, username).Scan(&user.Id, &user.Name, &user.CreatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("user not found: %s", username)
+		}
+		return nil, fmt.Errorf("error querying user: %w", err)
+	}
+	return &user, nil
+}
+
+// GetUserWithPassword returns a friend from the database with their hashed password given their username.
+func GetUserWithPassword(db *sql.DB, username string) (*schemas.UserWithPassword, error) {
+	var user schemas.UserWithPassword
 	username = strings.ToLower(username)
 
 	query := "SELECT id, username, password, created_at FROM users WHERE username = $1"
@@ -71,8 +90,8 @@ func GetUserByUsername(db *sql.DB, username string) (*schemas.User, error) {
 func GetUserById(db *sql.DB, id string) (*schemas.User, error) {
 	var user schemas.User
 
-	query := "SELECT id, username, password, created_at FROM users WHERE id = $1"
-	err := db.QueryRow(query, id).Scan(&user.Id, &user.Name, &user.Password, &user.CreatedAt)
+	query := "SELECT id, username, created_at FROM users WHERE id = $1"
+	err := db.QueryRow(query, id).Scan(&user.Id, &user.Name, &user.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found: %s", id)
@@ -80,4 +99,201 @@ func GetUserById(db *sql.DB, id string) (*schemas.User, error) {
 		return nil, fmt.Errorf("error querying user: %w", err)
 	}
 	return &user, nil
+}
+
+// GetFriends returns the names of the friends of a user with a given id.
+// Use pending to control returning incoming friend requests.
+func GetFriends(db *sql.DB, userId string, pending bool) ([]public.Friend, error) {
+	friends := make([]public.Friend, 0, 10)
+
+	template := `
+    	SELECT u.username, f.status
+        FROM friendships f
+        JOIN users u ON u.id = CASE WHEN f.user_one = $1 THEN f.user_two ELSE f.user_one END
+        WHERE (f.user_one = $1 OR f.user_two = $1) AND %s
+    `
+	var filter string
+	if pending { // also return incoming friend requests
+		filter = "(status = 'accepted' OR (status = 'pending' AND added_by != $1))"
+	} else {
+		filter = "status = 'accepted'"
+	}
+
+	query := fmt.Sprintf(template, filter)
+	rows, err := db.Query(query, userId)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	for rows.Next() {
+		var f public.Friend
+		if err := rows.Scan(&f.Name, &f.Status); err != nil {
+			return nil, err
+		}
+		friends = append(friends, f)
+	}
+
+	return friends, rows.Err()
+}
+
+// GetChannels returns the channels a user with a given id is a member of.
+// The result contains the user names of the channel members as a property of each channel.
+func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
+	channels := make([]public.Channel, 0, 10)
+	query := `
+        SELECT
+            c.id, owner_user.username as owner_name, c.name, c.description,
+            c.capacity, ARRAY_AGG(u.username) as member_names
+        FROM channels c
+        JOIN users owner_user ON c.owner_id = owner_user.id
+        JOIN channel_members cm_user ON c.id = cm_user.channel_id
+        JOIN channel_members m ON c.id = m.channel_id
+        JOIN users u ON m.user_id = u.id
+        WHERE cm_user.user_id = $1
+        GROUP BY c.id, owner_user.username, c.name, c.description, c.capacity
+    `
+
+	rows, err := db.Query(query, userId)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var tmpId uuid.UUID
+	for rows.Next() {
+		var ch public.Channel
+		err = rows.Scan(
+			&tmpId, &ch.Owner, &ch.Name, &ch.Description,
+			&ch.Capacity, &ch.MemberNames,
+		)
+		if err != nil {
+			return nil, err
+		}
+		channels = append(channels, ch)
+	}
+
+	return channels, rows.Err()
+}
+
+// AddFriend adds a friend with a given name.
+func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, error) {
+	friend := public.User{}
+
+	dbFriend, err := GetUser(db, friendName)
+	if err != nil {
+		return &friend, fmt.Errorf("friend not found: %w", err)
+	}
+
+	// if the request is already pending, update it to accepted
+	query := `
+		INSERT INTO friendships (user_one, user_two, status, added_by)
+		VALUES (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid), 'pending', $1)
+		ON CONFLICT (user_one, user_two)
+		DO UPDATE SET status = 'accepted'
+    	WHERE friendships.status = 'pending'
+       `
+	_, err = db.Exec(query, userId, dbFriend.Id)
+	if err != nil {
+		return nil, fmt.Errorf("error during add friend query: %w", err)
+	}
+	friend.Name = dbFriend.Name
+	return &friend, nil
+}
+
+// AreFriends returns true if the two users are friends.
+func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
+	query := `
+	    SELECT EXISTS(
+	        SELECT 1 FROM friendships
+	        WHERE (user_one, user_two) = (LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid))
+	        AND status = 'accepted'
+	        AND whos_blocked IS NULL
+		)`
+
+	var areFriends bool
+	err := db.QueryRow(query, userId, friendId).Scan(&areFriends)
+	if err != nil {
+		return false, fmt.Errorf("query error: %w", err)
+	}
+
+	return areFriends, nil
+}
+
+// CreateChannel creates a channel in the database. TODO: handle onconflict, tell user to use PUT to edit.
+func CreateChannel(db *sql.DB, ownerId uuid.UUID, data schemas.CreateChannelRequest) (*public.Channel, error) {
+	var channel public.Channel
+	var channelId uuid.UUID
+
+	tx, tErr := db.Begin()
+	if tErr != nil {
+		return nil, tErr
+	}
+	defer tx.Rollback()
+
+	query := `
+		INSERT INTO channels (id, owner_id, name, description, capacity)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT DO NOTHING RETURNING id, name, description, capacity
+	`
+	err := tx.QueryRow(query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
+		Scan(&channelId, &channel.Name, &channel.Description, &channel.Capacity)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("channel already exists")
+		}
+		return nil, err
+	}
+
+	query = `
+		INSERT INTO channel_members (channel_id, user_id, invited_by)
+		VALUES ($1, $2, $3)
+		ON CONFLICT DO NOTHING
+	`
+	_, err = tx.Exec(query, channelId, ownerId, ownerId)
+	if err != nil {
+		return nil, fmt.Errorf("error adding creator as a member of channel")
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &channel, nil
+}
+
+// InviteFriend adds a friend to an existing channel. Only the owner can invite.
+func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) (*public.User, error) {
+	friend := public.User{}
+
+	dbFriend, err := GetUser(db, friendName)
+	if err != nil {
+		return &friend, fmt.Errorf("friend not found: %w", err)
+	}
+
+	query := `
+   		WITH channel_check AS (
+          SELECT c.id
+          FROM channels c
+          WHERE c.owner_id = $2 AND c.name = $1
+        )
+        INSERT INTO channel_members (channel_id, user_id, invited_by)
+        SELECT id, $3, $2
+        FROM channel_check
+        RETURNING channel_id;
+    `
+
+	var channelId uuid.UUID
+	err = db.QueryRow(query, channelName, userId, dbFriend.Id).Scan(&channelId)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.New("channel not found or inviter is not owner")
+		}
+		log.Printf("%v", fmt.Errorf("error during invite friend query: %w", err))
+		return nil, errors.New("error during invite friend query: user probably already in channel")
+	}
+	friend.Name = dbFriend.Name
+	return &friend, nil
 }

@@ -6,7 +6,7 @@ import (
 	"log"
 	"regexp"
 
-	"github.com/gregriff/vogo/cli/internal/services/crud"
+	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	// _ "net/http/pprof".
@@ -15,19 +15,11 @@ import (
 var registerCmd = &cobra.Command{
 	Use:   "register",
 	Short: "Register this client with a new user",
-	Args:  cobra.MaximumNArgs(1),
+	Args:  cobra.NoArgs,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		inviteCode := viper.GetString("code")
 		if inviteCode == "" {
 			return fmt.Errorf("must specify an invite code to register")
-		}
-
-		friendCode := viper.GetString("friend-code")
-		if friendCode != "" {
-			return fmt.Errorf(
-				"existing friend code detected in config file, have you already registered a user with this client? "+
-					"to register a new user, please delete the friend code from your config file (%s)", ConfigFile,
-			)
 		}
 		return nil
 	},
@@ -61,7 +53,7 @@ func registerUser(_ *cobra.Command, _ []string) {
 	}
 
 	vogoClient := crud.NewClient(vogoServer, "", "")
-	username, err := crud.Register(*vogoClient, username, password, inviteCode)
+	username, err := crud.Register(vogoClient, username, password, inviteCode)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error during registration: %w", err).Error())
 	}

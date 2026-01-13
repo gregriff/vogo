@@ -22,7 +22,7 @@ type AudioBuffer struct {
 
 func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) error {
 	deviceCtx, device, pcm, initErr := initCaptureDevice()
-	defer teardownCaptureResources(deviceCtx, device)
+	defer uninitCapture(deviceCtx, device)
 	if initErr != nil {
 		return fmt.Errorf("error initalizing capture device: %w", initErr)
 	}
@@ -113,6 +113,17 @@ func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm
 		err = fmt.Errorf("error starting capture device: %w", err)
 	}
 	return
+}
+
+func uninitCapture(ctx *malgo.AllocatedContext, device *malgo.Device) {
+	if device != nil {
+		device.Uninit()
+	}
+	if err := ctx.Uninit(); err != nil {
+		fmt.Printf("error uninitializing capture device context: %v", err)
+	}
+	ctx.Free()
+	fmt.Println("uninit and freed capture device")
 }
 
 // bytesToInt16 turns a byte slice of PCM audio into an int16 slice for the opus encoder to use.
