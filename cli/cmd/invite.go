@@ -10,8 +10,8 @@ import (
 )
 
 var inviteCmd = &cobra.Command{
-	Use:   "invite [username] [channel name]",
-	Short: "Invite a friend to an existing channel",
+	Use:   "invite [username] [channel]",
+	Short: "Invite a friend to an existing channel that you own",
 	Long: `Arguments:
       username    The name of the user to invite (required)
       channel 	  The name of the channel (required)
@@ -56,5 +56,5 @@ func inviteFriend(_ *cobra.Command, _ []string) {
 		log.Fatal(fmt.Errorf("error inviting friend: %w", err).Error())
 	}
 
-	log.Printf("Invited friend: %s", friend.Name)
+	log.Printf("%s has joined %s", friend.Name, channelName)
 }

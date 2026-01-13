@@ -147,7 +147,7 @@ func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
 	WriteJSON(w, &friend)
 }
 
-// InviteFriend invites a friend to an existing channel
+// InviteFriend invites a friend to an existing channel. Currently they join immediately (without having to accept)
 func (h *RouteHandler) InviteFriend(w http.ResponseWriter, req *http.Request) {
 	username := middleware.GetUsername(req)
 
