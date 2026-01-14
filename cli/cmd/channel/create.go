@@ -1,4 +1,4 @@
-package cmd
+package channel
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 )
 
 var createChannelCmd = &cobra.Command{
-	Use:   "create-channel [name]",
+	Use:   "create [name]",
 	Short: "Create a persistent voice-chat channel",
 	Long: `Arguments:
       name    The name of the channel (required)
@@ -29,10 +29,6 @@ var createChannelCmd = &cobra.Command{
 		return nil
 	},
 	Run: createChannel,
-}
-
-func init() {
-	rootCmd.AddCommand(createChannelCmd)
 }
 
 func createChannel(_ *cobra.Command, _ []string) {

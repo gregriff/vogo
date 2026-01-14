@@ -27,10 +27,10 @@ friends: build
 	$(OUT_DIR)/vogo add $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
 
 channel: build
-	$(OUT_DIR)/vogo create-channel $(CHANNEL_NAME) --config=$(CALLER_CONFIG_PATH)
+	$(OUT_DIR)/vogo channel create $(CHANNEL_NAME) --config=$(CALLER_CONFIG_PATH)
 
 invite: build
-	$(OUT_DIR)/vogo invite $(ANSWERER_NAME) $(CHANNEL_NAME) --config=$(CALLER_CONFIG_PATH)
+	$(OUT_DIR)/vogo channel invite $(ANSWERER_NAME) $(CHANNEL_NAME) --config=$(CALLER_CONFIG_PATH)
 
 call: build
 	$(OUT_DIR)/vogo call $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)

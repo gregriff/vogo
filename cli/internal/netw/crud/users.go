@@ -183,6 +183,7 @@ type inviteFriendResponse struct {
 	Name string
 }
 
+// InviteFriend invites a friend to a channel owned by the user inviting.
 func InviteFriend(client *http.Client, channelName, friendName string) (friend *inviteFriendResponse, err error) {
 	req := struct {
 		ChannelName,
@@ -195,7 +196,7 @@ func InviteFriend(client *http.Client, channelName, friendName string) (friend *
 		return
 	}
 
-	res, err := client.Post("/invite",
+	res, err := client.Post("/channel/invite",
 		"application/json; charset=utf-8",
 		bytes.NewReader(payload),
 	)

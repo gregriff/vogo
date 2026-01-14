@@ -1,4 +1,4 @@
-package cmd
+package channel
 
 import (
 	"fmt"
@@ -36,10 +36,6 @@ var inviteCmd = &cobra.Command{
 		return nil
 	},
 	Run: inviteFriend,
-}
-
-func init() {
-	rootCmd.AddCommand(inviteCmd)
 }
 
 func inviteFriend(_ *cobra.Command, _ []string) {

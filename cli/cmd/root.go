@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/gregriff/vogo/cli/cmd/channel"
 	"github.com/gregriff/vogo/cli/configs"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -37,6 +38,7 @@ func init() {
 	// Here you will define your flags and configuration settings.
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
+	rootCmd.AddCommand(channel.ChannelCmd)
 
 	// deferring this allows user to override config path with cli option
 	cobra.OnInitialize(func() {
