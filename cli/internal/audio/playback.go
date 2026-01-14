@@ -37,6 +37,16 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 	// note: realize that this code will run multiple times if more than one remote track is connected (multi-user voice chat)
 	// note: this callback should not panic
 	// TODO: mix audio here, maybe pull out
+	//
+	// Strategy to time mixing:
+	// - when playback goroutine pulls pcm from pcm buf and writes to speaker buf, it empties the pcm buf (in a lock),
+	//   therefore, each of the onTrack()'s below needs to have its own flag/counter, that is set when it writes to the pcm.
+	//   when pcm is emptied, all track's flags are unset. therefore, each track can go:
+	// 		- is any other track's flag set? if so, take the last frame from pcm buf, and mix my current frame with that,
+	// 		  then overwrite that frame with the mixed one.
+	// 		- if no other track's flags are set, even if mine is set, just append frame to pcm buf.
+	// 	 note: could do this flag stuff with a bitfield and bitwise ops if it seems expensive (its operated on in locks)
+	// 		   and the bitfield len is maxTracks (6)
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		wg.Add(1)
 		defer wg.Done()
