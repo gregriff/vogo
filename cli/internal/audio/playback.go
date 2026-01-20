@@ -13,19 +13,76 @@ import (
 )
 
 // SetupPlayback initializes the playback device with malgo, and defines the callback that is run per remote-track, that
-// reads the audio from the network and places it in the buffer for the playback device to read from
+// reads the audio from the network and places it in the buffer for the playback device to read from. This function
+// is used by voice calls (1:1)
 func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 	deviceCtx *malgo.AllocatedContext,
 	device *malgo.Device,
 	err error,
 ) {
-	deviceCtx, device, pcm, err := initPlaybackDevice()
+	deviceCtx, device, pcm, err := createCallDevice()
 	if err != nil {
 		err = fmt.Errorf("error initalizing playback device: %w", err)
 		return
 	}
 
-	pcmBuffer := make([]int16, pcmBufferSize)
+	decoder, err := opus.NewDecoder(SampleRate, NumChannels)
+	if err != nil {
+		err = fmt.Errorf("decoder init error: %w", err)
+		return
+	}
+
+	// this func runs for every remote track connected to this peer connection
+	// this is where the decoder writes pcm from the network
+	// note: this callback should not panic
+	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		wg.Add(1)
+		defer wg.Done()
+
+		decodeBuf := make([]int16, pcmBufferSize)
+		for {
+			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
+			packet, _, readErr := track.ReadRTP()
+			if readErr != nil {
+				if readErr == io.EOF {
+					return // Track closed, exit loop
+				}
+				log.Println("PACKET READ ERR: ", readErr)
+				continue // Temporary error, keep trying
+			}
+
+			// TODO: check for 0 samples decoded and call PLC?
+			samplesDecoded, decodeErr := decoder.Decode(packet.Payload, decodeBuf)
+			if decodeErr != nil {
+				log.Println("DECODE ERROR: ", decodeErr.Error())
+				continue
+			}
+
+			framesDecoded := samplesDecoded * NumChannels
+			// Write decoded PCM to playback buffer, which malgo will pull from for playback
+			pcm.mu.Lock()
+			pcm.buf = append(pcm.buf, decodeBuf[:framesDecoded]...)
+			pcm.mu.Unlock()
+		}
+	})
+	return
+}
+
+// SetupPlaybackChannel initializes the playback device with malgo, and defines the callback that is run per remote-track, that
+// reads the audio from the network and places it in the buffer for the playback device to read from. This function is used for
+// channel (multi-user) voice chats.
+// TODO: combine ctx and device into a Speaker struct
+func SetupPlaybackChannel(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
+	deviceCtx *malgo.AllocatedContext,
+	device *malgo.Device,
+	err error,
+) {
+	deviceCtx, device, pcmBuffers, err := createChannelDevice()
+	if err != nil {
+		err = fmt.Errorf("error initalizing playback device: %w", err)
+		return
+	}
+
 	decoder, err := opus.NewDecoder(SampleRate, NumChannels)
 	if err != nil {
 		err = fmt.Errorf("decoder init error: %w", err)
@@ -47,9 +104,18 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 	// 		- if no other track's flags are set, even if mine is set, just append frame to pcm buf.
 	// 	 note: could do this flag stuff with a bitfield and bitwise ops if it seems expensive (its operated on in locks)
 	// 		   and the bitfield len is maxTracks (6)
+	// - another strategy would be for each track to write to its own pcm buf, and have the speaker callback join frames from
+	//   all present pcm bufs (one per track). so the first strategy is the onTrack doing the mixing, and this strat is the
+	//   onSample doing the mixing... onSample joining is prob more robust but may be slower if pcm bufs are fragmented in the heap...
+	// NOTE: should ensure that a 1:1 voice call never does any of this... only multi-user channels
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		wg.Add(1)
 		defer wg.Done()
+
+		fmt.Printf("added track with id: %s, streamID: %s", track.ID(), track.StreamID())
+		decodeBuf := make([]int16, pcmBufferSize)
+		pcm := make([]int16, pcmBufferSize)
+		pcmBuffers.addStream(&pcm)
 		for {
 			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
 			packet, _, readErr := track.ReadRTP()
@@ -69,7 +135,7 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 			// - itd be nice to extract some of this state out into a struct with funcs
 
 			// TODO: check for 0 samples decoded and call PLC?
-			samplesDecoded, decodeErr := decoder.Decode(packet.Payload, pcmBuffer)
+			samplesDecoded, decodeErr := decoder.Decode(packet.Payload, decodeBuf)
 			if decodeErr != nil {
 				log.Println("DECODE ERROR: ", decodeErr.Error())
 				continue
@@ -77,48 +143,92 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 
 			framesDecoded := samplesDecoded * NumChannels
 			// Write decoded PCM to playback buffer, which malgo will pull from for playback
-			pcm.mu.Lock()
-			pcm.data = append(pcm.data, pcmBuffer[:framesDecoded]...)
-			pcm.mu.Unlock()
+			pcmBuffers.mu.Lock()
+			pcm = append(pcm, decodeBuf[:framesDecoded]...) // inefficient? reslice instead?
+			pcmBuffers.mu.Unlock()
 		}
 	})
 	return
 }
 
-func initPlaybackDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm *AudioBuffer, err error) {
-	// configure playback device
+// createCallDevice inits, configures, and sets up the callback needed to use the speaker for peer-to-peer (1:1) voice calls.
+func createCallDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm *CallStream, err error) {
 	ctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
 		err = fmt.Errorf("error initializing device context: %w", err)
 		return
 	}
 
-	deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
-	deviceConfig.Playback.Format = AudioFormat
-	deviceConfig.Playback.Channels = NumChannels
-	deviceConfig.SampleRate = SampleRate
-	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
-
-	pcm = &AudioBuffer{}
+	// TODO: prealloc
+	pcm = &CallStream{}
 
 	// read into output sample buf, for output to speaker device. this fires every X milliseconds
 	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
-		samplesToRead := framecount * NumChannels
+		samplesToRead := int(framecount) * NumChannels
 		pcm.mu.Lock()
 		defer pcm.mu.Unlock()
 
 		// if there isn't yet a full sample in the pcmBuffer sent from the network
-		if len(pcm.data) < int(samplesToRead) {
+		if len(pcm.buf) < samplesToRead {
 			return
 		}
 
 		// write a full sample to the speaker buffer
-		copy(pOutputSample, int16ToBytes(pcm.data[:samplesToRead]))
-		pcm.data = pcm.data[samplesToRead:] // TODO: probably leaks
+		copy(pOutputSample, int16ToBytes(pcm.buf[:samplesToRead]))
+		pcm.buf = pcm.buf[samplesToRead:] // TODO: probably leaks
 	}
 
+	device, err = initDevice(ctx, onSendFrames)
+	return
+}
+
+// createCallDevice inits, configures, and sets up the callback needed to use the speaker for multi-user voice chats (channels).
+func createChannelDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, streams *ChannelStreams, err error) {
+	ctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	if err != nil {
+		err = fmt.Errorf("error initializing device context: %w", err)
+		return
+	}
+
+	streams = &ChannelStreams{}
+
+	// read into output sample buf, for output to speaker device. this fires every X milliseconds
+	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
+		samplesToRead := int(framecount) * NumChannels
+		streams.mu.Lock()
+		defer streams.mu.Unlock()
+
+		ok, fullBufs := streams.hasFullSample(samplesToRead)
+		// if there isn't yet a full sample in any of the pcm buffers sent from the network
+		if !ok {
+			return
+		}
+
+		mixed := streams.mixAudio(fullBufs, samplesToRead)
+
+		// write a full mixed sample to the speaker buffer
+		copy(pOutputSample, int16ToBytes(mixed[:samplesToRead]))
+
+		// reslice all bufs that were just mixed, removing the mixed pcm from each
+		for _, p := range fullBufs {
+			*p = (*p)[samplesToRead:] // TODO: probably leaks
+		}
+	}
+
+	device, err = initDevice(ctx, onSendFrames)
+	return
+}
+
+// initDevice initalizes and starts the speaker device for playback.
+func initDevice(ctx *malgo.AllocatedContext, onSendFrames malgo.DataProc) (device *malgo.Device, err error) {
+	config := malgo.DefaultDeviceConfig(malgo.Playback)
+	config.Playback.Format = AudioFormat
+	config.Playback.Channels = NumChannels
+	config.SampleRate = SampleRate
+	config.PeriodSizeInMilliseconds = frameDurationMs
+
 	// init playback device
-	device, err = malgo.InitDevice(ctx.Context, deviceConfig, malgo.DeviceCallbacks{
+	device, err = malgo.InitDevice(ctx.Context, config, malgo.DeviceCallbacks{
 		Data: onSendFrames,
 	})
 	if err != nil {

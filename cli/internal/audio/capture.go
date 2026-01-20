@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/gen2brain/malgo"
@@ -13,12 +12,6 @@ import (
 	"github.com/pion/webrtc/v4/pkg/media"
 	"gopkg.in/hraban/opus.v2"
 )
-
-// AudioBuffer is a shared buffer that is written to/from the network and read/written by malgo for playback
-type AudioBuffer struct {
-	mu   sync.Mutex
-	data []int16
-}
 
 func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) error {
 	deviceCtx, device, pcm, initErr := initCaptureDevice()
@@ -48,14 +41,14 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 			pcm.mu.Lock()
 
 			// Need at least one frame worth of data
-			if len(pcm.data) < frameSize {
+			if len(pcm.buf) < frameSize {
 				pcm.mu.Unlock()
 				continue // wait for more data
 			}
 
 			// Extract one frame and remove it from the buffer
-			frameData := pcm.data[:frameSize]
-			pcm.data = pcm.data[frameSize:] // TODO: this may leak
+			frameData := pcm.buf[:frameSize]
+			pcm.buf = pcm.buf[frameSize:] // TODO: this may leak
 			pcm.mu.Unlock()
 
 			// encode to opus
@@ -78,7 +71,7 @@ func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.
 	}
 }
 
-func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm *AudioBuffer, err error) {
+func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm *CallStream, err error) {
 	// configure playback device
 	ctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
@@ -92,12 +85,12 @@ func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm
 	deviceConfig.SampleRate = SampleRate
 	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
 
-	pcm = &AudioBuffer{}
+	pcm = &CallStream{}
 
 	// read into capture buffer, to write to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
 		pcm.mu.Lock()
-		pcm.data = append(pcm.data, bytesToInt16(pInputSample)...)
+		pcm.buf = append(pcm.buf, bytesToInt16(pInputSample)...)
 		pcm.mu.Unlock()
 	}
 
