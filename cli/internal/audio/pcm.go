@@ -9,7 +9,8 @@ import (
 const maxStreams = 5 // max remote tracks (max users - 1)
 
 // CallStream is a shared buffer of PCM data that is written to from the network
-// by the remoteTrack and read by malgo for playback during a 1:1 voice call.
+// by the remoteTrack and read by malgo for playback during a 1:1 voice call. It's also
+// used during capture, where its contents are written to the network.
 type CallStream struct {
 	mu  sync.Mutex
 	buf []int16

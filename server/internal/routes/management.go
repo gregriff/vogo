@@ -45,7 +45,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	WriteJSON(w, &username)
+	writeJSON(w, &username)
 }
 
 // Status writes a response containing the user's friends and any channels they are a member of
@@ -76,7 +76,7 @@ func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
 
 	// TODO: check for any pending calls with callMap
 	res := public.StatusResponse{Friends: friends, Channels: channels}
-	WriteJSON(w, &res)
+	writeJSON(w, &res)
 }
 
 // CreateChannel creates a persistent voice-chat channel.
@@ -112,7 +112,7 @@ func (h *RouteHandler) CreateChannel(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	WriteJSON(w, &dbChannel)
+	writeJSON(w, &dbChannel)
 }
 
 // AddFriend creates or accepts a friend request with another user.
@@ -144,7 +144,7 @@ func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	WriteJSON(w, &friend)
+	writeJSON(w, &friend)
 }
 
 // InviteFriend invites a friend to an existing channel. Currently they join immediately (without having to accept)
@@ -181,5 +181,5 @@ func (h *RouteHandler) InviteFriend(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	WriteJSON(w, &friend)
+	writeJSON(w, &friend)
 }

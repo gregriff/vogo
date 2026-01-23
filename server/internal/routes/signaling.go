@@ -17,7 +17,6 @@ import (
 )
 
 // TODO:
-// GET /status: returns to the client any calls or channels currently open and associated with the client
 // POST /channel: allow a client to open a channel. this is persisted to sqlite, including who is invited to join it.
 // 				  channels are given a unique name, where the CLI can change properties (who's invited) using the PUT
 // PUT /channel: modify channel properties
@@ -254,7 +253,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 			}
 			log.Println("error during ice reading: ", err)
 		}
-		canListenForClose <- struct{}{}
+		canListenForClose <- struct{}{} // unness?
 	})
 
 	// listen for the close frame from the client, since we know the only
@@ -335,24 +334,146 @@ func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICEC
 	}
 }
 
-// receiveWithContext reads json into v from ws in a new goroutine and cancels
-// the read if ctx is cancelled. Param v should be a pointer.
-func receiveWithContext(ctx context.Context, ws *websocket.Conn, v any) error {
-	var (
-		recv sync.WaitGroup
-		done = make(chan error, 1)
-	)
-	defer recv.Wait()
+// JoinChannel lets a user join a channel they are a member of, given its name and owner's name,
+// and creates the in-memory representation of that channel if no members are currently connected
+// to it. This is a websocket endpoint that will stay open until the user leaves the channel call
+// or is disconnected. When another member joins the channel, this endpoint will send their Sd to
+// the user, to facilitate the webrtc signalling for all members connected to the channel.
+// Note:
+//   - this func will need to stay open until the client exits the channel call.
+//   - after creating the channel in a lock, this goroutine will need to create a
+//     channel goroutine that uses sync.Cond/Wait to wait until another JoinChannel() from
+//     a new participant wakes it. that goroutine will then broadcast to all idle JoinChannel
+//     goroutines of the current participants, which will then communicate their Sd's to the
+//     joining participant. when a participant leaves or disconnects, a similar thing will happen.
+//     All of this uses the channel struct's one mutex.
+func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
+	ctx := ws.Request().Context()
 
-	recv.Go(func() {
-		done <- websocket.JSON.Receive(ws, v)
+	username := middleware.GetUsernameWS(ws)
+	user, err := dal.GetUser(h.db, username)
+	if err != nil {
+		log.Println(fmt.Errorf("error fetching user: %w", err))
+		_ = ws.WriteClose(http.StatusInternalServerError)
+		return
+	}
+
+	var req schemas.JoinChannelRequest
+	err = receiveWithContext(ctx, ws, &req)
+	if err != nil {
+		if err == io.EOF {
+			return
+		}
+		log.Printf("error reading offer from ws: %v", err)
+		_ = ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+	if req.Sd.SDP == "" {
+		log.Println("empty offer")
+		_ = ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+	log.Println("joinChannel: req recieved")
+	owner, err := dal.GetUser(h.db, req.OwnerName)
+	if err != nil {
+		log.Println(fmt.Errorf("error fetching channel owner: %w", err))
+		_ = ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+
+	// add areFriends check? TODO: removeFriend and blockFriend endpoints should remove user
+	// from relevant channels in the same DB transaction
+	c, err := dal.GetChannelOfMember(h.db, req.ChannelName, user.Id, owner.Id)
+	if err != nil {
+		log.Println(fmt.Errorf("error getting channel of member: %w", err))
+		_ = ws.WriteClose(http.StatusInternalServerError)
+		return
+	}
+
+	// TODO: impl CreateOrJoinChannel
+	channel := schemas.CreateOrJoinChannel(c, user, req.Sd)
+	channels := schemas.GetActiveChannels()
+	defer channels.Delete(channel.Id)
+	log.Println("channel created")
+
+	// read incoming candidates
+	var (
+		readIce                   sync.WaitGroup
+		readIceCtx, cancelReadIce = context.WithCancel(ctx)
+		readChan                  = make(chan webrtc.ICECandidateInit)
+		canListenForClose         = make(chan struct{}, 1)
+	)
+	defer func() {
+		cancelReadIce()
+		_ = ws.Close()
+		readIce.Wait()
+	}()
+	readIce.Go(func() {
+		defer close(canListenForClose)
+		defer cancelReadIce()
+		err := readCandidates(readIceCtx, ws, readChan)
+		if err != nil {
+			if err == io.EOF {
+				cancel()
+				return
+			}
+			log.Println("error during ice reading: ", err)
+		}
+		canListenForClose <- struct{}{} // unness?
 	})
 
-	select {
-	case <-ctx.Done():
-		ws.SetReadDeadline(time.Now()) // interrupt the read
-		return ctx.Err()
-	case err := <-done:
-		return err
+	// listen for the close frame from the client, since we know the only
+	// thing the client could possibly send after ICE gather is a close frame
+	var (
+		listen sync.WaitGroup
+		closed = make(chan struct{}, 1)
+	)
+	defer listen.Wait()
+	listen.Go(func() {
+		// wait for ice gather to complete
+		if _, ok := <-canListenForClose; !ok {
+			return
+		}
+		err := receiveWithContext(ctx, ws, &struct{}{})
+		if err == io.EOF {
+			log.Println("listenForClose EOF")
+			closed <- struct{}{}
+		} else if err != nil {
+			log.Println("listenForClose NON EOF ERR: ", err)
+		}
+	})
+
+	for {
+		select {
+		case <-ctx.Done():
+		case <-closed:
+			log.Println("Call req context done or conn closed")
+			cancel()
+			return
+		case answerSd := <-call.Answer:
+			if err := websocket.JSON.Send(ws, answerSd); err != nil {
+				log.Printf("error writing answer: %v", err)
+				return
+			}
+		case answerCandidate, ok := <-call.To.Candidates:
+			if err := websocket.JSON.Send(ws, answerCandidate); err != nil {
+				log.Printf("error writing candidate: %v", err)
+				return
+			}
+			// we've sent the caller the recipient's last candidate. nothing left to do
+			if !ok {
+				return
+			}
+		// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
+		// or maybe even then, caller candidates will be present for the recipient so will always finish first
+		case callerCandidate, ok := <-readChan:
+			if !ok { // caller gather completed
+				close(call.From.Candidates)
+				readChan = nil
+				continue
+			}
+			call.From.Candidates <- callerCandidate
+			fmt.Println("caller candidate sent")
+		}
 	}
 }

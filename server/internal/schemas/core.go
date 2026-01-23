@@ -23,6 +23,14 @@ type UserWithPassword struct {
 	Password string
 }
 
+// ChannelUser represents a user that is actively participating in a channel.
+type ChannelUser struct {
+	public.User
+
+	Id       uuid.UUID
+	joinedAt time.Time
+}
+
 // Channel is the database representation of public.Channel
 type Channel struct {
 	public.Channel

@@ -22,8 +22,8 @@ import (
 // Signaling, speaker init, connecting and microphone init are all run concurrently,
 // organized with waitgroups and synchronized with channels. The entire process can
 // be cancelled with the provided context, and the first error encountered will be returned.
-func AnswerCall(ctx context.Context, credentials *credentials, caller string) error {
-	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(credentials.stunServer, credentials.username, true)
+func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
+	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, creds.username, true)
 	if err != nil {
 		return fmt.Errorf("error initializing webrtc: %w", err)
 	}
@@ -63,7 +63,7 @@ func AnswerCall(ctx context.Context, credentials *credentials, caller string) er
 	answer.Go(func() {
 		defer cancelAnswer()
 
-		err = answerAndConnect(answerCtx, pc, credentials, caller, candidates)
+		err := answerAndConnect(answerCtx, pc, creds, caller, candidates)
 		if err != nil {
 			abort <- err
 			return
@@ -86,7 +86,7 @@ func AnswerCall(ctx context.Context, credentials *credentials, caller string) er
 			cancelAnswer()
 			break
 		}
-		if err = audio.StartCapture(captureCtx, pc, track); err != nil {
+		if err := audio.StartCapture(captureCtx, pc, track); err != nil {
 			abort <- fmt.Errorf("error with capture device: %w", err)
 			return
 		}

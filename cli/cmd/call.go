@@ -21,14 +21,6 @@ var callCmd = &cobra.Command{
 	`,
 	Args: cobra.ExactArgs(1),
 	PreRunE: func(_ *cobra.Command, args []string) error {
-		username, password := viper.GetString("user.name"), viper.GetString("user.password")
-		if len(username) == 0 {
-			return fmt.Errorf("username not found. ensure it is present in %s", ConfigFile)
-		}
-		if len(password) == 0 {
-			return fmt.Errorf("password not found. ensure it is present in %s", ConfigFile)
-		}
-
 		if len(args) == 0 {
 			return fmt.Errorf("recipient must be specified as an argument")
 		}

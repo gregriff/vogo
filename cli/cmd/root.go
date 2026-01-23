@@ -44,6 +44,14 @@ func init() {
 	cobra.OnInitialize(func() {
 		log.Printf("using config file: %s", ConfigFile)
 		configs.InitConfig(ConfigFile)
+
+		username, password := viper.GetString("user.name"), viper.GetString("user.password")
+		if len(username) == 0 {
+			log.Fatalf("username not found. ensure it is present in %s", ConfigFile)
+		}
+		if len(password) == 0 {
+			log.Fatalf("password not found. ensure it is present in %s", ConfigFile)
+		}
 	})
 
 	configDir := configs.GetConfigDir()

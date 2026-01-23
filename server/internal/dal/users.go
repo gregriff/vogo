@@ -4,9 +4,7 @@ package dal
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/google/uuid"
@@ -139,47 +137,6 @@ func GetFriends(db *sql.DB, userId string, pending bool) ([]public.Friend, error
 	return friends, rows.Err()
 }
 
-// GetChannels returns the channels a user with a given id is a member of.
-// The result contains the user names of the channel members as a property of each channel.
-func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
-	channels := make([]public.Channel, 0, 10)
-	query := `
-        SELECT
-            c.id, owner_user.username as owner_name, c.name, c.description,
-            c.capacity, ARRAY_AGG(u.username) as member_names
-        FROM channels c
-        JOIN users owner_user ON c.owner_id = owner_user.id
-        JOIN channel_members cm_user ON c.id = cm_user.channel_id
-        JOIN channel_members m ON c.id = m.channel_id
-        JOIN users u ON m.user_id = u.id
-        WHERE cm_user.user_id = $1
-        GROUP BY c.id, owner_user.username, c.name, c.description, c.capacity
-    `
-
-	rows, err := db.Query(query, userId)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	var tmpId uuid.UUID
-	for rows.Next() {
-		var ch public.Channel
-		err = rows.Scan(
-			&tmpId, &ch.Owner, &ch.Name, &ch.Description,
-			&ch.Capacity, &ch.MemberNames,
-		)
-		if err != nil {
-			return nil, err
-		}
-		channels = append(channels, ch)
-	}
-
-	return channels, rows.Err()
-}
-
 // AddFriend adds a friend with a given name.
 func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, error) {
 	friend := public.User{}
@@ -222,78 +179,4 @@ func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
 	}
 
 	return areFriends, nil
-}
-
-// CreateChannel creates a channel in the database. TODO: handle onconflict, tell user to use PUT to edit.
-func CreateChannel(db *sql.DB, ownerId uuid.UUID, data schemas.CreateChannelRequest) (*public.Channel, error) {
-	var channel public.Channel
-	var channelId uuid.UUID
-
-	tx, tErr := db.Begin()
-	if tErr != nil {
-		return nil, tErr
-	}
-	defer tx.Rollback()
-
-	query := `
-		INSERT INTO channels (id, owner_id, name, description, capacity)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT DO NOTHING RETURNING id, name, description, capacity
-	`
-	err := tx.QueryRow(query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
-		Scan(&channelId, &channel.Name, &channel.Description, &channel.Capacity)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("channel already exists")
-		}
-		return nil, err
-	}
-
-	query = `
-		INSERT INTO channel_members (channel_id, user_id, invited_by)
-		VALUES ($1, $2, $3)
-		ON CONFLICT DO NOTHING
-	`
-	_, err = tx.Exec(query, channelId, ownerId, ownerId)
-	if err != nil {
-		return nil, fmt.Errorf("error adding creator as a member of channel")
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	return &channel, nil
-}
-
-// InviteFriend adds a friend to an existing channel. Only the owner can invite.
-func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) (*public.User, error) {
-	friend := public.User{}
-
-	dbFriend, err := GetUser(db, friendName)
-	if err != nil {
-		return &friend, fmt.Errorf("friend not found: %w", err)
-	}
-
-	query := `
-   		WITH channel_check AS (
-          SELECT c.id
-          FROM channels c
-          WHERE c.owner_id = $2 AND c.name = $1
-        )
-        INSERT INTO channel_members (channel_id, user_id, invited_by)
-        SELECT id, $3, $2
-        FROM channel_check
-        RETURNING channel_id;
-    `
-
-	var channelId uuid.UUID
-	err = db.QueryRow(query, channelName, userId, dbFriend.Id).Scan(&channelId)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, errors.New("channel not found or inviter is not owner")
-		}
-		log.Printf("%v", fmt.Errorf("error during invite friend query: %w", err))
-		return nil, errors.New("error during invite friend query: user probably already in channel")
-	}
-	friend.Name = dbFriend.Name
-	return &friend, nil
 }

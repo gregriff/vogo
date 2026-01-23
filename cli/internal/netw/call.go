@@ -16,8 +16,8 @@ import (
 // Signaling, speaker init, connecting and microphone init are all run concurrently,
 // organized with waitgroups and synchronized with channels. The entire process can
 // be cancelled with the provided context, and the first error encountered will be returned.
-func CallFriend(ctx context.Context, credentials *credentials, recipient string) error {
-	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(credentials.stunServer, credentials.username, true)
+func CallFriend(ctx context.Context, creds *credentials, recipient string) error {
+	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, creds.username, true)
 	if err != nil {
 		return fmt.Errorf("error initializing webrtc: %v", err)
 	}
@@ -62,7 +62,7 @@ func CallFriend(ctx context.Context, credentials *credentials, recipient string)
 	call.Go(func() {
 		defer cancelCall()
 
-		err := sendCallAndConnect(callCtx, pc, credentials, recipient, candidates, abort)
+		err := sendCallAndConnect(callCtx, pc, creds, recipient, candidates, abort)
 		if err != nil {
 			abort <- err
 			return
@@ -85,7 +85,7 @@ func CallFriend(ctx context.Context, credentials *credentials, recipient string)
 			cancelCall()
 			break
 		}
-		if err = audio.StartCapture(captureCtx, pc, track); err != nil {
+		if err := audio.StartCapture(captureCtx, pc, track); err != nil {
 			abort <- fmt.Errorf("error with capture device: %w", err)
 			return
 		}
@@ -139,7 +139,7 @@ func sendCallAndConnect(
 
 	// wait to recv answer
 	var answer webrtc.SessionDescription
-	if err = receiveWithContext(ctx, ws, &answer); err != nil {
+	if err := receiveWithContext(ctx, ws, &answer); err != nil {
 		return fmt.Errorf("error reading answer from ws: %v", err)
 	}
 	if err = pc.SetRemoteDescription(answer); err != nil {

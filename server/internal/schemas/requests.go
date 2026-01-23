@@ -37,3 +37,9 @@ type CreateChannelRequest struct {
 	Description string
 	Capacity int
 }
+
+type JoinChannelRequest struct {
+	ChannelName,
+	OwnerName string
+	Sd webrtc.SessionDescription
+}
