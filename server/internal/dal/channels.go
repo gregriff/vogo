@@ -136,7 +136,6 @@ func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (s
             c.id, c.name, c.description, c.capacity, c.created_at
         FROM channels c
         JOIN channel_members m ON c.id = m.channel_id
-        JOIN users u ON m.user_id = u.id
         WHERE m.user_id = $1 AND c.owner_id = $2 AND c.name = $3
     `
 
