@@ -129,7 +129,7 @@ func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) 
 // GetChannelOfMember returns a channel with a given name, that is owned by ownerId and memberId
 // is a member of. It prevents a member from accessing a channel of another owner with the same name.
 // This is because there is a unique constraint on db::channels(owner_id, name)
-func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (schemas.Channel, error) {
+func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*schemas.Channel, error) {
 	var channel schemas.Channel
 	query := `
         SELECT
@@ -143,9 +143,9 @@ func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (s
 		Scan(&channel.Id, &channel.Name, &channel.Capacity, &channel.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return channel, fmt.Errorf("channel not found: %s", name)
+			return &channel, fmt.Errorf("channel not found: %s", name)
 		}
-		return channel, err
+		return &channel, err
 	}
-	return channel, nil
+	return &channel, nil
 }

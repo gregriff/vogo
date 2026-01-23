@@ -1,7 +1,8 @@
 # TODOs
 
 ### Next:
-- impl channel invite, channel accept, add poll to status
+- refactor chat channel to chat rooms
+- add poll to status
 - ensure onTrack for speaker mixes audio, pull out so that it can be added to speaker after speaker init?
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
 - add query/status functionality to get outgoing friend requests

@@ -389,11 +389,11 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
+	c.Owner = owner.Name
 
-	// TODO: impl CreateOrJoinChannel
-	channel := schemas.CreateOrJoinChannel(c, user, req.Sd)
+	chanId := schemas.CreateOrJoinChannel(c, user, &req.Sd)
 	channels := schemas.GetActiveChannels()
-	defer channels.Delete(channel.Id)
+	defer channels.Delete(chanId)
 	log.Println("channel created")
 
 	// read incoming candidates
