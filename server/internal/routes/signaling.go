@@ -436,10 +436,14 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 	// - if room already exists, obtain list of user object that we need to connect to,
 	//   and send candidates to them as soon as they're available
 	roomUser := schemas.NewRoomUser(user, &req.Sd)
-	room := schemas.CreateOrJoinRoom(c, roomUser)
-	// rooms := schemas.GetRooms()
+	room, err := schemas.CreateOrJoinRoom(c, roomUser)
+	if err != nil {
+		log.Println(fmt.Errorf("error creating or joining channel: %w", err))
+		_ = ws.WriteClose(http.StatusInternalServerError)
+		return
+	}
 	log.Println("room created")
-	defer room.LeaveRoom(roomUser)
+	defer room.Leave(roomUser)
 
 	var (
 		eventListener             sync.WaitGroup

@@ -67,14 +67,14 @@ func newRoom(c *Channel, user *RoomUser) *room {
 	}
 }
 
-// addParticipant adds a member to the active channel. This should only be run inside
+// addUser adds a member to the room. This should only be run inside
 // of the room's lock
-func (r *room) addParticipant(user *RoomUser) error {
+func (r *room) addUser(user *RoomUser) error {
 	if userCount := len(r.users); userCount >= r.Capacity {
 		if userCount > r.Capacity {
-			fmt.Printf("ERROR!! channel %v is above capacity: %d", r, userCount)
+			fmt.Printf("ERROR!! room %v is above capacity: %d", r, userCount)
 		}
-		return fmt.Errorf("channel is at capacity")
+		return fmt.Errorf("room is at capacity")
 	}
 	user.joinedAt = time.Now()
 	r.users[user.Id] = user
@@ -82,7 +82,7 @@ func (r *room) addParticipant(user *RoomUser) error {
 	return nil
 }
 
-func (r *room) LeaveRoom(user *RoomUser) {
+func (r *room) Leave(user *RoomUser) {
 	r.mu.Lock()
 	delete(r.users, user.Id)
 	r.broadcast(&roomEvent{Type: "EXIT", User: user})
@@ -90,8 +90,12 @@ func (r *room) LeaveRoom(user *RoomUser) {
 }
 
 // broadcast sends a roomEvent to all users in the room. It must only be used inside the room's lock.
+// broadcast will not send the event to the user the event is about.
 func (r *room) broadcast(event *roomEvent) {
 	for _, user := range r.users {
+		if user.Id == event.User.Id {
+			continue
+		}
 		select {
 		case user.Events <- *event:
 		default:
@@ -100,21 +104,23 @@ func (r *room) broadcast(event *roomEvent) {
 	}
 }
 
-func CreateOrJoinRoom(c *Channel, user *RoomUser) *room {
+func CreateOrJoinRoom(c *Channel, user *RoomUser) (*room, error) {
 	rooms := getRooms()
 	rooms.mu.Lock()
-	room, exists := rooms.active[c.Id]
+	r, exists := rooms.active[c.Id]
 	if !exists {
-		room = newRoom(c, user)
-		rooms.active[c.Id] = room
+		r = newRoom(c, user)
+		rooms.active[c.Id] = r
 		rooms.mu.Unlock()
-		return room
+		return r, nil
 	}
-	room.mu.Lock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	rooms.mu.Unlock()
-	room.addParticipant(user)
-	room.mu.Unlock()
-	return room
+	if err := r.addUser(user); err != nil {
+		return &room{}, fmt.Errorf("error adding participant: %w", err)
+	}
+	return r, nil
 }
 
 // roomMap stores signaling information for active Rooms. An active Room is
