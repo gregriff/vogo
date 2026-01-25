@@ -5,14 +5,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/server/internal/schemas/public"
-	"github.com/pion/webrtc/v4"
 )
 
 // User is the database representation of public.User, without the password column.
 type User struct {
-	public.User
-
 	Id        uuid.UUID
+	Name      string
 	CreatedAt time.Time
 }
 
@@ -22,15 +20,6 @@ type UserWithPassword struct {
 
 	// hashed password
 	Password string
-}
-
-// ChannelUser represents a user that is actively participating in a channel.
-type ChannelUser struct {
-	public.User
-	Sd *webrtc.SessionDescription
-
-	Id       uuid.UUID
-	joinedAt time.Time
 }
 
 // Channel is the database representation of public.Channel

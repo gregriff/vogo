@@ -17,8 +17,6 @@ import (
 )
 
 // TODO:
-// POST /channel: allow a client to open a channel. this is persisted to sqlite, including who is invited to join it.
-// 				  channels are given a unique name, where the CLI can change properties (who's invited) using the PUT
 // PUT /channel: modify channel properties
 // DELETE /channel
 
@@ -77,6 +75,8 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	// create the call in memory, delete once answered
 	call := schemas.CreateCall(caller, recipient, offer.Sd)
 	calls := schemas.GetPendingCalls()
+	// add this call to pending map, using caller's ID since a client can only make one call at a time
+	calls.Add(caller.Id, call)
 	defer calls.Delete(caller.Id)
 	log.Println("call created")
 
@@ -339,16 +339,9 @@ func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICEC
 // to it. This is a websocket endpoint that will stay open until the user leaves the channel call
 // or is disconnected. When another member joins the channel, this endpoint will send their Sd to
 // the user, to facilitate the webrtc signalling for all members connected to the channel.
-// Note:
-//   - this func will need to stay open until the client exits the channel call.
-//   - after creating the channel in a lock, this goroutine will need to create a
-//     channel goroutine that uses sync.Cond/Wait to wait until another JoinChannel() from
-//     a new participant wakes it. that goroutine will then broadcast to all idle JoinChannel
-//     goroutines of the current participants, which will then communicate their Sd's to the
-//     joining participant. when a participant leaves or disconnects, a similar thing will happen.
-//     All of this uses the channel struct's one mutex.
 func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
-	ctx := ws.Request().Context()
+	ctx, cancel := context.WithCancel(ws.Request().Context())
+	defer cancel()
 
 	username := middleware.GetUsernameWS(ws)
 	user, err := dal.GetUser(h.db, username)
@@ -391,11 +384,6 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 	}
 	c.Owner = owner.Name
 
-	chanId := schemas.CreateOrJoinChannel(c, user, &req.Sd)
-	channels := schemas.GetActiveChannels()
-	defer channels.Delete(chanId)
-	log.Println("channel created")
-
 	// read incoming candidates
 	var (
 		readIce                   sync.WaitGroup
@@ -425,11 +413,11 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 	// listen for the close frame from the client, since we know the only
 	// thing the client could possibly send after ICE gather is a close frame
 	var (
-		listen sync.WaitGroup
-		closed = make(chan struct{}, 1)
+		gatherDoneWg sync.WaitGroup
+		closed       = make(chan struct{}, 1)
 	)
-	defer listen.Wait()
-	listen.Go(func() {
+	defer gatherDoneWg.Wait()
+	gatherDoneWg.Go(func() {
 		// wait for ice gather to complete
 		if _, ok := <-canListenForClose; !ok {
 			return
@@ -443,6 +431,55 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 		}
 	})
 
+	// create or join room
+	// TODO:
+	// - if room already exists, obtain list of user object that we need to connect to,
+	//   and send candidates to them as soon as they're available
+	roomUser := schemas.NewRoomUser(user, &req.Sd)
+	room := schemas.CreateOrJoinRoom(c, roomUser)
+	// rooms := schemas.GetRooms()
+	log.Println("room created")
+	defer room.LeaveRoom(roomUser)
+
+	var (
+		eventListener             sync.WaitGroup
+		listenerCtx, cancelListen = context.WithCancel(ctx)
+	)
+	defer func() {
+		cancelListen()
+		_ = ws.Close()
+		eventListener.Wait()
+	}()
+	// NOTE: this should probably be top-level, not in a wg/its own goroutine, as this is the
+	// logic that needs to run for the duration of the session/ws.
+	// listen for room events. when another user joins, this logic must begin signalling with that user,
+	// using this user's candidates that have been gathered.
+	eventListener.Go(func() {
+		for {
+			select {
+			case <-listenerCtx.Done():
+				return
+			case event := <-roomUser.Events:
+				fmt.Printf("user %s recieved event [type=%s, user=%s]", roomUser.Name, event.Type, event.User.Name)
+				switch event.Type {
+				case schemas.JoinEvent:
+					// TODO: trigger call flow, ice exchange etc.
+					// - subscribe to new user's ICE candidates, and also their answer
+					// recipient := &schemas.User{Id: event.User.Id, Name: event.User.Name}
+					// call := schemas.CreateCall(user, recipient, *roomUser.Sd)
+				case schemas.ExitEvent:
+					_ = 0
+				default:
+					log.Printf("ERROR: unhandled event: %s", event.Type)
+				}
+			}
+		}
+	})
+
+	// i think most of this should be pulled out into a function, as the answerCandidates will
+	// be gathered for each existing and future member of the room.
+	// The caller candidate portion will need to be pulled out into its own goroutine?
+	// as it now needs to be done seperately, as soon as the channel is joined.
 	for {
 		select {
 		case <-ctx.Done():
@@ -472,6 +509,7 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 				readChan = nil
 				continue
 			}
+			// TODO: for := subscribers { send candidate }
 			call.From.Candidates <- callerCandidate
 			fmt.Println("caller candidate sent")
 		}

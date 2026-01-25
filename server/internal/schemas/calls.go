@@ -17,11 +17,11 @@ import (
 // Takes a caller's UUID as a key
 type callMap struct {
 	mu    sync.Mutex
-	calls map[uuid.UUID]call
+	calls map[uuid.UUID]*call
 }
 
-// update inserts or updates a call for a given id
-func (m *callMap) update(id uuid.UUID, call call) {
+// Add inserts or updates a call for a given id
+func (m *callMap) Add(id uuid.UUID, call *call) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls[id] = call
@@ -29,13 +29,13 @@ func (m *callMap) update(id uuid.UUID, call call) {
 
 // Get returns a copy of a call Call for a given id, returning an error if not found.
 // Updating a call should be done with CallMap.Update
-func (m *callMap) Get(id uuid.UUID) (call, error) {
+func (m *callMap) Get(id uuid.UUID) (*call, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if c, exists := m.calls[id]; exists {
 		return c, nil
 	} else {
-		return call{}, errors.New("call not found")
+		return &call{}, errors.New("call not found")
 	}
 }
 
@@ -54,7 +54,7 @@ var (
 // GetPendingCalls returns a singleton storing pending calls. Once migrated to websockets, this will be obsolete?
 func GetPendingCalls() *callMap {
 	createCallStore.Do(func() {
-		pendingCalls = callMap{calls: make(map[uuid.UUID]call, 10)}
+		pendingCalls = callMap{calls: make(map[uuid.UUID]*call, 10)}
 	})
 	return &pendingCalls
 }
@@ -113,8 +113,5 @@ func CreateCall(caller, recipient *User, callerSd webrtc.SessionDescription) *ca
 		CreatedAt: time.Now(),
 		Answer:    answerChan,
 	}
-	// add this call to pending map, using caller's ID since a client can only make one call at a time
-	calls := GetPendingCalls()
-	calls.update(caller.Id, newCall)
 	return &newCall
 }
