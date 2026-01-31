@@ -458,6 +458,9 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 	// logic that needs to run for the duration of the session/ws.
 	// listen for room events. when another user joins, this logic must begin signalling with that user,
 	// using this user's candidates that have been gathered.
+	// TODO: when a new user joins, their WS will send their ICE candidates to the room struct.
+	// the room struct will then broadcast the candidates as they come in to all members, which is
+	// listened for in here. (sync.Cond checking len of candidate chan >= 1? would then read msg in crit section then send it out)
 	eventListener.Go(func() {
 		for {
 			select {
@@ -469,8 +472,12 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 				case schemas.JoinEvent:
 					// TODO: trigger call flow, ice exchange etc.
 					// - subscribe to new user's ICE candidates, and also their answer
+					// - ^ this prob needs to happen in a new goroutine/WG, so that this select stmt
+					//   can continue to work, if another user joins, so two connecting user can be signalled
+					//   at the same time
 					// recipient := &schemas.User{Id: event.User.Id, Name: event.User.Name}
 					// call := schemas.CreateCall(user, recipient, *roomUser.Sd)
+
 				case schemas.ExitEvent:
 					_ = 0
 				default:
@@ -507,6 +514,7 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 			}
 		// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
 		// or maybe even then, caller candidates will be present for the recipient so will always finish first
+		// NEW NOTE: this should complete BEFORE any new users join, unless maybe two join at the same time to start the room
 		case callerCandidate, ok := <-readChan:
 			if !ok { // caller gather completed
 				close(call.From.Candidates)
