@@ -426,6 +426,7 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 		if err == io.EOF {
 			log.Println("listenForClose EOF")
 			closed <- struct{}{}
+			// TODO: ensure we should be updating the Sd
 		} else if err != nil {
 			log.Println("listenForClose NON EOF ERR: ", err)
 		}
@@ -445,85 +446,101 @@ func (h *RouteHandler) JoinChannel(ws *websocket.Conn) {
 	log.Println("room created")
 	defer room.Leave(roomUser)
 
+	users, checkedAt := room.GetUsers(roomUser.Id)
+	newConnections := schemas.BulkConnectionMessage{
+		Users: make([]schemas.NewUserMessage, 0, 6),
+	}
+	for _, user := range users {
+		// should there be a flag on each user that says whether their ICE gathering has completed?
+		newConnections.Users = append(newConnections.Users, schemas.NewUserMessage{Username: user.Name, Sd: *user.Sd})
+	}
+	if err := websocket.JSON.Send(ws, newConnections); err != nil {
+		log.Printf("error writing NewConnections msg: %v", err)
+		return
+	}
+	// note: be careful that you dont send a newConnectionMsg for a user that you then get a NewUser event for and then resend...
+
 	var (
-		eventListener             sync.WaitGroup
-		listenerCtx, cancelListen = context.WithCancel(ctx)
+		broadcastGather               sync.WaitGroup
+		broadcastCtx, cancelBroadcast = context.WithCancel(ctx)
 	)
 	defer func() {
-		cancelListen()
-		_ = ws.Close()
-		eventListener.Wait()
+		cancelBroadcast()
+		broadcastGather.Wait()
 	}()
-	// NOTE: this should probably be top-level, not in a wg/its own goroutine, as this is the
-	// logic that needs to run for the duration of the session/ws.
+	broadcastGather.Go(func() {
+		for {
+			select {
+			case <-broadcastCtx.Done():
+			case <-closed:
+				log.Println("Room create/join context done or conn closed")
+				cancel()
+				return
+			// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
+			// or maybe even then, caller candidates will be present for the recipient so will always finish first
+			// NEW NOTE: this should complete BEFORE any new users join, unless maybe two join at the same time to start the room
+			case candidate, ok := <-readChan:
+				if !ok { // caller gather completed
+					// close(call.From.Candidates)
+					readChan = nil
+					continue
+				}
+				// TODO:
+				// - for := subscribers { send candidate } <- use a func to broadcast ICEGatherEvent
+				// - UPDATE roomUser.Sd here (with a room method, in a lock)
+				fmt.Println("broadcast candidate done")
+			}
+		}
+	})
+
+	// this is logic that needs to run for the duration of the session/ws.
 	// listen for room events. when another user joins, this logic must begin signalling with that user,
 	// using this user's candidates that have been gathered.
 	// TODO: when a new user joins, their WS will send their ICE candidates to the room struct.
 	// the room struct will then broadcast the candidates as they come in to all members, which is
 	// listened for in here. (sync.Cond checking len of candidate chan >= 1? would then read msg in crit section then send it out)
-	eventListener.Go(func() {
-		for {
-			select {
-			case <-listenerCtx.Done():
-				return
-			case event := <-roomUser.Events:
-				fmt.Printf("user %s recieved event [type=%s, user=%s]", roomUser.Name, event.Type, event.User.Name)
-				switch event.Type {
-				case schemas.JoinEvent:
-					// TODO: trigger call flow, ice exchange etc.
-					// - subscribe to new user's ICE candidates, and also their answer
-					// - ^ this prob needs to happen in a new goroutine/WG, so that this select stmt
-					//   can continue to work, if another user joins, so two connecting user can be signalled
-					//   at the same time
-					// recipient := &schemas.User{Id: event.User.Id, Name: event.User.Name}
-					// call := schemas.CreateCall(user, recipient, *roomUser.Sd)
-
-				case schemas.ExitEvent:
-					_ = 0
-				default:
-					log.Printf("ERROR: unhandled event: %s", event.Type)
-				}
-			}
-		}
-	})
-
-	// i think most of this should be pulled out into a function, as the answerCandidates will
-	// be gathered for each existing and future member of the room.
-	// The caller candidate portion will need to be pulled out into its own goroutine?
-	// as it now needs to be done seperately, as soon as the channel is joined.
+	defer ws.Close()
 	for {
 		select {
 		case <-ctx.Done():
-		case <-closed:
-			log.Println("Call req context done or conn closed")
-			cancel()
 			return
-		case answerSd := <-call.Answer:
-			if err := websocket.JSON.Send(ws, answerSd); err != nil {
-				log.Printf("error writing answer: %v", err)
-				return
-			}
-		case answerCandidate, ok := <-call.To.Candidates:
-			if err := websocket.JSON.Send(ws, answerCandidate); err != nil {
-				log.Printf("error writing candidate: %v", err)
-				return
-			}
-			// we've sent the caller the recipient's last candidate. nothing left to do
-			if !ok {
-				return
-			}
-		// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
-		// or maybe even then, caller candidates will be present for the recipient so will always finish first
-		// NEW NOTE: this should complete BEFORE any new users join, unless maybe two join at the same time to start the room
-		case callerCandidate, ok := <-readChan:
-			if !ok { // caller gather completed
-				close(call.From.Candidates)
-				readChan = nil
+		case event := <-roomUser.Events:
+			fmt.Printf("user %s recieved event [type=%s, user=%s]", roomUser.Name, event.Type, event.User.Name)
+			if event.CreatedAt.Before(checkedAt) {
+				fmt.Printf("EVENT %s happened before we got list of current users, disregarding...")
 				continue
 			}
-			// TODO: for := subscribers { send candidate }
-			call.From.Candidates <- callerCandidate
-			fmt.Println("caller candidate sent")
+			switch event.Type {
+			case schemas.JoinEvent:
+				// TODO: trigger call flow, ice exchange etc.
+				// - subscribe to new user's ICE candidates, and also their answer
+				// - ^ this prob needs to happen in a new goroutine/WG, so that this select stmt
+				//   can continue to work, if another user joins, so two connecting user can be signalled
+				//   at the same time
+				msg := schemas.NewUserMessage{
+					Username: event.User.Name,
+					Sd:       *event.User.Sd,
+				}
+				if err := websocket.JSON.Send(ws, msg); err != nil {
+					log.Printf("error writing NewUserMessage: %v", err)
+					return
+				}
+			case schemas.ICECandidateEvent:
+				// a newly joined user has just posted one of their ICE candidates
+				msg := schemas.IceGatherMessage{
+					Username:  event.User.Name,
+					Candidate: event.Candidate,
+				}
+				// todo: retry?
+				if err := websocket.JSON.Send(ws, msg); err != nil {
+					log.Printf("error writing new user IceGatherMessage: %v", err)
+					return
+				}
+			case schemas.ExitEvent:
+				_ = 0
+			default:
+				log.Printf("ERROR: unhandled event: %s", event.Type)
+			}
 		}
 	}
 }

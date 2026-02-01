@@ -11,17 +11,37 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+type NewUserMessage struct {
+	Username string
+	Sd       webrtc.SessionDescription
+}
+
+// BulkConnectionMessage is sent to the client when they need to start connecting with multiple
+// users in a room. This happens when a client joins a room and there are already users in it
+type BulkConnectionMessage struct {
+	Users []NewUserMessage
+}
+
+type IceGatherMessage struct {
+	Username  string
+	Candidate webrtc.ICECandidateInit
+}
+
 type roomEventType string
 
 const (
-	JoinEvent roomEventType = "JOIN"
-	ExitEvent roomEventType = "EXIT"
+	JoinEvent         roomEventType = "JOIN"
+	ExitEvent         roomEventType = "EXIT"
+	ICECandidateEvent roomEventType = "ICE"
 )
 const roomEventChannelSize = 10
 
 type roomEvent struct {
 	Type roomEventType
 	User *RoomUser
+
+	Candidate webrtc.ICECandidateInit
+	CreatedAt time.Time
 }
 
 // RoomUser represents a user that is actively participating in a Room.
@@ -67,6 +87,23 @@ func newRoom(c *Channel, user *RoomUser) *room {
 	}
 }
 
+// GetUsers returns pointers to all users currently in the room other than omitID,
+// and a timestamp of when they were obtained
+func (r *room) GetUsers(omitId uuid.UUID) ([]*RoomUser, time.Time) {
+	users := make([]*RoomUser, 0, 6)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	t := time.Now()
+	for _, user := range r.users {
+		if user.Id == omitId {
+			continue
+		}
+		users = append(users, user)
+	}
+	return users, t
+}
+
 // addUser adds a member to the room. This should only be run inside
 // of the room's lock
 func (r *room) addUser(user *RoomUser) error {
@@ -78,14 +115,14 @@ func (r *room) addUser(user *RoomUser) error {
 	}
 	user.joinedAt = time.Now()
 	r.users[user.Id] = user
-	r.broadcast(&roomEvent{Type: "JOIN", User: user})
+	r.broadcast(&roomEvent{Type: "JOIN", User: user, CreatedAt: time.Now()})
 	return nil
 }
 
 func (r *room) Leave(user *RoomUser) {
 	r.mu.Lock()
 	delete(r.users, user.Id)
-	r.broadcast(&roomEvent{Type: "EXIT", User: user})
+	r.broadcast(&roomEvent{Type: "EXIT", User: user, CreatedAt: time.Now()})
 	r.mu.Unlock()
 }
 
