@@ -1,6 +1,7 @@
 package schemas
 
 import (
+	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -29,6 +30,7 @@ type CallRequest struct {
 type AnswerNotificationMessage = CallRequest
 
 type CandidateMessage struct {
+	UserId    uuid.UUID
 	Username  string
 	Candidate webrtc.ICECandidateInit
 }

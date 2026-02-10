@@ -1,7 +1,11 @@
 # TODOs
 
 ### Next:
-- TAG READCANDIDATE RECVS!!!
+- send offer event
+- pull start message listening logic out of func and into top level select. ensure no recvs happen in goroutines. 
+- TAG READCANDIDATE RECVS!!! (rewrite using envelope and handlers)
+- ice sending on client side needs to send a sentinel for DONE status, since room ws needs to stay open and can't 
+  recv EOFs at any time
 - parallelize client sending offers when joining a room: this requires ws multiplexer on server-side
 - add poll to status
 - add a 'config' command that invokes default text editor (how do i do this on windows?)

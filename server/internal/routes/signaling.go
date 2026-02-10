@@ -442,64 +442,65 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				return
 			}
 
+			// TODO: ACTUALLY SEND OFFER EVENT SO ANSWERER KNOWS
 			conn := state.CreateConnection(user, recipient, offer)
 			roomUser.PendingConnections.Add(recipient.Id, conn)
 			defer roomUser.PendingConnections.Delete(recipient.Id)
 			log.Printf("conn created, signalling beginning with %s", recipient.Name)
 
 			// read incoming candidates
-			var (
-				readIce                   sync.WaitGroup
-				readIceCtx, cancelReadIce = context.WithCancel(ctx)
-				readChan                  = make(chan webrtc.ICECandidateInit)
-				canListenForClose         = make(chan struct{}, 1)
-			)
-			defer func() {
-				cancelReadIce()
-				_ = ws.Close()
-				readIce.Wait()
-			}()
-			readIce.Go(func() {
-				defer close(canListenForClose)
-				defer cancelReadIce()
-				err := readCandidates(readIceCtx, ws, readChan)
-				if err != nil {
-					if err == io.EOF {
-						log.Printf("EOF encountered when reading ICE candidates for conn from %s to %s", username, recipient.Name)
-						// cancel()
-						return
-					}
-					log.Println("error during ice reading: ", err)
-				}
-				canListenForClose <- struct{}{}
-			})
+			// var (
+			// 	readIce                   sync.WaitGroup
+			// 	readIceCtx, cancelReadIce = context.WithCancel(ctx)
+			// 	readChan                  = make(chan webrtc.ICECandidateInit)
+			// 	canListenForClose         = make(chan struct{}, 1)
+			// )
+			// defer func() {
+			// 	cancelReadIce()
+			// 	_ = ws.Close()
+			// 	readIce.Wait()
+			// }()
+			// readIce.Go(func() {
+			// 	defer close(canListenForClose)
+			// 	defer cancelReadIce()
+			// 	err := readCandidates(readIceCtx, ws, readChan)
+			// 	if err != nil {
+			// 		if err == io.EOF {
+			// 			log.Printf("EOF encountered when reading ICE candidates for conn from %s to %s", username, recipient.Name)
+			// 			// cancel()
+			// 			return
+			// 		}
+			// 		log.Println("error during ice reading: ", err)
+			// 	}
+			// 	canListenForClose <- struct{}{}
+			// })
 
 			// listen for the close frame from the client, since we know the only
 			// thing the client could possibly send after ICE gather is a close frame
-			var (
-				listen sync.WaitGroup
-				closed = make(chan struct{}, 1)
-			)
-			defer listen.Wait()
-			listen.Go(func() {
-				// wait for ice gather to complete
-				if _, ok := <-canListenForClose; !ok {
-					return
-				}
-				err := receiveWithContext(ctx, ws, &struct{}{})
-				if err == io.EOF {
-					log.Println("listenForClose EOF")
-					closed <- struct{}{}
-				} else if err != nil {
-					log.Println("listenForClose NON EOF ERR: ", err)
-				}
-			})
+			// var (
+			// 	listen sync.WaitGroup
+			// 	closed = make(chan struct{}, 1)
+			// )
+			// defer listen.Wait()
+			// listen.Go(func() {
+			// 	// wait for ice gather to complete
+			// 	if _, ok := <-canListenForClose; !ok {
+			// 		return
+			// 	}
+			// 	err := receiveWithContext(ctx, ws, &struct{}{})
+			// 	if err == io.EOF {
+			// 		log.Println("listenForClose EOF")
+			// 		closed <- struct{}{}
+			// 	} else if err != nil {
+			// 		log.Println("listenForClose NON EOF ERR: ", err)
+			// 	}
+			// })
 
 			for {
 				select {
 				case <-ctx.Done():
-				case <-closed:
-					log.Printf("ctx done or conn from %s to %s closed", username, recipient.Name)
+					// case <-closed:
+					// log.Printf("ctx done or conn from %s to %s closed", username, recipient.Name)
 					// cancel()
 					return
 				case answerSd := <-conn.Answer:
@@ -513,6 +514,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					}
 				case answerCandidate, ok := <-conn.To.Candidates:
 					msg := schemas.CandidateMessage{
+						UserId:    recipient.Id,
 						Username:  recipient.Name,
 						Candidate: answerCandidate,
 					}
@@ -524,16 +526,16 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					if !ok {
 						return
 					}
-				// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
-				// or maybe even then, caller candidates will be present for the recipient so will always finish first
-				case callerCandidate, ok := <-readChan:
-					if !ok { // caller gather completed
-						close(conn.From.Candidates)
-						readChan = nil
-						continue
-					}
-					conn.From.Candidates <- callerCandidate
-					fmt.Println("caller candidate sent")
+					// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
+					// or maybe even then, caller candidates will be present for the recipient so will always finish first
+					// case callerCandidate, ok := <-readChan:
+					// if !ok { // caller gather completed
+					// close(conn.From.Candidates)
+					// readChan = nil
+					// continue
+					// }
+					// conn.From.Candidates <- callerCandidate
+					// fmt.Println("caller candidate sent")
 				}
 			}
 		})
@@ -674,6 +676,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 								conn.From.Candidates = nil
 							}
 							msg := schemas.CandidateMessage{
+								UserId:    event.User.Id,
 								Username:  event.User.Name,
 								Candidate: candidate,
 							}
