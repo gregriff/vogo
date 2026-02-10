@@ -88,7 +88,7 @@ func createRoutes(mux *http.ServeMux, h *routes.RouteHandler) {
 	}
 	joinHandler := websocket.Server{
 		Handshake: websocketHandshake,
-		Handler:   h.JoinChannel,
+		Handler:   h.JoinRoom,
 	}
 	mux.Handle("GET /call", callHandler)
 	mux.Handle("GET /answer/{name}", answerHandler)

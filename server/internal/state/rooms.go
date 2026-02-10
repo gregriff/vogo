@@ -1,4 +1,4 @@
-package schemas
+package state
 
 import (
 	"errors"
@@ -8,23 +8,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pion/webrtc/v4"
+	"github.com/gregriff/vogo/server/internal/schemas"
 )
 
-type NewUserMessage struct {
-	Username string
-	Sd       webrtc.SessionDescription
-}
+const MaxRoomUsers = 6
 
 // BulkConnectionMessage is sent to the client when they need to start connecting with multiple
 // users in a room. This happens when a client joins a room and there are already users in it
 type BulkConnectionMessage struct {
-	Users []NewUserMessage
-}
-
-type IceGatherMessage struct {
-	Username  string
-	Candidate webrtc.ICECandidateInit
+	Usernames []string
 }
 
 type roomEventType string
@@ -32,6 +24,7 @@ type roomEventType string
 const (
 	JoinEvent         roomEventType = "JOIN"
 	ExitEvent         roomEventType = "EXIT"
+	OfferEvent        roomEventType = "OFFER"
 	ICECandidateEvent roomEventType = "ICE"
 )
 const roomEventChannelSize = 10
@@ -40,7 +33,6 @@ type roomEvent struct {
 	Type roomEventType
 	User *RoomUser
 
-	Candidate webrtc.ICECandidateInit
 	CreatedAt time.Time
 }
 
@@ -48,28 +40,32 @@ type roomEvent struct {
 type RoomUser struct {
 	Id       uuid.UUID
 	Name     string
-	Sd       *webrtc.SessionDescription
 	joinedAt time.Time
 
 	// Events recieves room events such as when a participant joins or leaves. It is used
 	// to perform webrtc functionality.
 	Events chan roomEvent
+
+	// PendingConnections maintains signalling state between other users. It is only used when the
+	// user first joins the channel and is connecting to the other users. It maps the recipient's uuid
+	// to their connection struct.
+	PendingConnections *connMap
 }
 
 // NewRoomUser creates a user struct for sending and recieving data to and from the room and its users.
-func NewRoomUser(u *User, sd *webrtc.SessionDescription) *RoomUser {
+func NewRoomUser(u *schemas.User) *RoomUser {
 	return &RoomUser{
-		Id:     u.Id,
-		Name:   u.Name,
-		Sd:     sd,
-		Events: make(chan roomEvent, roomEventChannelSize),
+		Id:                 u.Id,
+		Name:               u.Name,
+		Events:             make(chan roomEvent, roomEventChannelSize),
+		PendingConnections: &connMap{conns: make(map[uuid.UUID]*connection, MaxRoomUsers-1)},
 	}
 }
 
 // room is a representation of a database Channel that is actively being used by one
 // or more of its members for voice chat.
 type room struct {
-	Channel
+	schemas.Channel
 
 	mu    sync.Mutex
 	users map[uuid.UUID]*RoomUser
@@ -77,8 +73,8 @@ type room struct {
 
 // newRoom instantiates a new Room with the user that has just joined it. This
 // should only be run inside of the lock of roomMap
-func newRoom(c *Channel, user *RoomUser) *room {
-	users := make(map[uuid.UUID]*RoomUser, 6)
+func newRoom(c *schemas.Channel, user *RoomUser) *room {
+	users := make(map[uuid.UUID]*RoomUser, MaxRoomUsers)
 	user.joinedAt = time.Now()
 	users[user.Id] = user
 	return &room{
@@ -87,10 +83,10 @@ func newRoom(c *Channel, user *RoomUser) *room {
 	}
 }
 
-// GetUsers returns pointers to all users currently in the room other than omitID,
+// Users returns pointers to all users currently in the room other than omitID,
 // and a timestamp of when they were obtained
-func (r *room) GetUsers(omitId uuid.UUID) ([]*RoomUser, time.Time) {
-	users := make([]*RoomUser, 0, 6)
+func (r *room) Users(omitId uuid.UUID) ([]*RoomUser, time.Time) {
+	users := make([]*RoomUser, 0, MaxRoomUsers)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -141,7 +137,7 @@ func (r *room) broadcast(event *roomEvent) {
 	}
 }
 
-func CreateOrJoinRoom(c *Channel, user *RoomUser) (*room, error) {
+func CreateOrJoinRoom(c *schemas.Channel, user *RoomUser) (*room, error) {
 	rooms := getRooms()
 	rooms.mu.Lock()
 	r, exists := rooms.active[c.Id]

@@ -1,3 +1,4 @@
+// package schemas contains structs representing database records and http request data.
 package schemas
 
 import (

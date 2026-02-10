@@ -6,6 +6,8 @@ import (
 )
 
 // This file contains structs that store PCM data.
+
+// Note: this would have to be doubled if you want to allow users to send text also.
 const maxStreams = 5 // max remote tracks (max users - 1)
 
 // CallStream is a shared buffer of PCM data that is written to from the network

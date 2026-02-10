@@ -1,6 +1,6 @@
 module github.com/gregriff/vogo/server
 
-go 1.25.1
+go 1.25.6
 
 require (
 	github.com/adrg/xdg v0.5.3

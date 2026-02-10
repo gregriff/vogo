@@ -1,9 +1,9 @@
 # TODOs
 
 ### Next:
-- refactor chat channel to chat rooms
+- TAG READCANDIDATE RECVS!!!
+- parallelize client sending offers when joining a room: this requires ws multiplexer on server-side
 - add poll to status
-- ensure onTrack for speaker mixes audio, pull out so that it can be added to speaker after speaker init?
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
 - add query/status functionality to get outgoing friend requests
 - remove/fix xdg config in client to match server
