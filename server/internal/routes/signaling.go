@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -443,65 +444,15 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			}
 
 			// TODO: ACTUALLY SEND OFFER EVENT SO ANSWERER KNOWS
+			log.Println("NEED TO ACTUALLY SEND OFFER EVENT")
 			conn := state.CreateConnection(user, recipient, offer)
 			roomUser.PendingConnections.Add(recipient.Id, conn)
 			defer roomUser.PendingConnections.Delete(recipient.Id)
 			log.Printf("conn created, signalling beginning with %s", recipient.Name)
 
-			// read incoming candidates
-			// var (
-			// 	readIce                   sync.WaitGroup
-			// 	readIceCtx, cancelReadIce = context.WithCancel(ctx)
-			// 	readChan                  = make(chan webrtc.ICECandidateInit)
-			// 	canListenForClose         = make(chan struct{}, 1)
-			// )
-			// defer func() {
-			// 	cancelReadIce()
-			// 	_ = ws.Close()
-			// 	readIce.Wait()
-			// }()
-			// readIce.Go(func() {
-			// 	defer close(canListenForClose)
-			// 	defer cancelReadIce()
-			// 	err := readCandidates(readIceCtx, ws, readChan)
-			// 	if err != nil {
-			// 		if err == io.EOF {
-			// 			log.Printf("EOF encountered when reading ICE candidates for conn from %s to %s", username, recipient.Name)
-			// 			// cancel()
-			// 			return
-			// 		}
-			// 		log.Println("error during ice reading: ", err)
-			// 	}
-			// 	canListenForClose <- struct{}{}
-			// })
-
-			// listen for the close frame from the client, since we know the only
-			// thing the client could possibly send after ICE gather is a close frame
-			// var (
-			// 	listen sync.WaitGroup
-			// 	closed = make(chan struct{}, 1)
-			// )
-			// defer listen.Wait()
-			// listen.Go(func() {
-			// 	// wait for ice gather to complete
-			// 	if _, ok := <-canListenForClose; !ok {
-			// 		return
-			// 	}
-			// 	err := receiveWithContext(ctx, ws, &struct{}{})
-			// 	if err == io.EOF {
-			// 		log.Println("listenForClose EOF")
-			// 		closed <- struct{}{}
-			// 	} else if err != nil {
-			// 		log.Println("listenForClose NON EOF ERR: ", err)
-			// 	}
-			// })
-
 			for {
 				select {
 				case <-ctx.Done():
-					// case <-closed:
-					// log.Printf("ctx done or conn from %s to %s closed", username, recipient.Name)
-					// cancel()
 					return
 				case answerSd := <-conn.Answer:
 					msg := schemas.AnswerNotificationMessage{
@@ -524,48 +475,135 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					}
 					// we've sent the caller the recipient's last candidate. nothing left to do
 					if !ok {
+						conn.To.Candidates = nil // unness
 						return
 					}
-					// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
-					// or maybe even then, caller candidates will be present for the recipient so will always finish first
-					// case callerCandidate, ok := <-readChan:
-					// if !ok { // caller gather completed
-					// close(conn.From.Candidates)
-					// readChan = nil
-					// continue
-					// }
-					// conn.From.Candidates <- callerCandidate
-					// fmt.Println("caller candidate sent")
 				}
 			}
 		})
 	}
+
+	msgChan := make(chan Message)
+	var wsRecvWg sync.WaitGroup
+	defer wsRecvWg.Wait()
+	wsRecvWg.Go(func() {
+		if err := startMessageLoop(ctx, ws, msgChan); err != nil {
+			if err == io.EOF {
+				log.Println("messageLoop EOF")
+			}
+			_ = ws.WriteClose(http.StatusInternalServerError)
+		}
+	})
 
 	// now that the offers are being sent to existing users, we can start the loop that will run for the rest of the time
 	// that the user is in the room.
 	// 1. Listen for new users. if one, listen for their offer, then prepare an answer
 	// NOTE: could simplify the event system with just one channel per room user to notify them of incoming offers.
 
-	var (
-		answerWg                sync.WaitGroup
-		answerCtx, cancelAnswer = context.WithCancel(ctx)
-	)
-	defer func() {
-		cancelAnswer()
-		answerWg.Wait()
-	}()
-
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
+	defer func() {
+		_ = ws.Close()
+	}()
+
 	// this is logic that needs to run for the duration of the session/ws.
 	// listen for room events. when another user joins, this logic must begin signalling with that user
-	defer ws.Close()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			log.Println("tick")
+		// NOTE: all funcs in this need to run async, since chan is unbuffered and blocks on sends
+		case msg := <-msgChan:
+			switch msg.Type {
+			case "ice-offer":
+				var data schemas.CandidateMessage
+				json.Unmarshal(msg.Data, &data)
+				conn, err := roomUser.PendingConnections.Get(data.UserId)
+				if err != nil {
+					log.Printf("unable to get conn for %s in ice-offer handler: ", data.Username)
+					_ = ws.WriteClose(http.StatusInternalServerError)
+					return
+				}
+				if data.Candidate.Candidate == "" {
+					close(conn.From.Candidates)
+					log.Println("caller ice gather completed")
+					break
+				}
+				conn.From.Candidates <- data.Candidate
+			case "ice-answer":
+				var data schemas.CandidateMessage
+				json.Unmarshal(msg.Data, &data)
+				conn, err := roomUser.PendingConnections.Get(data.UserId)
+				if err != nil {
+					log.Printf("unable to get conn for %s in ice-answer handler: ", data.Username)
+					_ = ws.WriteClose(http.StatusInternalServerError)
+					return
+				}
+				if data.Candidate.Candidate == "" {
+					close(conn.To.Candidates)
+					log.Println("answerer ice gather completed")
+					break
+				}
+				conn.To.Candidates <- data.Candidate
+			case "answer":
+				var data schemas.AnswerRoomUserRequest
+				json.Unmarshal(msg.Data, &data)
+
+				if data.Sd.SDP == "" {
+					log.Println("empty answer")
+					_ = ws.WriteClose(http.StatusBadRequest)
+					break
+				}
+				log.Println("answer handler: answer recieved")
+
+				// TODO: start goroutine
+
+				caller := room.GetUser(data.CallerId)
+				if caller == nil {
+					log.Printf("caller %s not found in room while handling answer message", data.CallerName)
+					_ = ws.WriteClose(http.StatusBadRequest)
+					break
+				}
+				conn, err := caller.PendingConnections.Get(roomUser.Id)
+				if err != nil {
+					log.Printf("unable to get conn for %s in answer handler: ", data.CallerName)
+					_ = ws.WriteClose(http.StatusBadRequest)
+					break
+				}
+				conn.Answer <- data.Sd
+
+				var sendIce sync.WaitGroup
+				defer sendIce.Wait()
+
+				// TODO: create a with deadline/timeout context to ensure caller disconnecting doesnt prevent this goroutine from
+				// never ending
+				sendIce.Go(func() {
+					for {
+						select {
+						case <-ctx.Done():
+							log.Println("answer handler sendICE ctx cancelled, stopping listening for caller candidates")
+							return
+						// forwards caller's candidates to answerer
+						case candidate, ok := <-conn.From.Candidates:
+							msg := schemas.CandidateMessage{
+								UserId:    caller.Id,
+								Username:  caller.Name,
+								Candidate: candidate,
+							}
+							if err := websocket.JSON.Send(ws, msg); err != nil {
+								log.Printf("error writing caller candidate to answerer ws: %v", err)
+								return
+							}
+							if !ok { // empty end candidate sent, return
+								conn.From.Candidates = nil
+								return
+							}
+						}
+					}
+				})
+			}
 		case event := <-roomUser.Events:
 			fmt.Printf("user %s recieved event [type=%s, user=%s]", roomUser.Name, event.Type, event.User.Name)
 			if event.CreatedAt.Before(checkedAt) {
@@ -576,129 +614,20 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			case state.JoinEvent:
 				_ = 0
 			case state.OfferEvent:
-				// todo: pull out into a func
-				answerWg.Go(func() {
-					ctx, cancel := context.WithCancel(answerCtx)
-					defer cancel()
+				conn, err := event.User.PendingConnections.Get(user.Id)
+				if err != nil {
+					log.Printf("error getting offer from newly joined user: %v", err)
+					break
+				}
 
-					conn, err := event.User.PendingConnections.Get(user.Id)
-					if err != nil {
-						log.Printf("error getting offer from newly joined user: %v", err)
-						return
-					}
-
-					msg := schemas.AnswerConnectionMessage{
-						CallerName: event.User.Name,
-						Sd:         conn.From.Sd,
-					}
-					if err := websocket.JSON.Send(ws, msg); err != nil {
-						log.Printf("error writing AnswerConnectionMessage: %v", err)
-						return
-					}
-
-					// wait for answer from client
-					var answer schemas.AnswerRequest
-					err = receiveWithContext(ctx, ws, &answer)
-					if err != nil {
-						if err == io.EOF {
-							return
-						}
-						log.Printf("error reading answer from ws: %v", err)
-						_ = ws.WriteClose(http.StatusBadRequest)
-						return
-					}
-					if answer.Sd.SDP == "" {
-						log.Println("empty answer")
-						_ = ws.WriteClose(http.StatusBadRequest)
-						return
-					}
-					log.Println("answerWS: answer recieved")
-					conn.Answer <- answer.Sd
-
-					// read incoming candidates
-					var (
-						readIce                   sync.WaitGroup
-						readIceCtx, cancelReadIce = context.WithCancel(ctx)
-						readChan                  = make(chan webrtc.ICECandidateInit)
-						canListenForClose         = make(chan struct{}, 1)
-					)
-					defer func() {
-						cancelReadIce()
-						_ = ws.Close()
-						readIce.Wait()
-					}()
-					readIce.Go(func() {
-						defer close(canListenForClose)
-						defer cancelReadIce()
-						// TODO: READCANDIDATES NEED TO TAG EACH CAN RECV WITH THE USERNAME OF WHO THIS CANDIDATE IS FOR CONNECTING WITH!
-						err := readCandidates(readIceCtx, ws, readChan)
-						if err != nil {
-							if err == io.EOF {
-								// cancel()
-								return
-							}
-							log.Println("error during ice reading: ", err)
-						}
-						canListenForClose <- struct{}{} // unness?
-					})
-
-					// listen for the close frame from the client, since we know the only
-					// thing the client could possibly send after ICE gather is a close frame
-					var (
-						listen sync.WaitGroup
-						closed = make(chan struct{}, 1)
-					)
-					defer listen.Wait()
-					listen.Go(func() {
-						// wait for ice gather to complete
-						if _, ok := <-canListenForClose; !ok {
-							return
-						}
-						err := receiveWithContext(ctx, ws, &struct{}{})
-						if err == io.EOF {
-							log.Println("listenForClose EOF")
-							closed <- struct{}{}
-						} else if err != nil {
-							log.Println("listenForClose NON EOF ERR: ", err)
-						}
-					})
-
-					for {
-						select {
-						case <-ctx.Done():
-						case <-closed:
-							log.Println("Answer context done or conn closed")
-							// cancel()
-							return
-						// note: this needs to continue to run even if readchan is closed. this may always complete first tho...
-						case candidate, ok := <-conn.From.Candidates:
-							if !ok {
-								conn.From.Candidates = nil
-							}
-							msg := schemas.CandidateMessage{
-								UserId:    event.User.Id,
-								Username:  event.User.Name,
-								Candidate: candidate,
-							}
-							if err := websocket.JSON.Send(ws, msg); err != nil {
-								log.Printf("error writing answer: %v", err)
-								return
-							}
-						case answerCandidate, ok := <-readChan:
-							if !ok { // recipient gather completed
-								close(conn.To.Candidates)
-								return
-							}
-							conn, err := event.User.PendingConnections.Get(event.User.Id)
-							if err != nil {
-								log.Print("answer: conn not found during trickle ice")
-								return
-							}
-							conn.To.Candidates <- answerCandidate
-							fmt.Println("answer candidate sent")
-						}
-					}
-				})
+				msg := schemas.AnswerConnectionMessage{
+					CallerName: event.User.Name,
+					Sd:         conn.From.Sd,
+				}
+				if err := websocket.JSON.Send(ws, msg); err != nil {
+					log.Printf("error writing AnswerConnectionMessage to %s: %v", event.User.Name, err)
+					break
+				}
 			case state.ExitEvent:
 				_ = 0
 			default:

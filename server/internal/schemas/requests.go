@@ -43,6 +43,11 @@ type AnswerRequest struct {
 
 type AnswerConnectionMessage = AnswerRequest
 
+type AnswerRoomUserRequest struct {
+	AnswerRequest
+	CallerId uuid.UUID
+}
+
 type CreateChannelRequest struct {
 	Name,
 	Description string

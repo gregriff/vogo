@@ -83,6 +83,12 @@ func newRoom(c *schemas.Channel, user *RoomUser) *room {
 	}
 }
 
+func (r *room) GetUser(id uuid.UUID) *RoomUser {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.users[id]
+}
+
 // Users returns pointers to all users currently in the room other than omitID,
 // and a timestamp of when they were obtained
 func (r *room) Users(omitId uuid.UUID) ([]*RoomUser, time.Time) {
