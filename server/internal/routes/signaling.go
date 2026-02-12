@@ -434,7 +434,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	// note: parallelize this
 	for recipientName, offer := range offers.Data {
 		connectWg.Go(func() {
-			ctx, cancel := context.WithCancel(connectCtx)
+			ctx, cancel := context.WithTimeout(connectCtx, 15*time.Second)
 			defer cancel()
 
 			recipient, err := dal.GetUser(h.db, recipientName)
@@ -483,13 +483,22 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		})
 	}
 
-	msgChan := make(chan Message)
-	var wsRecvWg sync.WaitGroup
-	defer wsRecvWg.Wait()
+	var (
+		wsRecvWg                sync.WaitGroup
+		wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
+		msgChan                 = make(chan Message)
+	)
+	defer func() {
+		cancelWsRecv()
+		wsRecvWg.Wait()
+	}()
 	wsRecvWg.Go(func() {
-		if err := startMessageLoop(ctx, ws, msgChan); err != nil {
-			if err == io.EOF {
+		defer cancel() // if websocket closes, end all goroutines
+		if err := startMessageLoop(wsRecvCtx, ws, msgChan); err != nil {
+			if err == io.EOF { // todo: may need to handle this in startMessageLoop
 				log.Println("messageLoop EOF")
+			} else {
+				log.Printf("messageLoop other err: %v", err)
 			}
 			_ = ws.WriteClose(http.StatusInternalServerError)
 		}
@@ -520,6 +529,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			case "ice-offer":
 				var data schemas.CandidateMessage
 				json.Unmarshal(msg.Data, &data)
+
 				conn, err := roomUser.PendingConnections.Get(data.UserId)
 				if err != nil {
 					log.Printf("unable to get conn for %s in ice-offer handler: ", data.Username)
@@ -535,11 +545,18 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			case "ice-answer":
 				var data schemas.CandidateMessage
 				json.Unmarshal(msg.Data, &data)
-				conn, err := roomUser.PendingConnections.Get(data.UserId)
+
+				caller := room.GetUser(data.UserId)
+				if caller == nil {
+					log.Printf("caller %s not found in room while handling ice-answer message", data.Username)
+					// _ = ws.WriteClose(http.StatusBadRequest)
+					break
+				}
+				conn, err := caller.PendingConnections.Get(roomUser.Id)
 				if err != nil {
 					log.Printf("unable to get conn for %s in ice-answer handler: ", data.Username)
-					_ = ws.WriteClose(http.StatusInternalServerError)
-					return
+					// _ = ws.WriteClose(http.StatusBadRequest)
+					break
 				}
 				if data.Candidate.Candidate == "" {
 					close(conn.To.Candidates)
@@ -553,36 +570,38 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 				if data.Sd.SDP == "" {
 					log.Println("empty answer")
-					_ = ws.WriteClose(http.StatusBadRequest)
+					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				log.Println("answer handler: answer recieved")
 
-				// TODO: start goroutine
-
 				caller := room.GetUser(data.CallerId)
 				if caller == nil {
 					log.Printf("caller %s not found in room while handling answer message", data.CallerName)
-					_ = ws.WriteClose(http.StatusBadRequest)
+					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				conn, err := caller.PendingConnections.Get(roomUser.Id)
 				if err != nil {
 					log.Printf("unable to get conn for %s in answer handler: ", data.CallerName)
-					_ = ws.WriteClose(http.StatusBadRequest)
+					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				conn.Answer <- data.Sd
 
-				var sendIce sync.WaitGroup
-				defer sendIce.Wait()
-
-				// TODO: create a with deadline/timeout context to ensure caller disconnecting doesnt prevent this goroutine from
-				// never ending
+				var (
+					sendIce                   sync.WaitGroup
+					sendIceCtx, cancelSendIce = context.WithTimeout(ctx, 30*time.Second)
+				)
+				defer func() {
+					cancelSendIce()
+					sendIce.Wait()
+				}()
 				sendIce.Go(func() {
+					defer cancelSendIce()
 					for {
 						select {
-						case <-ctx.Done():
+						case <-sendIceCtx.Done():
 							log.Println("answer handler sendICE ctx cancelled, stopping listening for caller candidates")
 							return
 						// forwards caller's candidates to answerer
