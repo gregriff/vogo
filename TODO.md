@@ -1,10 +1,12 @@
 # TODOs
 
 ### Next:
-- send offer event
+- server should listen for a client-sent ACK of successful connection, to delete the pendingConnection entry
+- pull out msgHandler switch and eventHandler switch into funcs. 
 - ice sending on client side needs to send a sentinel for DONE status, since room ws needs to stay open and can't 
   recv EOFs at any time (already does this with empty candidate??)
 - parallelize client sending offers when joining a room: this requires ws multiplexer on server-side
+- rename schema structs
 - add poll to status
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
 - add query/status functionality to get outgoing friend requests

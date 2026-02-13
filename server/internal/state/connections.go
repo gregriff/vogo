@@ -74,7 +74,7 @@ type connection struct {
 // clientInfo is the information about a webrtc client needed to create a call or a room.
 // It stores data used during the signaling process.
 type clientInfo struct {
-	user *schemas.User
+	User schemas.User
 
 	// encapsulates the offer or answer of the client
 	Sd webrtc.SessionDescription
@@ -87,21 +87,22 @@ type clientInfo struct {
 // until the caller and recipient exchange all their ICE candidates. Channels in this
 // struct facilitate offer/answer and ICE exchance between the /call and /answer endpoints,
 // or when a user joins a room and needs to connect to the existing members.
-func CreateConnection(caller, recipient *schemas.User, callerSd webrtc.SessionDescription) *connection {
-	const maxICECandidates = 10 // should be enough?
+func CreateConnection(caller, recipient schemas.User, callerSd webrtc.SessionDescription) *connection {
+	const maxICECandidates = 15 // should be enough?
 	var (
 		// TODO: with channel rooms, these chans will need to be per-client
 		answerChan          = make(chan webrtc.SessionDescription, 1)
 		callerCandidates    = make(chan webrtc.ICECandidateInit, maxICECandidates)
 		recipientCandidates = make(chan webrtc.ICECandidateInit, maxICECandidates)
 	)
+	// TODO: these user attrs could prob be avoided, and prevent a db hit in JoinRoom
 	callerClient := clientInfo{
-		user:       caller,
+		User:       caller,
 		Sd:         callerSd,
 		Candidates: callerCandidates,
 	}
 	recipientClient := clientInfo{
-		user:       recipient,
+		User:       recipient,
 		Sd:         webrtc.SessionDescription{},
 		Candidates: recipientCandidates,
 	}

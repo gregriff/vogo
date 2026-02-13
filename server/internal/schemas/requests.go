@@ -27,6 +27,10 @@ type CallRequest struct {
 	Sd            webrtc.SessionDescription
 }
 
+// TODO:
+// ConnectionRequest struct { Username string, Sd webrtc.Sd }
+// offer := ConnectionRequest
+// answer := ConnectionRequest
 type AnswerNotificationMessage = CallRequest
 
 type CandidateMessage struct {
@@ -63,5 +67,5 @@ type JoinRoomRequest struct {
 // have prepared offers for all users currently in the channel. Data maps the usernames
 // to the offer being made to them.
 type BulkConnectionMessage struct {
-	Data map[string]webrtc.SessionDescription
+	Data map[uuid.UUID]CallRequest
 }

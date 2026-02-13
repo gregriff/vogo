@@ -3,7 +3,6 @@ package state
 import (
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -13,27 +12,10 @@ import (
 
 const MaxRoomUsers = 6
 
-// BulkConnectionMessage is sent to the client when they need to start connecting with multiple
+// BulkConnectionRequest is sent to the client when they need to start connecting with multiple
 // users in a room. This happens when a client joins a room and there are already users in it
-type BulkConnectionMessage struct {
-	Usernames []string
-}
-
-type roomEventType string
-
-const (
-	JoinEvent         roomEventType = "JOIN"
-	ExitEvent         roomEventType = "EXIT"
-	OfferEvent        roomEventType = "OFFER"
-	ICECandidateEvent roomEventType = "ICE"
-)
-const roomEventChannelSize = 10
-
-type roomEvent struct {
-	Type roomEventType
-	User *RoomUser
-
-	CreatedAt time.Time
+type BulkConnectionRequest struct {
+	Users map[uuid.UUID]string
 }
 
 // RoomUser represents a user that is actively participating in a Room.
@@ -42,14 +24,11 @@ type RoomUser struct {
 	Name     string
 	joinedAt time.Time
 
-	// Events recieves room events such as when a participant joins or leaves. It is used
-	// to perform webrtc functionality.
-	Events chan roomEvent
-
 	// PendingConnections maintains signalling state between other users. It is only used when the
 	// user first joins the channel and is connecting to the other users. It maps the recipient's uuid
 	// to their connection struct.
 	PendingConnections *connMap
+	Offers             chan schemas.AnswerConnectionMessage
 }
 
 // NewRoomUser creates a user struct for sending and recieving data to and from the room and its users.
@@ -57,8 +36,8 @@ func NewRoomUser(u *schemas.User) *RoomUser {
 	return &RoomUser{
 		Id:                 u.Id,
 		Name:               u.Name,
-		Events:             make(chan roomEvent, roomEventChannelSize),
 		PendingConnections: &connMap{conns: make(map[uuid.UUID]*connection, MaxRoomUsers-1)},
+		Offers:             make(chan schemas.AnswerConnectionMessage, MaxRoomUsers-1),
 	}
 }
 
@@ -89,21 +68,21 @@ func (r *room) GetUser(id uuid.UUID) *RoomUser {
 	return r.users[id]
 }
 
-// Users returns pointers to all users currently in the room other than omitID,
-// and a timestamp of when they were obtained
-func (r *room) Users(omitId uuid.UUID) ([]*RoomUser, time.Time) {
-	users := make([]*RoomUser, 0, MaxRoomUsers)
+// Users returns a map of uuids to pointers to all users currently in the room other than omitID.
+// Note that if the caller wants to use this retval at a much later time, it will not be up-to-date with
+// any new room users.
+func (r *room) Users(omitId uuid.UUID) map[uuid.UUID]*RoomUser {
+	users := make(map[uuid.UUID]*RoomUser, MaxRoomUsers)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	t := time.Now()
-	for _, user := range r.users {
+	for id, user := range r.users {
 		if user.Id == omitId {
 			continue
 		}
-		users = append(users, user)
+		users[id] = user
 	}
-	return users, t
+	return users
 }
 
 // addUser adds a member to the room. This should only be run inside
@@ -117,30 +96,13 @@ func (r *room) addUser(user *RoomUser) error {
 	}
 	user.joinedAt = time.Now()
 	r.users[user.Id] = user
-	r.broadcast(&roomEvent{Type: "JOIN", User: user, CreatedAt: time.Now()})
 	return nil
 }
 
 func (r *room) Leave(user *RoomUser) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.users, user.Id)
-	r.broadcast(&roomEvent{Type: "EXIT", User: user, CreatedAt: time.Now()})
-	r.mu.Unlock()
-}
-
-// broadcast sends a roomEvent to all users in the room. It must only be used inside the room's lock.
-// broadcast will not send the event to the user the event is about.
-func (r *room) broadcast(event *roomEvent) {
-	for _, user := range r.users {
-		if user.Id == event.User.Id {
-			continue
-		}
-		select {
-		case user.Events <- *event:
-		default:
-			log.Printf("WARN: User %s event channel full", user.Id)
-		}
-	}
 }
 
 func CreateOrJoinRoom(c *schemas.Channel, user *RoomUser) (*room, error) {

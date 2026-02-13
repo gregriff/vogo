@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/server/internal/middleware"
 	"github.com/gregriff/vogo/server/internal/schemas"
@@ -74,7 +75,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	}
 
 	// create the call in memory, delete once answered
-	call := state.CreateConnection(caller, recipient, offer.Sd)
+	call := state.CreateConnection(*caller, *recipient, offer.Sd)
 	calls := state.GetPendingCalls()
 	// add this call to pending map, using caller's ID since a client can only make one call at a time
 	calls.Add(caller.Id, call)
@@ -391,17 +392,19 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	log.Println("room created")
 	defer room.Leave(roomUser)
 
-	users, checkedAt := room.Users(roomUser.Id)
-	newConnections := state.BulkConnectionMessage{
-		Usernames: make([]string, 0, state.MaxRoomUsers-1),
+	users := room.Users(roomUser.Id)
+	// own func
+	newConns := state.BulkConnectionRequest{
+		Users: make(map[uuid.UUID]string, state.MaxRoomUsers-1),
 	}
-	for _, user := range users {
-		newConnections.Usernames = append(newConnections.Usernames, user.Name)
+	for id, user := range users {
+		newConns.Users[id] = user.Name
 	}
-	if err := websocket.JSON.Send(ws, newConnections); err != nil {
+	if err := websocket.JSON.Send(ws, newConns); err != nil {
 		log.Printf("error writing NewConnections msg: %v", err)
 		return
 	}
+	// ^^
 
 	// note: parallelize this
 	var offers schemas.BulkConnectionMessage
@@ -431,32 +434,40 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		connectWg.Wait()
 	}()
 
-	// note: parallelize this
-	for recipientName, offer := range offers.Data {
+	// note: pull out into own func, then later parallelize
+	for recipientId, req := range offers.Data {
 		connectWg.Go(func() {
 			ctx, cancel := context.WithTimeout(connectCtx, 15*time.Second)
 			defer cancel()
 
-			recipient, err := dal.GetUser(h.db, recipientName)
-			if err != nil {
-				log.Println(fmt.Errorf("error fetching recipient: %w", err))
+			if _, ok := users[recipientId]; !ok {
+				log.Printf("warn! client wants to send an offer to %s, who is not in the room!", req.RecipientName)
 				return
 			}
 
-			// TODO: ACTUALLY SEND OFFER EVENT SO ANSWERER KNOWS
-			log.Println("NEED TO ACTUALLY SEND OFFER EVENT")
-			conn := state.CreateConnection(user, recipient, offer)
-			roomUser.PendingConnections.Add(recipient.Id, conn)
-			defer roomUser.PendingConnections.Delete(recipient.Id)
-			log.Printf("conn created, signalling beginning with %s", recipient.Name)
+			recipient := schemas.User{
+				Id:   recipientId,
+				Name: users[recipientId].Name,
+			}
+			conn := state.CreateConnection(*user, recipient, req.Sd)
+			roomUser.PendingConnections.Add(recipientId, conn)
+			defer roomUser.PendingConnections.Delete(recipientId)
 
+			offer := schemas.AnswerConnectionMessage{
+				CallerName: user.Name,
+				Sd:         conn.From.Sd,
+			}
+			users[recipientId].Offers <- offer
+			log.Printf("conn created, signalling beginning with %s", req.RecipientName)
+
+			// own func
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case answerSd := <-conn.Answer:
 					msg := schemas.AnswerNotificationMessage{
-						RecipientName: recipient.Name,
+						RecipientName: req.RecipientName,
 						Sd:            answerSd,
 					}
 					if err := websocket.JSON.Send(ws, msg); err != nil {
@@ -465,8 +476,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					}
 				case answerCandidate, ok := <-conn.To.Candidates:
 					msg := schemas.CandidateMessage{
-						UserId:    recipient.Id,
-						Username:  recipient.Name,
+						UserId:    recipientId,
+						Username:  req.RecipientName,
 						Candidate: answerCandidate,
 					}
 					if err := websocket.JSON.Send(ws, msg); err != nil {
@@ -475,7 +486,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					}
 					// we've sent the caller the recipient's last candidate. nothing left to do
 					if !ok {
-						conn.To.Candidates = nil // unness
+						// conn.To.Candidates = nil // unness
 						return
 					}
 				}
@@ -506,13 +517,13 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 	// now that the offers are being sent to existing users, we can start the loop that will run for the rest of the time
 	// that the user is in the room.
-	// 1. Listen for new users. if one, listen for their offer, then prepare an answer
-	// NOTE: could simplify the event system with just one channel per room user to notify them of incoming offers.
 
+	var sendIce sync.WaitGroup
 	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
 	defer func() {
+		ticker.Stop()
 		_ = ws.Close()
+		sendIce.Wait()
 	}()
 
 	// this is logic that needs to run for the duration of the session/ws.
@@ -523,8 +534,14 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			return
 		case <-ticker.C:
 			log.Println("tick")
+		case offer := <-roomUser.Offers:
+			if err := websocket.JSON.Send(ws, offer); err != nil {
+				log.Printf("error writing AnswerConnectionMessage to %s's offer: %v", offer.CallerName, err)
+			}
 		// NOTE: all funcs in this need to run async, since chan is unbuffered and blocks on sends
 		case msg := <-msgChan:
+			// TODO: put this switch into its own func. run it in its own goroutine. it should use a waitgroup defined before this
+			// event loop "msgHandlerWg". 'tick' will report the wg's counter (manually increment a top level int).
 			switch msg.Type {
 			case "ice-offer":
 				var data schemas.CandidateMessage
@@ -588,15 +605,10 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					break
 				}
 				conn.Answer <- data.Sd
+				close(conn.Answer)
 
-				var (
-					sendIce                   sync.WaitGroup
-					sendIceCtx, cancelSendIce = context.WithTimeout(ctx, 30*time.Second)
-				)
-				defer func() {
-					cancelSendIce()
-					sendIce.Wait()
-				}()
+				sendIceCtx, cancelSendIce := context.WithTimeout(ctx, 30*time.Second)
+				defer cancelSendIce()
 				sendIce.Go(func() {
 					defer cancelSendIce()
 					for {
@@ -616,41 +628,12 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 								return
 							}
 							if !ok { // empty end candidate sent, return
-								conn.From.Candidates = nil
+								// conn.From.Candidates = nil
 								return
 							}
 						}
 					}
 				})
-			}
-		case event := <-roomUser.Events:
-			fmt.Printf("user %s recieved event [type=%s, user=%s]", roomUser.Name, event.Type, event.User.Name)
-			if event.CreatedAt.Before(checkedAt) {
-				fmt.Printf("EVENT %s happened before we got list of current users, disregarding...", event.Type)
-				continue
-			}
-			switch event.Type {
-			case state.JoinEvent:
-				_ = 0
-			case state.OfferEvent:
-				conn, err := event.User.PendingConnections.Get(user.Id)
-				if err != nil {
-					log.Printf("error getting offer from newly joined user: %v", err)
-					break
-				}
-
-				msg := schemas.AnswerConnectionMessage{
-					CallerName: event.User.Name,
-					Sd:         conn.From.Sd,
-				}
-				if err := websocket.JSON.Send(ws, msg); err != nil {
-					log.Printf("error writing AnswerConnectionMessage to %s: %v", event.User.Name, err)
-					break
-				}
-			case state.ExitEvent:
-				_ = 0
-			default:
-				log.Printf("ERROR: unhandled event: %s", event.Type)
 			}
 		}
 	}
