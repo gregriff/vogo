@@ -3,18 +3,24 @@ package wrtc
 import (
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
-type callRequest struct {
-	RecipientName string
-	Sd            webrtc.SessionDescription
+// ConnectionRequest encapsulates offers and answers. It can optionally contain
+// the username of the sender and/or the recipient, depending on if additional context is needed.
+type ConnectionRequest struct {
+	From,
+	To string
+	Sd webrtc.SessionDescription
 }
 
-type answerRequest struct {
-	CallerName string
-	Sd         webrtc.SessionDescription
+// ConnectionRequestWithId extends ConnectionRequest with user Ids.
+type ConnectionRequestWithId struct {
+	ConnectionRequest
+	FromId,
+	ToId uuid.UUID
 }
 
 // CreateAndSendOffer creates the offer, starts ICE gathering, and sends the offer over ws,
@@ -30,7 +36,7 @@ func CreateAndSendOffer(ws *websocket.Conn, pc *webrtc.PeerConnection, recipient
 		return fmt.Errorf("error setting local description: %v", err)
 	}
 
-	req := callRequest{RecipientName: recipient, Sd: offer}
+	req := ConnectionRequest{To: recipient, Sd: offer}
 	if err = websocket.JSON.Send(ws, req); err != nil {
 		return fmt.Errorf("error sending offer: %w", err)
 	}
@@ -55,7 +61,7 @@ func CreateAndSendAnswer(ws *websocket.Conn, pc *webrtc.PeerConnection, offer *w
 		return fmt.Errorf("error setting local description: %v", err)
 	}
 
-	req := answerRequest{CallerName: callerName, Sd: *pc.LocalDescription()}
+	req := ConnectionRequest{To: callerName, Sd: *pc.LocalDescription()}
 	if err = websocket.JSON.Send(ws, req); err != nil {
 		return fmt.Errorf("error sending answer: %w", err)
 	}

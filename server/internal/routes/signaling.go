@@ -39,7 +39,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		return
 	}
 
-	var offer schemas.CallRequest
+	var offer schemas.ConnectionRequest
 	err = receiveWithContext(ctx, ws, &offer)
 	if err != nil {
 		if err == io.EOF {
@@ -55,7 +55,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		return
 	}
 	log.Println("callWS: offer recieved")
-	recipient, err := dal.GetUser(h.db, offer.RecipientName)
+	recipient, err := dal.GetUser(h.db, offer.To)
 	if err != nil {
 		log.Println(fmt.Errorf("error fetching recipient: %w", err))
 		_ = ws.WriteClose(http.StatusBadRequest)
@@ -214,7 +214,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	}
 
 	// wait for answer from client
-	var answer schemas.AnswerRequest
+	var answer schemas.ConnectionRequest
 	err = receiveWithContext(ctx, ws, &answer)
 	if err != nil {
 		if err == io.EOF {
@@ -423,8 +423,6 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		return
 	}
 
-	// note: be careful that you dont send a newConnectionMsg for a user that you then get a NewUser event for and then resend...
-
 	var (
 		connectWg                 sync.WaitGroup
 		connectCtx, cancelConnect = context.WithCancel(ctx)
@@ -441,7 +439,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			defer cancel()
 
 			if _, ok := users[recipientId]; !ok {
-				log.Printf("warn! client wants to send an offer to %s, who is not in the room!", req.RecipientName)
+				log.Printf("warn! client wants to send an offer to %s, who is not in the room!", req.To)
 				return
 			}
 
@@ -452,13 +450,15 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			conn := state.CreateConnection(*user, recipient, req.Sd)
 			roomUser.PendingConnections.Add(recipientId, conn)
 			defer roomUser.PendingConnections.Delete(recipientId)
+			// note: its important to ensure that none of the below goroutines never die and
+			// keep holding references to this connection^^ (could set it to nil to debug?)
 
-			offer := schemas.AnswerConnectionMessage{
-				CallerName: user.Name,
-				Sd:         conn.From.Sd,
+			offer := schemas.ConnectionRequest{
+				From: user.Name, // this is the caller's name
+				Sd:   conn.From.Sd,
 			}
 			users[recipientId].Offers <- offer
-			log.Printf("conn created, signalling beginning with %s", req.RecipientName)
+			log.Printf("conn created, signalling beginning with %s", req.To)
 
 			// own func
 			for {
@@ -466,9 +466,9 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				case <-ctx.Done():
 					return
 				case answerSd := <-conn.Answer:
-					msg := schemas.AnswerNotificationMessage{
-						RecipientName: req.RecipientName,
-						Sd:            answerSd,
+					msg := schemas.ConnectionRequest{
+						To: req.To, // this is the recipient
+						Sd: answerSd,
 					}
 					if err := websocket.JSON.Send(ws, msg); err != nil {
 						log.Printf("error writing answer: %v", err)
@@ -477,7 +477,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				case answerCandidate, ok := <-conn.To.Candidates:
 					msg := schemas.CandidateMessage{
 						UserId:    recipientId,
-						Username:  req.RecipientName,
+						Username:  req.To, // this is the recipient
 						Candidate: answerCandidate,
 					}
 					if err := websocket.JSON.Send(ws, msg); err != nil {
@@ -536,13 +536,14 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			log.Println("tick")
 		case offer := <-roomUser.Offers:
 			if err := websocket.JSON.Send(ws, offer); err != nil {
-				log.Printf("error writing AnswerConnectionMessage to %s's offer: %v", offer.CallerName, err)
+				log.Printf("error writing AnswerConnectionMessage to %s's offer: %v", offer.To, err)
 			}
 		// NOTE: all funcs in this need to run async, since chan is unbuffered and blocks on sends
 		case msg := <-msgChan:
 			// TODO: put this switch into its own func. run it in its own goroutine. it should use a waitgroup defined before this
 			// event loop "msgHandlerWg". 'tick' will report the wg's counter (manually increment a top level int).
 			switch msg.Type {
+			// TODO: try to combine offer and answer handlers with additional property in CandidateMessage
 			case "ice-offer":
 				var data schemas.CandidateMessage
 				json.Unmarshal(msg.Data, &data)
@@ -582,29 +583,29 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				}
 				conn.To.Candidates <- data.Candidate
 			case "answer":
-				var data schemas.AnswerRoomUserRequest
-				json.Unmarshal(msg.Data, &data)
+				var answer schemas.ConnectionRequestWithId
+				json.Unmarshal(msg.Data, &answer)
 
-				if data.Sd.SDP == "" {
+				if answer.Sd.SDP == "" {
 					log.Println("empty answer")
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				log.Println("answer handler: answer recieved")
 
-				caller := room.GetUser(data.CallerId)
+				caller := room.GetUser(answer.ToId)
 				if caller == nil {
-					log.Printf("caller %s not found in room while handling answer message", data.CallerName)
+					log.Printf("caller %s not found in room while handling answer message", answer.To)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				conn, err := caller.PendingConnections.Get(roomUser.Id)
 				if err != nil {
-					log.Printf("unable to get conn for %s in answer handler: ", data.CallerName)
+					log.Printf("unable to get conn for %s in answer handler: ", answer.To)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
-				conn.Answer <- data.Sd
+				conn.Answer <- answer.Sd
 				close(conn.Answer)
 
 				sendIceCtx, cancelSendIce := context.WithTimeout(ctx, 30*time.Second)

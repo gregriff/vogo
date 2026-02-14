@@ -46,7 +46,9 @@ type Message struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// TODO: this doesnt need to be a func. recv from recvwithcontext in the top-level select?
+// startMessageLoop reads from ws until it is closed or errors, and sends the data it reads to ch.
+// It assumes ws frames are structured according to the Message struct. It enables the caller to react
+// to ws frames in an event-based manner.
 func startMessageLoop(ctx context.Context, ws *websocket.Conn, ch chan<- Message) error {
 	for {
 		var msg Message

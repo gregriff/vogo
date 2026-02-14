@@ -21,35 +21,25 @@ type InviteFriendRequest struct {
 	FriendName string
 }
 
-// CallRequest is the request data used to create a call from one client to another.
-type CallRequest struct {
-	RecipientName string
-	Sd            webrtc.SessionDescription
+// ConnectionRequest encapsulates offers and answers. It can optionally contain
+// the username of the sender and/or the recipient, depending on if additional context is needed.
+type ConnectionRequest struct {
+	From,
+	To string
+	Sd webrtc.SessionDescription
 }
 
-// TODO:
-// ConnectionRequest struct { Username string, Sd webrtc.Sd }
-// offer := ConnectionRequest
-// answer := ConnectionRequest
-type AnswerNotificationMessage = CallRequest
+// ConnectionRequestWithId extends ConnectionRequest with user Ids.
+type ConnectionRequestWithId struct {
+	ConnectionRequest
+	FromId,
+	ToId uuid.UUID
+}
 
 type CandidateMessage struct {
 	UserId    uuid.UUID
 	Username  string
 	Candidate webrtc.ICECandidateInit
-}
-
-// AnswerRequest is the request data used to answer a 1:1 voice call.
-type AnswerRequest struct {
-	CallerName string
-	Sd         webrtc.SessionDescription
-}
-
-type AnswerConnectionMessage = AnswerRequest
-
-type AnswerRoomUserRequest struct {
-	AnswerRequest
-	CallerId uuid.UUID
 }
 
 type CreateChannelRequest struct {
@@ -67,5 +57,5 @@ type JoinRoomRequest struct {
 // have prepared offers for all users currently in the channel. Data maps the usernames
 // to the offer being made to them.
 type BulkConnectionMessage struct {
-	Data map[uuid.UUID]CallRequest
+	Data map[uuid.UUID]ConnectionRequest
 }
