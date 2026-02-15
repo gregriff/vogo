@@ -85,7 +85,7 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 			cancelCall()
 			break
 		}
-		if err := audio.StartCapture(captureCtx, pc, track); err != nil {
+		if err := audio.StartCapture(captureCtx, track); err != nil {
 			abort <- fmt.Errorf("error with capture device: %w", err)
 			return
 		}

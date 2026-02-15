@@ -60,6 +60,7 @@ func NewAudioPeerConnection(stunServer, trackID string, exitOnFail bool) (
 
 // newPeerConnection creates a PeerConnection configured with the Opus audio codec.
 // It sets the STUN server and configures the MTU to avoid packet read underruns.
+// TODO: config creation and PeerConnection creation needs to be split into seperate functions for room use case
 func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 	mediaEngine := &webrtc.MediaEngine{}
 	codecParams := webrtc.RTPCodecParameters{
@@ -91,6 +92,18 @@ func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 	settingEngine := webrtc.SettingEngine{}
 	settingEngine.SetReceiveMTU(3_000)
 
+	// Possible todo: ICE renomination
+	// For advanced use with a custom generator and interval.
+	// interval := 2 * time.Second
+	// customGen := func() uint32 { return uint32(time.Now().UnixNano()) } // example
+
+	// if err := se.SetICERenomination(
+	// 	webrtc.WithRenominationGenerator(customGen),
+	// 	webrtc.WithRenominationInterval(interval),
+	// ); err != nil {
+	// 	log.Println(err)
+	// }
+
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(mediaEngine),
 		webrtc.WithSettingEngine(settingEngine),
@@ -107,6 +120,7 @@ func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 
 // createAudioTrack configures a PeerConnection with a bidirectional transceiver and creates
 // an Opus audio TrackLocalStaticSample, which is returned, to write captured audio to.
+// TODO: this needs to accept a slice of PeerConnections for the room use case
 func createAudioTrack(pc *webrtc.PeerConnection, trackID string) (*webrtc.TrackLocalStaticSample, error) {
 	audioTrsv, err := pc.AddTransceiverFromKind(
 		webrtc.RTPCodecTypeAudio,

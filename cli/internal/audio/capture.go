@@ -13,7 +13,7 @@ import (
 	"gopkg.in/hraban/opus.v2"
 )
 
-func StartCapture(ctx context.Context, pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) error {
+func StartCapture(ctx context.Context, track *webrtc.TrackLocalStaticSample) error {
 	deviceCtx, device, pcm, initErr := initCaptureDevice()
 	defer uninitCapture(deviceCtx, device)
 	if initErr != nil {

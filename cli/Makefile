@@ -1,4 +1,4 @@
-GOEXPERIMENT=greenteagc
+# GOEXPERIMENT=simd
 OUT_DIR=../bin
 
 build:
