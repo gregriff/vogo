@@ -13,7 +13,7 @@ import (
 const MaxRoomUsers = 6
 
 // BulkConnectionRequest is sent to the client when they need to start connecting with multiple
-// users in a room. This happens when a client joins a room and there are already users in it
+// users in a room. This happens when a client joins a room. Users may be empty if noone is in the room.
 type BulkConnectionRequest struct {
 	Users map[uuid.UUID]string
 }

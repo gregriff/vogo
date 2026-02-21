@@ -108,12 +108,12 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 func answerAndConnect(
 	ctx context.Context,
 	pc *webrtc.PeerConnection,
-	credentials *credentials,
+	creds *credentials,
 	caller string,
 	candidates <-chan webrtc.ICECandidateInit,
 ) error {
 	endpoint := fmt.Sprintf("/answer/%s", caller)
-	ws, err := newWebsocket(ctx, credentials, endpoint)
+	ws, err := newWebsocket(ctx, creds, endpoint)
 	if err != nil {
 		return fmt.Errorf("error creating websocket: %w", err)
 	}

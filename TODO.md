@@ -7,7 +7,6 @@
 - ice sending on client side needs to send a sentinel for DONE status, since room ws needs to stay open and can't 
   recv EOFs at any time (already does this with empty candidate??)
 - parallelize client sending offers when joining a room: this requires ws multiplexer on server-side
-- rename schema structs
 - add poll to status
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
 - add query/status functionality to get outgoing friend requests

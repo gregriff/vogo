@@ -36,10 +36,10 @@ func NewCredentials(stunServer, baseURL, username, password string) *credentials
 // with http basic auth headers.
 func newWebsocket(
 	ctx context.Context,
-	credentials *credentials,
+	creds *credentials,
 	endpoint string,
 ) (*websocket.Conn, error) {
-	cfg, err := newWebsocketConfig(credentials, endpoint)
+	cfg, err := newWebsocketConfig(creds, endpoint)
 	if err != nil {
 		return nil, err
 	}

@@ -107,12 +107,12 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 func sendCallAndConnect(
 	ctx context.Context,
 	pc *webrtc.PeerConnection,
-	credentials *credentials,
+	creds *credentials,
 	recipient string,
 	candidates <-chan webrtc.ICECandidateInit,
 	abort chan<- error,
 ) error {
-	ws, err := newWebsocket(ctx, credentials, "/call")
+	ws, err := newWebsocket(ctx, creds, "/call")
 	if err != nil {
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
