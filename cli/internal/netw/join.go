@@ -3,7 +3,6 @@ package netw
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -148,15 +147,7 @@ type BulkConnectionRequest struct {
 // have prepared offers for all users currently in the channel. Data maps the usernames
 // to the offer being made to them.
 type BulkConnectionMessage struct {
-	Data map[uuid.UUID]ConnectionRequest
-}
-
-// ConnectionRequest encapsulates offers and answers. It can optionally contain
-// the username of the sender and/or the recipient, depending on if additional context is needed.
-type ConnectionRequest struct {
-	From,
-	To string
-	Sd webrtc.SessionDescription
+	Data map[uuid.UUID]wrtc.ConnectionRequest
 }
 
 // Connection encapsulates a bidirectional audio webrtc connection.
@@ -182,10 +173,10 @@ type Connection struct {
 	connected chan struct{}
 }
 
-func newConnection(id uuid.UUID, creds *credentials, track *webrtc.TrackLocalStaticSample) (Connection, error) {
+func newConnection(id uuid.UUID, creds *credentials, track *webrtc.TrackLocalStaticSample) (*Connection, error) {
 	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, track, false)
 	if err != nil {
-		return Connection{}, fmt.Errorf("error initializing webrtc: %w", err)
+		return &Connection{}, fmt.Errorf("error initializing webrtc: %w", err)
 	}
 	c := Connection{
 		id:         id,
@@ -195,27 +186,28 @@ func newConnection(id uuid.UUID, creds *credentials, track *webrtc.TrackLocalSta
 		candidates: candidates,
 		connected:  connected,
 	}
-	return c, nil
+	return &c, nil
 }
 
 // ConnectionMap maps recipient usernames to Connections.
 type ConnectionMap struct {
 	mu   sync.Mutex
-	data map[string]Connection
+	data map[string]*Connection
 }
 
-// TODO: make threadsafe
-func (cm *ConnectionMap) Get(username string) (c Connection, err error) {
+func (cm *ConnectionMap) Get(username string) (*Connection, bool) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	c, ok := cm.data[username]
-	if !ok {
-		err = errors.New("connection not found")
-	}
-	return
+	return c, ok
 }
 
 // TODO: make updater
+func (cm *ConnectionMap) Update(key string, c *Connection) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.data[key] = c
+}
 
 func joinChannelAndConnect(
 	ctx context.Context,
@@ -242,7 +234,7 @@ func joinChannelAndConnect(
 	}
 
 	conns := &ConnectionMap{
-		data: make(map[string]Connection, 6),
+		data: make(map[string]*Connection, 6),
 	}
 	for id, name := range res.Users {
 		c, err := newConnection(id, creds, track)
@@ -255,13 +247,13 @@ func joinChannelAndConnect(
 
 	// create all offers and send in bulk to server
 	start := time.Now()
-	bulkReq := BulkConnectionMessage{Data: make(map[uuid.UUID]ConnectionRequest, 6)}
+	bulkReq := BulkConnectionMessage{Data: make(map[uuid.UUID]wrtc.ConnectionRequest, 6)}
 	for recipient, c := range conns.data {
 		offer, err := wrtc.CreateOffer(c.pc)
 		if err != nil {
 			return fmt.Errorf("error creating offer for %s: %w", recipient, err)
 		}
-		bulkReq.Data[c.id] = ConnectionRequest{From: creds.username, To: recipient, Sd: offer}
+		bulkReq.Data[c.id] = wrtc.ConnectionRequest{From: creds.username, To: recipient, Sd: offer}
 	}
 	fmt.Printf("offers took %v to generate", time.Since(start))
 
@@ -327,11 +319,11 @@ func joinChannelAndConnect(
 			case "ice-answer":
 				var (
 					data CandidateMessage
-					conn Connection
+					conn *Connection
 					ok   bool
 				)
 				json.Unmarshal(msg.Data, &data)
-				if conn, ok = conns.data[data.Username]; !ok {
+				if conn, ok = conns.Get(data.Username); !ok {
 					return fmt.Errorf("error: connection for user %s not found", data.Username)
 				}
 
@@ -346,35 +338,56 @@ func joinChannelAndConnect(
 			// when the client receives an answer from a recipient
 			case "answer":
 				var (
-					answer ConnectionRequest
-					conn   Connection
+					answer wrtc.ConnectionRequest
+					conn   *Connection
 					ok     bool
 				)
 				json.Unmarshal(msg.Data, &answer)
-				if conn, ok = conns.data[answer.From]; !ok {
+				if conn, ok = conns.Get(answer.From); !ok {
 					return fmt.Errorf("error: connection for user %s not found", answer.From)
 				}
 				if err = conn.pc.SetRemoteDescription(answer.Sd); err != nil {
 					return fmt.Errorf("error while setting remote description: %w", err)
 				}
 				log.Println("answer handler: answer recieved")
-			// this happens when the client is already in the room and a new user joins, sending the client
-			// their offer
+			// this happens when the client is already in the room and a new user joins,
+			// sending the client their offer
 			case "offer":
 				var (
-					offer ConnectionRequest
-					conn  Connection
+					offer wrtc.ConnectionRequestWithId
+					conn  *Connection
 					ok    bool
 				)
 				json.Unmarshal(msg.Data, &offer)
-				if conn, ok = conns.data[offer.To]; !ok {
-					return fmt.Errorf("error: connection for user %s not found. CREATE NEW PC?", offer.To)
+				if conn, ok = conns.Get(offer.From); ok {
+					log.Printf("recreating offer to %s", offer.From)
 				}
-				// todo: create new conn for this new user
+				conn, err := newConnection(offer.FromId, creds, track)
+				if err != nil {
+					return fmt.Errorf("error creating connection for %s: %w", offer.From, err)
+				}
+				conns.Update(offer.From, conn)
+
 				err = wrtc.CreateAndSendAnswer(ws, conn.pc, &offer.Sd, offer.From)
 				if err != nil {
 					return fmt.Errorf("error creating or posting answer %w", err)
 				}
+
+				var sendIce sync.WaitGroup
+				sendIceCtx, cancelSendIce := context.WithCancel(ctx)
+				defer func() {
+					cancelSendIce()
+					sendIce.Wait()
+				}()
+
+				// gather local ice candidates for each peer and write to websocket
+				sendIce.Go(func() {
+					defer cancelSendIce()
+					if err = sendTaggedCandidates(sendIceCtx, ws, conn); err != nil {
+						abort <- err // this will cause surrounding function to cancel
+						// TODO: this should not stop the entire join process. should fail gracefully and retry
+					}
+				})
 			}
 		}
 	}
@@ -408,7 +421,7 @@ type CandidateMessage struct {
 // sendTaggedCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.
 // It sends the caller's name along with the candidate. It returns when there are no more
 // candidates or the context is cancelled.
-func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn Connection) error {
+func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn *Connection) error {
 	defer log.Println("ice gathering completed")
 	for {
 		select {

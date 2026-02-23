@@ -28,7 +28,7 @@ type RoomUser struct {
 	// user first joins the channel and is connecting to the other users. It maps the recipient's uuid
 	// to their connection struct.
 	PendingConnections *connMap
-	Offers             chan schemas.ConnectionRequest
+	Offers             chan schemas.ConnectionRequestWithId
 }
 
 // NewRoomUser creates a user struct for sending and recieving data to and from the room and its users.
@@ -37,7 +37,7 @@ func NewRoomUser(u *schemas.User) *RoomUser {
 		Id:                 u.Id,
 		Name:               u.Name,
 		PendingConnections: &connMap{conns: make(map[uuid.UUID]*connection, MaxRoomUsers-1)},
-		Offers:             make(chan schemas.ConnectionRequest, MaxRoomUsers-1),
+		Offers:             make(chan schemas.ConnectionRequestWithId, MaxRoomUsers-1),
 	}
 }
 

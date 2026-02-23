@@ -453,11 +453,20 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			// note: its important to ensure that none of the below goroutines never die and
 			// keep holding references to this connection^^ (could set it to nil to debug?)
 
-			offer := schemas.ConnectionRequest{
-				From: user.Name, // this is the caller's name
-				To:   recipient.Name,
-				Sd:   conn.From.Sd,
+			offer := schemas.ConnectionRequestWithId{
+				ConnectionRequest: schemas.ConnectionRequest{
+					From: user.Name, // this is the caller's name
+					To:   recipient.Name,
+					Sd:   conn.From.Sd,
+				},
+				FromId: user.Id,
+				ToId:   recipientId,
 			}
+			// offer := schemas.ConnectionRequest{
+			// 	From: user.Name, // this is the caller's name
+			// 	To:   recipient.Name,
+			// 	Sd:   conn.From.Sd,
+			// }
 			users[recipientId].Offers <- offer
 			log.Printf("conn created, signalling beginning with %s", req.To)
 
