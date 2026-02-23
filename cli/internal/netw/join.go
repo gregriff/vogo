@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"sync"
 	"time"
 
@@ -19,18 +18,12 @@ import (
 
 func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName string) error {
 	// TODO:
-	// - 1 peer connection per room user
 	// - remote track automatically created once connection established? yes, per PC
 	// - note: later, bulkConnectionRequest could be parallized, and the GUI could use recent status polling to
 	//         issue offers ahead of time, cancelling them if joinRoom returns that the user is no longer in the room
 	// - TODO: WILL NEED TO DECOUPLE AUDIO MIXER FROM REMOTE TRACKS! needs to communicate between PeerConnections
-	// - TODO: need to decouple PC connection from TrackLocal creation, adding Track to each created PC
 	//
 	// pseudocode:
-	// - call joinRoom endpoint
-	// - on bulkConnectionMessage, per user, create PeerConnection, offer
-	// - send bulkConnectionRequest
-	// - start message loop, handle answers, ICE candidates
 	// - make sure to send connection successful sentinels
 
 	// pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, creds.username, true)
@@ -238,6 +231,7 @@ func joinChannelAndConnect(
 	}
 	for id, name := range res.Users {
 		c, err := newConnection(id, creds, track)
+		defer wrtc.ClosePC(c.pc, true)
 		if err != nil {
 			return fmt.Errorf("error creating connection for %s: %w", name, err)
 		}
@@ -299,7 +293,7 @@ func joinChannelAndConnect(
 			} else {
 				log.Printf("messageLoop other err: %v", err)
 			}
-			_ = ws.WriteClose(http.StatusInternalServerError)
+			_ = ws.WriteClose(1)
 		}
 		abort <- fmt.Errorf("message loop error: %w", err)
 	})
@@ -327,12 +321,7 @@ func joinChannelAndConnect(
 					return fmt.Errorf("error: connection for user %s not found", data.Username)
 				}
 
-				candidate := data.Candidate
-				if candidate.Candidate == "" {
-					log.Println("ice gather completed")
-					return nil
-				}
-				if err := conn.pc.AddICECandidate(candidate); err != nil {
+				if err := conn.pc.AddICECandidate(data.Candidate); err != nil {
 					return fmt.Errorf("error recieving ICE candidate: %w", err)
 				}
 			// when the client receives an answer from a recipient
