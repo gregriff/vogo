@@ -23,7 +23,11 @@ import (
 // organized with waitgroups and synchronized with channels. The entire process can
 // be cancelled with the provided context, and the first error encountered will be returned.
 func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
-	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, creds.username, true)
+	track, err := wrtc.CreateAudioTrack(creds.username)
+	if err != nil {
+		return err
+	}
+	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, track, true)
 	if err != nil {
 		return fmt.Errorf("error initializing webrtc: %w", err)
 	}
@@ -108,12 +112,12 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 func answerAndConnect(
 	ctx context.Context,
 	pc *webrtc.PeerConnection,
-	creds *credentials,
+	credentials *credentials,
 	caller string,
 	candidates <-chan webrtc.ICECandidateInit,
 ) error {
 	endpoint := fmt.Sprintf("/answer/%s", caller)
-	ws, err := newWebsocket(ctx, creds, endpoint)
+	ws, err := newWebsocket(ctx, credentials, endpoint)
 	if err != nil {
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
@@ -157,7 +161,8 @@ func recieveOffer(ctx context.Context, ws *websocket.Conn) (*webrtc.SessionDescr
 	var offer webrtc.SessionDescription
 	if err := receiveWithContext(ctx, ws, &offer); err != nil {
 		if err == io.EOF {
-			return nil, fmt.Errorf("call not found") // could make this a sentinal
+			// TODO: this doesn't necessarily mean call not found. request ws could have closed on an error...
+			return nil, fmt.Errorf("call not found") // should make this a sentinal
 		}
 		return nil, fmt.Errorf("error reading from ws: %v", err)
 	}

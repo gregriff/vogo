@@ -23,17 +23,25 @@ type ConnectionRequestWithId struct {
 	ToId uuid.UUID
 }
 
-// CreateAndSendOffer creates the offer, starts ICE gathering, and sends the offer over ws,
-// for the specified recipient (username)
-func CreateAndSendOffer(ws *websocket.Conn, pc *webrtc.PeerConnection, recipient string) error {
-	offer, err := pc.CreateOffer(nil)
-	if err != nil {
-		return fmt.Errorf("error creating offer: %v", err)
+func CreateOffer(pc *webrtc.PeerConnection) (offer webrtc.SessionDescription, err error) {
+	if offer, err = pc.CreateOffer(nil); err != nil {
+		err = fmt.Errorf("error creating offer: %v", err)
+		return
 	}
 
 	// starts ICE gathering and UDP listeners
 	if err = pc.SetLocalDescription(offer); err != nil {
-		return fmt.Errorf("error setting local description: %v", err)
+		err = fmt.Errorf("error setting local description: %v", err)
+	}
+	return
+}
+
+// CreateAndSendOffer creates the offer, starts ICE gathering, and sends the offer over ws,
+// for the specified recipient (username)
+func CreateAndSendOffer(ws *websocket.Conn, pc *webrtc.PeerConnection, recipient string) error {
+	offer, err := CreateOffer(pc)
+	if err != nil {
+		return err
 	}
 
 	req := ConnectionRequest{To: recipient, Sd: offer}

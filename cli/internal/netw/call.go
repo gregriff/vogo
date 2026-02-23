@@ -17,7 +17,11 @@ import (
 // organized with waitgroups and synchronized with channels. The entire process can
 // be cancelled with the provided context, and the first error encountered will be returned.
 func CallFriend(ctx context.Context, creds *credentials, recipient string) error {
-	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, creds.username, true)
+	track, err := wrtc.CreateAudioTrack(creds.username)
+	if err != nil {
+		return err
+	}
+	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, track, true)
 	if err != nil {
 		return fmt.Errorf("error initializing webrtc: %v", err)
 	}
@@ -163,6 +167,7 @@ func sendCallAndConnect(
 			abort <- fmt.Errorf("error during readICE: %w", err)
 		}
 	})
+	// todo: this could be done in readIce goroutine if you pass in the pc...
 	if err = addCandidates(ctx, pc, recipientCandidates); err != nil {
 		return err
 	}
@@ -181,7 +186,7 @@ func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.IC
 			if err := websocket.JSON.Send(ws, candidate); err != nil {
 				return fmt.Errorf("error sending ice candidate: %w", err)
 			}
-			log.Println("sent candidate")
+			// log.Println("sent candidate")
 			if !ok {
 				return nil
 			}
@@ -191,6 +196,7 @@ func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.IC
 
 // addCandidates adds the recipient's ICE candidates from ch to the peer connection. This function will continue
 // until its context is cancelled even once all candidates are exhausted.
+// TODO: i think this could be done in the readIce goroutine
 func addCandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan webrtc.ICECandidateInit) error {
 	for {
 		select {

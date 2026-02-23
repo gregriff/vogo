@@ -21,7 +21,7 @@ var opusCodec = webrtc.RTPCodecCapability{
 // one for recieving the client's ICE candidates as they're gathered, and the other for signaling
 // when the PeerConnection moves to a connected state.
 // TODO: create a struct for this retval
-func NewAudioPeerConnection(stunServer, trackID string, exitOnFail bool) (
+func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample, exitOnFail bool) (
 	*webrtc.PeerConnection,
 	*webrtc.TrackLocalStaticSample,
 	chan webrtc.ICECandidateInit,
@@ -36,10 +36,10 @@ func NewAudioPeerConnection(stunServer, trackID string, exitOnFail bool) (
 	// if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
 	// 	panic(err)
 	// }
-	track, err := createAudioTrack(pc, trackID)
+	err = addAudioTrack(pc, track)
 	if err != nil {
 		ClosePC(pc, true)
-		return pc, track, nil, nil, fmt.Errorf("error creating audio track: %w", err)
+		return pc, track, nil, nil, fmt.Errorf("error adding audio track: %w", err)
 	}
 
 	var (
@@ -118,10 +118,48 @@ func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 	return api.NewPeerConnection(config)
 }
 
-// createAudioTrack configures a PeerConnection with a bidirectional transceiver and creates
-// an Opus audio TrackLocalStaticSample, which is returned, to write captured audio to.
-// TODO: this needs to accept a slice of PeerConnections for the room use case
-func createAudioTrack(pc *webrtc.PeerConnection, trackID string) (*webrtc.TrackLocalStaticSample, error) {
+// // createAudioTrack configures a PeerConnection with a bidirectional transceiver and creates
+// // an Opus audio TrackLocalStaticSample, which is returned, to write captured audio to.
+// // TODO: this needs to accept a slice of PeerConnections for the room use case
+// func createAudioTrack(pc *webrtc.PeerConnection, trackID string) (*webrtc.TrackLocalStaticSample, error) {
+// 	audioTrsv, err := pc.AddTransceiverFromKind(
+// 		webrtc.RTPCodecTypeAudio,
+// 		webrtc.RTPTransceiverInit{
+// 			Direction: webrtc.RTPTransceiverDirectionSendrecv,
+// 		},
+// 	)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error adding transceiver: %v", err)
+// 	}
+
+// 	// setup microphone capture track
+// 	captureTrack, err := webrtc.NewTrackLocalStaticSample(
+// 		opusCodec,
+// 		"captureTrack",
+// 		"captureTrack"+trackID,
+// 	)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error initalizing capture track: %v", err)
+// 	}
+// 	audioTrsv.Sender().ReplaceTrack(captureTrack)
+// 	return captureTrack, nil
+// }
+
+// CreateAudioTrack creates the opus audio track
+func CreateAudioTrack(trackId string) (*webrtc.TrackLocalStaticSample, error) {
+	t, err := webrtc.NewTrackLocalStaticSample(
+		opusCodec,
+		"captureTrack",
+		"captureTrack"+trackId,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error initalizing capture track: %v", err)
+	}
+	return t, nil
+}
+
+// addAudioTrack configures a PeerConnection with a bidirectional transceiver and adds the track to it.
+func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) error {
 	audioTrsv, err := pc.AddTransceiverFromKind(
 		webrtc.RTPCodecTypeAudio,
 		webrtc.RTPTransceiverInit{
@@ -129,20 +167,10 @@ func createAudioTrack(pc *webrtc.PeerConnection, trackID string) (*webrtc.TrackL
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error adding transceiver: %v", err)
+		return fmt.Errorf("error adding transceiver: %v", err)
 	}
-
-	// setup microphone capture track
-	captureTrack, err := webrtc.NewTrackLocalStaticSample(
-		opusCodec,
-		"captureTrack",
-		"captureTrack"+trackID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("error initalizing capture track: %v", err)
-	}
-	audioTrsv.Sender().ReplaceTrack(captureTrack)
-	return captureTrack, nil
+	audioTrsv.Sender().ReplaceTrack(track)
+	return nil
 }
 
 func ClosePC(pc *webrtc.PeerConnection, verbose bool) {

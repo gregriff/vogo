@@ -6,6 +6,7 @@
 - pull out msgHandler switch and eventHandler switch into funcs. 
 - ice sending on client side needs to send a sentinel for DONE status, since room ws needs to stay open and can't 
   recv EOFs at any time (already does this with empty candidate??)
+- client-side ICE sending should not fail the entire join thread and should instead retry per PC
 - parallelize client sending offers when joining a room: this requires ws multiplexer on server-side
 - add poll to status
 - add a 'config' command that invokes default text editor (how do i do this on windows?)

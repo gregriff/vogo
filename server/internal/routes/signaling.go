@@ -455,6 +455,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 			offer := schemas.ConnectionRequest{
 				From: user.Name, // this is the caller's name
+				To:   recipient.Name,
 				Sd:   conn.From.Sd,
 			}
 			users[recipientId].Offers <- offer
@@ -582,6 +583,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					break
 				}
 				conn.To.Candidates <- data.Candidate
+			// this is when the client answers a new user's offer
 			case "answer":
 				var answer schemas.ConnectionRequestWithId
 				json.Unmarshal(msg.Data, &answer)

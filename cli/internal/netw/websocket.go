@@ -76,9 +76,6 @@ func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICEC
 	for {
 		err := receiveWithContext(ctx, ws, &candidate)
 		if err != nil {
-			// if err == io.EOF {
-			// 	return err
-			// }
 			return fmt.Errorf("error reading from ws: %w", err)
 		}
 
