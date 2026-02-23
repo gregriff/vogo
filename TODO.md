@@ -1,6 +1,7 @@
 # TODOs
 
 ### Next:
+- client: put room structs in wrtc package, req structs in netw (requests.go?) or crud?
 - handle EOF: this always means the ws is closed. if it happens during normal operation this is bad... this should also not signal a successful call, instead use a sentinel
 - server should listen for a client-sent ACK of successful connection, to delete the pendingConnection entry
 - pull out msgHandler switch and eventHandler switch into funcs. 

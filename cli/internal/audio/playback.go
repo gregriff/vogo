@@ -15,6 +15,7 @@ import (
 // SetupPlayback initializes the playback device with malgo, and defines the callback that is run per remote-track, that
 // reads the audio from the network and places it in the buffer for the playback device to read from. This function
 // is used by voice calls (1:1)
+// TODO: should this return the pcm stuff so that onTrack can be called by other goroutines once PCs are created?
 func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 	deviceCtx *malgo.AllocatedContext,
 	device *malgo.Device,

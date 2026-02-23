@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gen2brain/malgo"
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
@@ -50,21 +51,21 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	}()
 
 	// initalize speaker asynchronously
-	// var (
-	// 	playbackWg  sync.WaitGroup
-	// 	playbackCtx *malgo.AllocatedContext
-	// 	speaker     *malgo.Device
-	// )
-	// go func() {
-	// 	// TODO: mic capture needs to start after this is completed. add a noti chan
-	// 	playbackCtx, speaker, err = audio.SetupPlayback(pc, &playbackWg)
-	// 	if err != nil {
-	// 		abort <- fmt.Errorf("error initializing playback system: %w", err)
-	// 		return
-	// 	}
-	// 	log.Println("playback device created")
-	// }()
-	// defer audio.UninitPlayback(pc, playbackCtx, speaker, &playbackWg)
+	var (
+		playbackWg  sync.WaitGroup
+		playbackCtx *malgo.AllocatedContext
+		speaker     *malgo.Device
+	)
+	go func() {
+		// TODO: mic capture needs to start after this is completed. add a noti chan
+		playbackCtx, speaker, err = audio.SetupPlaybackChannel(pc, &playbackWg)
+		if err != nil {
+			abort <- fmt.Errorf("error initializing playback system: %w", err)
+			return
+		}
+		log.Println("playback device created")
+	}()
+	defer audio.UninitPlayback(pc, playbackCtx, speaker, &playbackWg)
 
 	var join sync.WaitGroup
 	joinCtx, cancelJoin := context.WithCancel(ctx)
@@ -166,14 +167,14 @@ type Connection struct {
 	connected chan struct{}
 }
 
-func newConnection(id uuid.UUID, creds *credentials, track *webrtc.TrackLocalStaticSample) (*Connection, error) {
-	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, track, false)
+func newConnection(id uuid.UUID, callerName, stunServer string, track *webrtc.TrackLocalStaticSample) (*Connection, error) {
+	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(stunServer, track, false)
 	if err != nil {
 		return &Connection{}, fmt.Errorf("error initializing webrtc: %w", err)
 	}
 	c := Connection{
 		id:         id,
-		callerName: creds.username,
+		callerName: callerName,
 		pc:         pc,
 		track:      track,
 		candidates: candidates,
@@ -230,7 +231,7 @@ func joinChannelAndConnect(
 		data: make(map[string]*Connection, 6),
 	}
 	for id, name := range res.Users {
-		c, err := newConnection(id, creds, track)
+		c, err := newConnection(id, creds.username, creds.stunServer, track)
 		defer wrtc.ClosePC(c.pc, true)
 		if err != nil {
 			return fmt.Errorf("error creating connection for %s: %w", name, err)
@@ -243,6 +244,7 @@ func joinChannelAndConnect(
 	start := time.Now()
 	bulkReq := BulkConnectionMessage{Data: make(map[uuid.UUID]wrtc.ConnectionRequest, 6)}
 	for recipient, c := range conns.data {
+		// TODO: start playback stuff here?
 		offer, err := wrtc.CreateOffer(c.pc)
 		if err != nil {
 			return fmt.Errorf("error creating offer for %s: %w", recipient, err)
@@ -266,7 +268,7 @@ func joinChannelAndConnect(
 		// gather local ice candidates for each peer and write to websocket
 		sendIce.Go(func() {
 			defer cancelSendIce()
-			if err = sendTaggedCandidates(sendIceCtx, ws, c); err != nil {
+			if err = sendTaggedCandidates(sendIceCtx, ws, c, "ice-offer"); err != nil {
 				abort <- err // this will cause surrounding function to cancel
 				// TODO: this should not stop the entire join process. should fail gracefully and retry
 			}
@@ -351,15 +353,31 @@ func joinChannelAndConnect(
 				if conn, ok = conns.Get(offer.From); ok {
 					log.Printf("recreating offer to %s", offer.From)
 				}
-				conn, err := newConnection(offer.FromId, creds, track)
+				conn, err := newConnection(offer.FromId, offer.From, creds.stunServer, track)
 				if err != nil {
 					return fmt.Errorf("error creating connection for %s: %w", offer.From, err)
 				}
 				conns.Update(offer.From, conn)
 
-				err = wrtc.CreateAndSendAnswer(ws, conn.pc, &offer.Sd, offer.From)
+				// create and send answer
+				_, err = wrtc.CreateAnswer(conn.pc, &offer.Sd)
 				if err != nil {
 					return fmt.Errorf("error creating or posting answer %w", err)
+				}
+
+				answer := wrtc.ConnectionRequest{From: offer.To, To: offer.From, Sd: *conn.pc.LocalDescription()}
+				bytes, err := json.Marshal(wrtc.ConnectionRequestWithId{
+					ConnectionRequest: answer,
+					FromId:            offer.ToId,
+					ToId:              offer.FromId,
+				})
+				if err != nil {
+					return fmt.Errorf("error encoding answer: %w", err)
+				}
+
+				msg := Message{Type: "answer", Data: bytes}
+				if err := websocket.JSON.Send(ws, msg); err != nil {
+					return fmt.Errorf("error sending candidate: %w", err)
 				}
 
 				var sendIce sync.WaitGroup
@@ -372,7 +390,7 @@ func joinChannelAndConnect(
 				// gather local ice candidates for each peer and write to websocket
 				sendIce.Go(func() {
 					defer cancelSendIce()
-					if err = sendTaggedCandidates(sendIceCtx, ws, conn); err != nil {
+					if err = sendTaggedCandidates(sendIceCtx, ws, conn, "ice-answer"); err != nil {
 						abort <- err // this will cause surrounding function to cancel
 						// TODO: this should not stop the entire join process. should fail gracefully and retry
 					}
@@ -410,7 +428,7 @@ type CandidateMessage struct {
 // sendTaggedCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.
 // It sends the caller's name along with the candidate. It returns when there are no more
 // candidates or the context is cancelled.
-func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn *Connection) error {
+func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn *Connection, tag string) error {
 	defer log.Println("ice gathering completed")
 	for {
 		select {
@@ -426,7 +444,7 @@ func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn *Connect
 				return fmt.Errorf("error encoding candidate: %w", err)
 			}
 
-			msg := Message{Type: "ice-candidate", Data: bytes}
+			msg := Message{Type: tag, Data: bytes}
 			if err := websocket.JSON.Send(ws, msg); err != nil {
 				return fmt.Errorf("error sending candidate: %w", err)
 			}

@@ -122,8 +122,15 @@ func sendCallAndConnect(
 	}
 	defer closeAndWait(ws, nil)
 
-	if err = wrtc.CreateAndSendOffer(ws, pc, recipient); err != nil {
+	offer, err := wrtc.CreateOffer(pc)
+	if err != nil {
 		return err
+	}
+
+	// send offer
+	req := wrtc.ConnectionRequest{To: recipient, Sd: offer}
+	if err = websocket.JSON.Send(ws, req); err != nil {
+		return fmt.Errorf("error sending offer: %w", err)
 	}
 
 	var sendIce sync.WaitGroup

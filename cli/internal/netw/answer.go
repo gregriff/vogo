@@ -126,9 +126,13 @@ func answerAndConnect(
 	if err != nil {
 		return fmt.Errorf("error recieving offer: %w", err)
 	}
-	err = wrtc.CreateAndSendAnswer(ws, pc, offer, caller)
+	_, err = wrtc.CreateAnswer(pc, offer)
 	if err != nil {
-		return fmt.Errorf("error creating or posting answer %w", err)
+		return fmt.Errorf("error creating answer %w", err)
+	}
+	req := wrtc.ConnectionRequest{To: caller, Sd: *pc.LocalDescription()}
+	if err = websocket.JSON.Send(ws, req); err != nil {
+		return fmt.Errorf("error sending answer: %w", err)
 	}
 	log.Println("answer sent")
 
