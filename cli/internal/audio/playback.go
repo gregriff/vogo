@@ -69,27 +69,31 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 	return
 }
 
-// SetupPlaybackChannel initializes the playback device with malgo, and defines the callback that is run per remote-track, that
-// reads the audio from the network and places it in the buffer for the playback device to read from. This function is used for
-// channel (multi-user) voice chats.
-// TODO: combine ctx and device into a Speaker struct
-func SetupPlaybackChannel(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
+// SetupPlaybackChannel initializes the playback device with malgo,
+// using the pcm struct for handling multiple audio streams.
+// // TODO: combine ctx and device into a Speaker struct
+func SetupPlaybackChannel(pcmBuffers *ChannelStreams) (
 	deviceCtx *malgo.AllocatedContext,
 	device *malgo.Device,
 	err error,
 ) {
-	deviceCtx, device, pcmBuffers, err := createChannelDevice()
+	deviceCtx, device, err = createChannelDevice(pcmBuffers)
 	if err != nil {
 		err = fmt.Errorf("error initalizing playback device: %w", err)
-		return
 	}
+	return
+}
 
-	decoder, err := opus.NewDecoder(SampleRate, NumChannels)
-	if err != nil {
-		err = fmt.Errorf("decoder init error: %w", err)
-		return
-	}
-
+// OnRemoteTrack handles decoding decoding opus audio for each remote track of a PeerConnection. It
+// should be attached to each PeerConnection using pc.OnTrack(). For vogo, each PC should only have one
+// RemoteTrack. Decoded audio is written to pcmBuffers, from which the speaker goroutine reads and mixes
+// with other PC's audio streams for playback. This should only be used for multi-user voice chat channels/rooms.
+// NOTE: DecodeFEC and DecodePLC are available for later use
+// NOTE: if text remote tracks are added, this will have to not add those to audio stream struct
+func OnRemoteTrack(
+	wg *sync.WaitGroup,
+	pcmBuffers *ChannelStreams,
+) func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 	// this func runs for every remote track connected to this peer connection
 	// this is where the decoder writes pcm from the network
 	// note: realize that this code will run multiple times if more than one remote track is connected (multi-user voice chat)
@@ -109,14 +113,22 @@ func SetupPlaybackChannel(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 	//   all present pcm bufs (one per track). so the first strategy is the onTrack doing the mixing, and this strat is the
 	//   onSample doing the mixing... onSample joining is prob more robust but may be slower if pcm bufs are fragmented in the heap...
 	// NOTE: should ensure that a 1:1 voice call never does any of this... only multi-user channels
-	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	return func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		wg.Add(1)
 		defer wg.Done()
 
-		fmt.Printf("added track with id: %s, streamID: %s", track.ID(), track.StreamID())
+		// decoder operates on only one audio stream so init here.
+		// note: could pass this in.
+		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
+		if err != nil {
+			panic(fmt.Errorf("decoder init error: %w", err))
+		}
+
+		fmt.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
 		decodeBuf := make([]int16, pcmBufferSize)
 		pcm := make([]int16, pcmBufferSize)
 		pcmBuffers.addStream(&pcm)
+
 		for {
 			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
 			packet, _, readErr := track.ReadRTP()
@@ -148,8 +160,7 @@ func SetupPlaybackChannel(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 			pcm = append(pcm, decodeBuf[:framesDecoded]...) // inefficient? reslice instead?
 			pcmBuffers.mu.Unlock()
 		}
-	})
-	return
+	}
 }
 
 // createCallDevice inits, configures, and sets up the callback needed to use the speaker for peer-to-peer (1:1) voice calls.
@@ -184,14 +195,12 @@ func createCallDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm 
 }
 
 // createCallDevice inits, configures, and sets up the callback needed to use the speaker for multi-user voice chats (channels).
-func createChannelDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, streams *ChannelStreams, err error) {
+func createChannelDevice(streams *ChannelStreams) (ctx *malgo.AllocatedContext, device *malgo.Device, err error) {
 	ctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
 		err = fmt.Errorf("error initializing device context: %w", err)
 		return
 	}
-
-	streams = &ChannelStreams{}
 
 	// read into output sample buf, for output to speaker device. this fires every X milliseconds
 	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
@@ -199,7 +208,7 @@ func createChannelDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, s
 		streams.mu.Lock()
 		defer streams.mu.Unlock()
 
-		ok, fullBufs := streams.hasFullSample(samplesToRead)
+		fullBufs, ok := streams.hasFullSample(samplesToRead)
 		// if there isn't yet a full sample in any of the pcm buffers sent from the network
 		if !ok {
 			return
@@ -242,11 +251,11 @@ func initDevice(ctx *malgo.AllocatedContext, onSendFrames malgo.DataProc) (devic
 	return
 }
 
-// UninitPlayback uninitializes the malgo playback device and frees all its resources. First, it attempts a graceful close
+// UninitPlayback uninitializes the speaker device for a 1:1 voice call. First, it attempts a graceful close
 // of the PeerConnection, in order to unblock the playback goroutine, which blocks while it reads packets from the network.
 // The playback wg is then waited on, while the goroutines reading from the network (RemoteTracks) complete. Regardless
 // of the result of the graceful close, the malgo device is torn down.
-func UninitPlayback(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, device *malgo.Device, wg *sync.WaitGroup) {
+func UninitCallPlayback(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, device *malgo.Device, wg *sync.WaitGroup) {
 	// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
 	if closeErr := pc.GracefulClose(); closeErr != nil {
 		fmt.Printf("cannot gracefully close recipient connection: %v\n", closeErr)
@@ -254,6 +263,13 @@ func UninitPlayback(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, devi
 		wg.Wait()
 	}
 
+	UninitPlayback(ctx, device)
+}
+
+// uninitPlayback uninitializes the malgo playback device and frees all its resources. Ideally,
+// nothing should be writing to the speaker device when this is called. This is ensured by
+// closing all PeerConnections beforehand, since their RemoteTrack handlers write to the device.
+func UninitPlayback(ctx *malgo.AllocatedContext, device *malgo.Device) {
 	if ctx == nil {
 		fmt.Println("playback ctx uninit before init")
 		return

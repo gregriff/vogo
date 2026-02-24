@@ -54,7 +54,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 		}
 		log.Println("playback device created")
 	}()
-	defer audio.UninitPlayback(pc, playbackCtx, speaker, &playbackWg)
+	defer audio.UninitCallPlayback(pc, playbackCtx, speaker, &playbackWg)
 
 	var answer sync.WaitGroup
 	answerCtx, cancelAnswer := context.WithCancel(ctx)

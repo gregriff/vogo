@@ -3,6 +3,7 @@ package netw
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -52,20 +53,28 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 
 	// initalize speaker asynchronously
 	var (
-		playbackWg  sync.WaitGroup
-		playbackCtx *malgo.AllocatedContext
-		speaker     *malgo.Device
+		playbackWg       sync.WaitGroup
+		playbackCtx      *malgo.AllocatedContext
+		speaker          *malgo.Device
+		pcmBufs          = audio.NewChannelStreams()
+		playbackInitDone = make(chan struct{})
 	)
 	go func() {
 		// TODO: mic capture needs to start after this is completed. add a noti chan
-		playbackCtx, speaker, err = audio.SetupPlaybackChannel(pc, &playbackWg)
+		playbackCtx, speaker, err = audio.SetupPlaybackChannel(pcmBufs)
 		if err != nil {
 			abort <- fmt.Errorf("error initializing playback system: %w", err)
 			return
 		}
 		log.Println("playback device created")
+		playbackInitDone <- struct{}{}
 	}()
-	defer audio.UninitPlayback(pc, playbackCtx, speaker, &playbackWg)
+	defer func() {
+		// waits for all PeerConnections to close, so that nothing is writing to the
+		// speaker devices when they are uninitialized
+		playbackWg.Wait()
+		audio.UninitPlayback(playbackCtx, speaker)
+	}()
 
 	var join sync.WaitGroup
 	joinCtx, cancelJoin := context.WithCancel(ctx)
@@ -76,10 +85,11 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 
 	join.Go(func() {
 		defer cancelJoin()
+		defer close(abort)
 
 		// note: could create and return conns in main thread, then merge connected channels to prevent mic
 		// init until ness.
-		err := joinChannelAndConnect(joinCtx, creds, track, ownerName, channelName, abort)
+		err := joinChannelAndConnect(joinCtx, creds, track, ownerName, channelName, &playbackWg, pcmBufs, abort)
 		if err != nil {
 			abort <- err
 			return
@@ -91,6 +101,7 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// and will wait until at least 1 PC is in connected state
 
 	var capture sync.WaitGroup
+	captureAbort := make(chan error, 10)
 	captureCtx, cancelCapture := context.WithCancel(ctx)
 	defer func() {
 		cancelCapture()
@@ -100,24 +111,24 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// NOTE: this cannot run until at least 1 PeerConnection (and therefore the Track) has been created.
 	// setup microphone once call is connected and capture until cancelled
 	capture.Go(func() {
-		// select {
-		// case <-captureCtx.Done():
-		// return
-		// case <-connected:
-		// 	// TODO: this should not cancel the entire join goroutine. we do need to merge all connected channels into one,
-		// 	// but a noti on it should not cancel the join process for all pending connections, which is what this would do.
-		// 	cancelJoin()
-		// 	break
-		// }
-		if err := audio.StartCapture(captureCtx, track); err != nil {
-			abort <- fmt.Errorf("error with capture device: %w", err)
+		defer close(captureAbort)
+		select {
+		case <-captureCtx.Done():
 			return
+		case <-playbackInitDone:
+			break
+		}
+		if err := audio.StartCapture(captureCtx, track); err != nil {
+			log.Println("error in startCapture")
+			captureAbort <- fmt.Errorf("error with capture device: %w", err)
 		}
 	})
 
 	// block until sigint or error in goroutines above
 	select {
 	case err := <-abort:
+		return fmt.Errorf("call aborted: %w", err)
+	case err := <-captureAbort:
 		return fmt.Errorf("call aborted: %w", err)
 	case <-ctx.Done():
 		return nil
@@ -149,8 +160,6 @@ type Connection struct {
 	// the uuid of the recipient user.
 	id uuid.UUID
 
-	callerName string
-
 	// webrtc PeerConnection
 	pc *webrtc.PeerConnection
 
@@ -167,14 +176,13 @@ type Connection struct {
 	connected chan struct{}
 }
 
-func newConnection(id uuid.UUID, callerName, stunServer string, track *webrtc.TrackLocalStaticSample) (*Connection, error) {
+func newConnection(id uuid.UUID, stunServer string, track *webrtc.TrackLocalStaticSample) (*Connection, error) {
 	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(stunServer, track, false)
 	if err != nil {
 		return &Connection{}, fmt.Errorf("error initializing webrtc: %w", err)
 	}
 	c := Connection{
 		id:         id,
-		callerName: callerName,
 		pc:         pc,
 		track:      track,
 		candidates: candidates,
@@ -208,6 +216,8 @@ func joinChannelAndConnect(
 	creds *credentials,
 	track *webrtc.TrackLocalStaticSample,
 	ownerName, channelName string,
+	playbackWg *sync.WaitGroup,
+	pcmBufs *audio.ChannelStreams,
 	abort chan<- error,
 ) error {
 	ws, err := newWebsocket(ctx, creds, "/channel/join")
@@ -227,12 +237,23 @@ func joinChannelAndConnect(
 		return fmt.Errorf("error reading channel users from ws: %v", err)
 	}
 
+	// TODO: short circuit here, only sending blank bulkmsg and running msg loop
+	if len(res.Users) == 0 {
+		log.Println("no users in channel")
+	}
+
 	conns := &ConnectionMap{
 		data: make(map[string]*Connection, 6),
 	}
 	for id, name := range res.Users {
-		c, err := newConnection(id, creds.username, creds.stunServer, track)
-		defer wrtc.ClosePC(c.pc, true)
+		c, err := newConnection(id, creds.stunServer, track)
+		defer func() {
+			// users may leave, and their pc's destroyed before this runs
+			var ok bool
+			if c, ok = conns.Get(name); ok {
+				wrtc.ClosePC(c.pc, true)
+			}
+		}()
 		if err != nil {
 			return fmt.Errorf("error creating connection for %s: %w", name, err)
 		}
@@ -244,14 +265,35 @@ func joinChannelAndConnect(
 	start := time.Now()
 	bulkReq := BulkConnectionMessage{Data: make(map[uuid.UUID]wrtc.ConnectionRequest, 6)}
 	for recipient, c := range conns.data {
+		if recipient == "" {
+			return errors.New("empty recipient")
+		}
 		// TODO: start playback stuff here?
 		offer, err := wrtc.CreateOffer(c.pc)
 		if err != nil {
 			return fmt.Errorf("error creating offer for %s: %w", recipient, err)
 		}
 		bulkReq.Data[c.id] = wrtc.ConnectionRequest{From: creds.username, To: recipient, Sd: offer}
+		log.Printf("%s will send offer to %s...\n", creds.username, recipient)
 	}
-	fmt.Printf("offers took %v to generate", time.Since(start))
+	fmt.Printf("offers took %v to generate\n", time.Since(start))
+
+	start = time.Now()
+	for recipient, c := range conns.data {
+		c.pc.OnTrack(audio.OnRemoteTrack(playbackWg, pcmBufs))
+		defer func() {
+			// users may leave, and their pc's destroyed before this runs
+			var ok bool
+			if c, ok = conns.Get(recipient); !ok {
+				return
+			}
+			if err := c.pc.GracefulClose(); err != nil {
+				log.Printf("graceful close error: %v", err)
+			}
+			log.Printf("%s's pc gracefully closed", recipient)
+		}()
+	}
+	fmt.Printf("remote handlers took %v to call\n", time.Since(start))
 
 	if err = websocket.JSON.Send(ws, bulkReq); err != nil {
 		return fmt.Errorf("error sending bulk offers: %w", err)
@@ -267,8 +309,13 @@ func joinChannelAndConnect(
 	for _, c := range conns.data {
 		// gather local ice candidates for each peer and write to websocket
 		sendIce.Go(func() {
-			defer cancelSendIce()
-			if err = sendTaggedCandidates(sendIceCtx, ws, c, "ice-offer"); err != nil {
+			defer func() {
+				cancelSendIce()
+				log.Println("ice-offer sending done")
+			}()
+			log.Println("sending ice-offers now")
+			if err = sendTaggedCandidates(sendIceCtx, ws, c, creds.username, "ice-offer"); err != nil {
+				log.Printf("SEND TAGGED CANDIDATES ERR: %v\n", err)
 				abort <- err // this will cause surrounding function to cancel
 				// TODO: this should not stop the entire join process. should fail gracefully and retry
 			}
@@ -289,15 +336,14 @@ func joinChannelAndConnect(
 		wsRecvWg.Wait()
 	}()
 	wsRecvWg.Go(func() {
-		if err := startMessageLoop(wsRecvCtx, ws, msgChan); err != nil {
+		var err error
+		if err = startMessageLoop(wsRecvCtx, ws, msgChan); err != nil {
 			if err == io.EOF { // todo: may need to handle this in startMessageLoop
-				log.Println("messageLoop EOF")
-			} else {
-				log.Printf("messageLoop other err: %v", err)
+				err = errors.New("closed by server")
 			}
 			_ = ws.WriteClose(1)
 		}
-		abort <- fmt.Errorf("message loop error: %w", err)
+		abort <- fmt.Errorf("message loop closed: %w", err)
 	})
 
 	// this should run until the client leaves the room. it needs to handle
@@ -312,6 +358,25 @@ func joinChannelAndConnect(
 			// event loop "msgHandlerWg". 'tick' will report the wg's counter (manually increment a top level int).
 			switch msg.Type {
 			// TODO: try to combine offer and answer handlers with additional property in CandidateMessage
+			case "ice-offer":
+				var (
+					data CandidateMessage
+					conn *Connection
+					ok   bool
+				)
+				json.Unmarshal(msg.Data, &data)
+				if conn, ok = conns.Get(data.Username); !ok {
+					return fmt.Errorf("error: connection for user %s not found", data.Username)
+				}
+
+				if err := conn.pc.AddICECandidate(data.Candidate); err != nil {
+					return fmt.Errorf("error recieving ICE candidate: %w", err)
+				}
+				if data.Candidate.Candidate == "" {
+					log.Printf("ICE offer NIL recv")
+				} else {
+					log.Printf("ICE offer candidate recieved: %s\n", *data.Candidate.SDPMid)
+				}
 			case "ice-answer":
 				var (
 					data CandidateMessage
@@ -326,6 +391,11 @@ func joinChannelAndConnect(
 				if err := conn.pc.AddICECandidate(data.Candidate); err != nil {
 					return fmt.Errorf("error recieving ICE candidate: %w", err)
 				}
+				if data.Candidate.Candidate == "" {
+					log.Printf("ICE answer NIL recv")
+				} else {
+					log.Printf("ICE answer candidate recieved: %s\n", *data.Candidate.SDPMid)
+				}
 			// when the client receives an answer from a recipient
 			case "answer":
 				var (
@@ -334,13 +404,14 @@ func joinChannelAndConnect(
 					ok     bool
 				)
 				json.Unmarshal(msg.Data, &answer)
-				if conn, ok = conns.Get(answer.From); !ok {
+				log.Printf("received answer from ws: from:%s to: %s\n", answer.From, answer.To)
+				if conn, ok = conns.Get(answer.To); !ok {
 					return fmt.Errorf("error: connection for user %s not found", answer.From)
 				}
 				if err = conn.pc.SetRemoteDescription(answer.Sd); err != nil {
 					return fmt.Errorf("error while setting remote description: %w", err)
 				}
-				log.Println("answer handler: answer recieved")
+				log.Printf("received answer from %s", answer.From)
 			// this happens when the client is already in the room and a new user joins,
 			// sending the client their offer
 			case "offer":
@@ -351,19 +422,34 @@ func joinChannelAndConnect(
 				)
 				json.Unmarshal(msg.Data, &offer)
 				if conn, ok = conns.Get(offer.From); ok {
+					_ = conn.pc.Close() // temp
 					log.Printf("recreating offer to %s", offer.From)
 				}
-				conn, err := newConnection(offer.FromId, offer.From, creds.stunServer, track)
+				conn, err := newConnection(offer.FromId, creds.stunServer, track)
 				if err != nil {
 					return fmt.Errorf("error creating connection for %s: %w", offer.From, err)
 				}
 				conns.Update(offer.From, conn)
+				log.Printf("received offer from %s, created conn", offer.From)
 
 				// create and send answer
 				_, err = wrtc.CreateAnswer(conn.pc, &offer.Sd)
 				if err != nil {
 					return fmt.Errorf("error creating or posting answer %w", err)
 				}
+
+				conn.pc.OnTrack(audio.OnRemoteTrack(playbackWg, pcmBufs))
+				defer func() {
+					// users may leave, and their pc's destroyed before this runs
+					var ok bool
+					if conn, ok = conns.Get(offer.From); !ok {
+						return
+					}
+					if err := conn.pc.GracefulClose(); err != nil {
+						log.Printf("graceful close error: %v", err)
+					}
+					log.Printf("%s's pc gracefully closed", offer.From)
+				}()
 
 				answer := wrtc.ConnectionRequest{From: offer.To, To: offer.From, Sd: *conn.pc.LocalDescription()}
 				bytes, err := json.Marshal(wrtc.ConnectionRequestWithId{
@@ -379,6 +465,7 @@ func joinChannelAndConnect(
 				if err := websocket.JSON.Send(ws, msg); err != nil {
 					return fmt.Errorf("error sending candidate: %w", err)
 				}
+				log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
 				var sendIce sync.WaitGroup
 				sendIceCtx, cancelSendIce := context.WithCancel(ctx)
@@ -389,12 +476,19 @@ func joinChannelAndConnect(
 
 				// gather local ice candidates for each peer and write to websocket
 				sendIce.Go(func() {
-					defer cancelSendIce()
-					if err = sendTaggedCandidates(sendIceCtx, ws, conn, "ice-answer"); err != nil {
+					defer func() {
+						cancelSendIce()
+						log.Println("ice-answer sending done")
+					}()
+					log.Println("sending ice-answers now")
+					if err = sendTaggedCandidates(sendIceCtx, ws, conn, creds.username, "ice-answer"); err != nil {
+						log.Printf("SEND TAGGED CANDIDATES ERR: %v\n", err)
 						abort <- err // this will cause surrounding function to cancel
 						// TODO: this should not stop the entire join process. should fail gracefully and retry
 					}
 				})
+			default:
+				log.Printf("unknown message: %v", msg)
 			}
 		}
 	}
@@ -412,7 +506,6 @@ func startMessageLoop(ctx context.Context, ws *websocket.Conn, ch chan<- Message
 	for {
 		var msg Message
 		if err := receiveWithContext(ctx, ws, &msg); err != nil {
-			log.Printf("error reading answer from ws: %v", err)
 			return err
 		}
 		ch <- msg
@@ -425,10 +518,10 @@ type CandidateMessage struct {
 	Candidate webrtc.ICECandidateInit
 }
 
-// sendTaggedCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.
-// It sends the caller's name along with the candidate. It returns when there are no more
+// sendTaggedCandidates sends the client's ICE candidates from ch to the websocket as they're gathered.
+// It sends the client's name along with the candidate. It returns when there are no more
 // candidates or the context is cancelled.
-func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn *Connection, tag string) error {
+func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn *Connection, callerName, tag string) error {
 	defer log.Println("ice gathering completed")
 	for {
 		select {
@@ -437,7 +530,7 @@ func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn *Connect
 		case candidate, ok := <-conn.candidates:
 			bytes, err := json.Marshal(CandidateMessage{
 				UserId:    conn.id,
-				Username:  conn.callerName,
+				Username:  callerName,
 				Candidate: candidate,
 			})
 			if err != nil {

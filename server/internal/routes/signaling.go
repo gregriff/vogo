@@ -389,7 +389,6 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
-	log.Println("room created")
 	defer room.Leave(roomUser)
 
 	users := room.Users(roomUser.Id)
@@ -417,7 +416,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
-	if len(offers.Data) == 0 {
+	if len(offers.Data) == 0 && len(users) != 0 {
 		log.Println("no offers recieved from ws")
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
@@ -462,41 +461,55 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				FromId: user.Id,
 				ToId:   recipientId,
 			}
-			// offer := schemas.ConnectionRequest{
-			// 	From: user.Name, // this is the caller's name
-			// 	To:   recipient.Name,
-			// 	Sd:   conn.From.Sd,
-			// }
 			users[recipientId].Offers <- offer
-			log.Printf("conn created, signalling beginning with %s", req.To)
+			log.Printf("%s created conn, signalling beginning with %s", username, req.To)
 
 			// own func
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case answerSd := <-conn.Answer:
-					msg := schemas.ConnectionRequest{
+				case answerSd, ok := <-conn.Answer:
+					if !ok {
+						conn.Answer = nil
+						continue
+					}
+					log.Printf("%s received %s's answer from chan\n", username, req.To)
+					bytes, err := json.Marshal(schemas.ConnectionRequest{
 						To: req.To, // this is the recipient
 						Sd: answerSd,
+					})
+					if err != nil {
+						log.Printf("error encoding candidate: %v", err)
+						return
 					}
+
+					msg := Message{Type: "answer", Data: bytes}
 					if err := websocket.JSON.Send(ws, msg); err != nil {
 						log.Printf("error writing answer: %v", err)
 						return
 					}
+					log.Printf("%s's answer sent to %s\n", req.To, username)
 				case answerCandidate, ok := <-conn.To.Candidates:
-					msg := schemas.CandidateMessage{
+					bytes, err := json.Marshal(schemas.CandidateMessage{
 						UserId:    recipientId,
 						Username:  req.To, // this is the recipient
 						Candidate: answerCandidate,
-					}
-					if err := websocket.JSON.Send(ws, msg); err != nil {
-						log.Printf("error writing candidate: %v", err)
+					})
+					if err != nil {
+						log.Printf("error encoding candidate: %v", err)
 						return
 					}
+
+					msg := Message{Type: "ice-answer", Data: bytes}
+					if err := websocket.JSON.Send(ws, msg); err != nil {
+						log.Printf("error writing answer candidate: %v", err)
+						return
+					}
+					log.Printf("%s's candidate read and sent to %s", req.To, username)
 					// we've sent the caller the recipient's last candidate. nothing left to do
 					if !ok {
-						// conn.To.Candidates = nil // unness
+						conn.To.Candidates = nil // unness
 						return
 					}
 				}
@@ -529,9 +542,9 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	// that the user is in the room.
 
 	var sendIce sync.WaitGroup
-	ticker := time.NewTicker(1 * time.Second)
+	// ticker := time.NewTicker(1 * time.Second)
 	defer func() {
-		ticker.Stop()
+		// ticker.Stop()
 		_ = ws.Close()
 		sendIce.Wait()
 	}()
@@ -542,12 +555,20 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			log.Println("tick")
+		// case <-ticker.C:
+		// log.Println("tick")
 		case offer := <-roomUser.Offers:
-			if err := websocket.JSON.Send(ws, offer); err != nil {
-				log.Printf("error writing AnswerConnectionMessage to %s's offer: %v", offer.To, err)
+			bytes, err := json.Marshal(offer)
+			if err != nil {
+				log.Printf("error encoding candidate: %v", err)
+				return
 			}
+
+			msg := Message{Type: "offer", Data: bytes}
+			if err := websocket.JSON.Send(ws, msg); err != nil {
+				log.Printf("error sending new offer to existing user %s: %v", offer.To, err)
+			}
+			log.Printf("%s received offer from %s and it was written to their ws\n", username, offer.From)
 		// NOTE: all funcs in this need to run async, since chan is unbuffered and blocks on sends
 		case msg := <-msgChan:
 			// TODO: put this switch into its own func. run it in its own goroutine. it should use a waitgroup defined before this
@@ -560,13 +581,13 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 				conn, err := roomUser.PendingConnections.Get(data.UserId)
 				if err != nil {
-					log.Printf("unable to get conn for %s in ice-offer handler: ", data.Username)
+					log.Printf("%s unable to get conn for %s in ice-offer handler\n", username, data.Username)
 					_ = ws.WriteClose(http.StatusInternalServerError)
 					return
 				}
 				if data.Candidate.Candidate == "" {
 					close(conn.From.Candidates)
-					log.Println("caller ice gather completed")
+					log.Printf("caller (%s) ice gather completed\n", data.Username)
 					break
 				}
 				conn.From.Candidates <- data.Candidate
@@ -576,19 +597,19 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 				caller := room.GetUser(data.UserId)
 				if caller == nil {
-					log.Printf("caller %s not found in room while handling ice-answer message", data.Username)
+					log.Printf("%s unable to find caller %s in room while handling ice-answer message\n", username, data.Username)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				conn, err := caller.PendingConnections.Get(roomUser.Id)
 				if err != nil {
-					log.Printf("unable to get conn for %s in ice-answer handler: ", data.Username)
+					log.Printf("%s unable to get conn for %s in ice-answer handler\n", username, data.Username)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				if data.Candidate.Candidate == "" {
 					close(conn.To.Candidates)
-					log.Println("answerer ice gather completed")
+					log.Printf("answerer (%s) ice gather completed\n", data.Username)
 					break
 				}
 				conn.To.Candidates <- data.Candidate
@@ -602,22 +623,24 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
-				log.Println("answer handler: answer recieved")
+				log.Printf("%s prepared answer (intended for %s)", username, answer.To)
 
 				caller := room.GetUser(answer.ToId)
 				if caller == nil {
-					log.Printf("caller %s not found in room while handling answer message", answer.To)
+					log.Printf("caller %s not found in room while handling answer message", answer.From)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				conn, err := caller.PendingConnections.Get(roomUser.Id)
+				// conn, err := roomUser.PendingConnections.Get(answer.FromId)
 				if err != nil {
-					log.Printf("unable to get conn for %s in answer handler: ", answer.To)
+					log.Printf("%s unable to get %s's conn for %s in answer handler\n", caller.Name, username)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				conn.Answer <- answer.Sd
 				close(conn.Answer)
+				log.Printf("answer sent to %s's chan", answer.To)
 
 				sendIceCtx, cancelSendIce := context.WithTimeout(ctx, 30*time.Second)
 				defer cancelSendIce()
@@ -630,22 +653,31 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 							return
 						// forwards caller's candidates to answerer
 						case candidate, ok := <-conn.From.Candidates:
-							msg := schemas.CandidateMessage{
+							bytes, err := json.Marshal(schemas.CandidateMessage{
 								UserId:    caller.Id,
 								Username:  caller.Name,
 								Candidate: candidate,
+							})
+							if err != nil {
+								log.Printf("error encoding candidate: %v", err)
+								return
 							}
+
+							msg := Message{Type: "ice-offer", Data: bytes}
 							if err := websocket.JSON.Send(ws, msg); err != nil {
 								log.Printf("error writing caller candidate to answerer ws: %v", err)
 								return
 							}
+							log.Printf("sent ice-offer from %s", caller.Name)
 							if !ok { // empty end candidate sent, return
-								// conn.From.Candidates = nil
+								conn.From.Candidates = nil // unness?
 								return
 							}
 						}
 					}
 				})
+			default:
+				log.Printf("unknown message: %v", msg)
 			}
 		}
 	}

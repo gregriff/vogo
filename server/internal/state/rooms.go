@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -113,6 +114,7 @@ func CreateOrJoinRoom(c *schemas.Channel, user *RoomUser) (*room, error) {
 		r = newRoom(c, user)
 		rooms.active[c.Id] = r
 		rooms.mu.Unlock()
+		log.Printf("room %s created", c.Name)
 		return r, nil
 	}
 	r.mu.Lock()
@@ -121,6 +123,7 @@ func CreateOrJoinRoom(c *schemas.Channel, user *RoomUser) (*room, error) {
 	if err := r.addUser(user); err != nil {
 		return &room{}, fmt.Errorf("error adding participant: %w", err)
 	}
+	log.Printf("joined room %s", c.Name)
 	return r, nil
 }
 

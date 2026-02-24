@@ -140,7 +140,7 @@ func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*
     `
 
 	err := db.QueryRow(query, memberId, ownerId, name).
-		Scan(&channel.Id, &channel.Name, &channel.Capacity, &channel.CreatedAt)
+		Scan(&channel.Id, &channel.Name, &channel.Description, &channel.Capacity, &channel.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return &channel, fmt.Errorf("channel not found: %s", name)

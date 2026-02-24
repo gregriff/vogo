@@ -15,6 +15,7 @@ import (
 
 func StartCapture(ctx context.Context, track *webrtc.TrackLocalStaticSample) error {
 	deviceCtx, device, pcm, initErr := initCaptureDevice()
+	log.Println("capture device created")
 	defer uninitCapture(deviceCtx, device)
 	if initErr != nil {
 		return fmt.Errorf("error initalizing capture device: %w", initErr)

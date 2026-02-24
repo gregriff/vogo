@@ -54,7 +54,7 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 	// 	}
 	// 	log.Println("playback device created")
 	// }()
-	// defer audio.UninitPlayback(pc, playbackCtx, speaker, &playbackWg)
+	// defer audio.UninitCallPlayback(pc, playbackCtx, speaker, &playbackWg)
 
 	var call sync.WaitGroup
 	callCtx, cancelCall := context.WithCancel(ctx)

@@ -53,12 +53,15 @@ func (ab *ChannelStreams) addStream(b *[]int16) {
 // - may need to tweak this logic. hopefully this does not cause loss of audio data
 // - this may be unnessicary at a certain point, but it may also prime the cache with all the PCM before
 // the mixing happens, so profile to see.
-func (ab *ChannelStreams) hasFullSample(amt int) (ok bool, fullBufs []*[]int16) {
-	fullBufs = make([]*[]int16, 0, maxStreams)
+// ex: if 3 full buffers, returns {[ptr, ptr, ptr], (cap=len(ab.bufs)), true}
+func (ab *ChannelStreams) hasFullSample(amt int) (fullBufs []*[]int16, ok bool) {
+	// fullBufs = make([]*[]int16, len(ab.bufs))
+	fullBufs = make([]*[]int16, 0, len(ab.bufs))
 	for i := range len(ab.bufs) {
 		if len(*ab.bufs[i]) >= amt {
 			ok = true
-			fullBufs[i] = ab.bufs[i]
+			fullBufs = append(fullBufs, ab.bufs[i])
+			// fullBufs[i] = ab.bufs[i]
 		}
 	}
 	return

@@ -22,7 +22,8 @@ var defaultConfigFile []byte
 // InitConfig initializes the app config with Viper from the environment, a specified file, or a default file.
 func InitConfig(file string) {
 	if file == "" {
-		panic("dev error, InitConfig should always be passed a valid config filepath")
+		log.Fatal("error, no config file specified")
+		// panic("dev error, InitConfig should always be passed a valid config filepath")
 	}
 	viper.SetConfigName("vogo")
 	viper.SetConfigType("toml")

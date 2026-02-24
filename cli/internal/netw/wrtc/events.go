@@ -14,7 +14,7 @@ func onICECandidate(candidate *webrtc.ICECandidate, ch chan<- webrtc.ICECandidat
 	if candidate != nil {
 		addr = candidate.Address
 	}
-	log.Printf("ICE candidate recieved: %s", addr)
+	log.Printf("ICE candidate gathered: %s", addr)
 
 	if candidate == nil {
 		close(ch)
