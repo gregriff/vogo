@@ -6,17 +6,19 @@ build:
 # testing:
 # ==============================================================================
 # each shell executing vogo-client commands for testing should override
-# this to 'answerer' if they want to execute commands using the answerer config.
-# ex: `export VOGOENV=answerer`
-VOGOENV ?= caller
+# this to 'two' if they want to execute commands using the second user's config.
+# ex: `export VOGOENV=two`
+VOGOENV ?= one
 
+USER_ONE := greg
+USER_TWO := tim
+USER_THREE := john
 CHANNEL_NAME := test
-CALLER_NAME := greg
-ANSWERER_NAME := tim
 
 CONFIG_PATH := ./configs/dev.${VOGOENV}.toml
-CALLER_CONFIG_PATH := ./configs/dev.caller.toml
-ANSWERER_CONFIG_PATH := ./configs/dev.answerer.toml
+USER_ONE_CONFIG := ./configs/dev.one.toml
+USER_TWO_CONFIG := ./configs/dev.two.toml
+USER_THREE_CONFIG := ./configs/dev.three.toml
 
 # note: X=1 uses deferred evaluation, so X could change every time its used
 
@@ -31,35 +33,42 @@ register: announce build
 status: announce build
 	$(OUT_DIR)/vogo status --config=$(CONFIG_PATH)
 
-# make the two test users friends. run once.
+# make the test users friends. run once.
 friends: build
-	@echo "running command to make $(CALLER_NAME) and $(ANSWERER_NAME) friends..."
-	$(OUT_DIR)/vogo add $(CALLER_NAME) --config=$(ANSWERER_CONFIG_PATH)
-	$(OUT_DIR)/vogo add $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
+	@echo "running command to make test users friends..."
+	$(OUT_DIR)/vogo add $(USER_ONE) --config=$(USER_TWO_CONFIG)
+	$(OUT_DIR)/vogo add $(USER_TWO) --config=$(USER_ONE_CONFIG)
 
-# create a testing channel using the caller test client.
+	$(OUT_DIR)/vogo add $(USER_ONE) --config=$(USER_THREE_CONFIG)
+	$(OUT_DIR)/vogo add $(USER_THREE) --config=$(USER_ONE_CONFIG)
+
+	$(OUT_DIR)/vogo add $(USER_TWO) --config=$(USER_THREE_CONFIG)
+	$(OUT_DIR)/vogo add $(USER_THREE) --config=$(USER_TWO_CONFIG)
+
+# create a testing channel using the user_one test client.
 channel: build
-	$(OUT_DIR)/vogo channel create $(CHANNEL_NAME) --config=$(CALLER_CONFIG_PATH)
+	$(OUT_DIR)/vogo channel create $(CHANNEL_NAME) --config=$(USER_ONE_CONFIG)
 
-# invite the answerer to the caller client's channel. assumes `make channel` has been run.
+# invite the user_two to the user_one client's channel. assumes `make channel` has been run.
 invite: build
-	@echo "inviting $(ANSWERER_NAME) to $(CALLER_NAME)'s $(CHANNEL_NAME) channel..."
-	$(OUT_DIR)/vogo channel invite $(ANSWERER_NAME) $(CHANNEL_NAME) --config=$(CALLER_CONFIG_PATH)
+	@echo "inviting $(USER_TWO) and $(USER_THREE) to $(USER_ONE)'s $(CHANNEL_NAME) channel..."
+	$(OUT_DIR)/vogo channel invite $(USER_TWO) $(CHANNEL_NAME) --config=$(USER_ONE_CONFIG)
+	$(OUT_DIR)/vogo channel invite $(USER_THREE) $(CHANNEL_NAME) --config=$(USER_ONE_CONFIG)
 
-# make caller call answerer.
+# make user_one call user_two.
 call: build
-	@echo "$(CALLER_NAME) calling $(ANSWERER_NAME)..."
-	$(OUT_DIR)/vogo call $(ANSWERER_NAME) --config=$(CALLER_CONFIG_PATH)
+	@echo "$(USER_ONE) calling $(USER_TWO)..."
+	$(OUT_DIR)/vogo call $(USER_TWO) --config=$(USER_ONE_CONFIG)
 
-# make answerer answer caller. fails if `make call` has not been run in another shell.
+# make user_two answer user_one. fails if `make call` has not been run in another shell.
 answer: build
-	@echo "$(ANSWERER_NAME) answering $(CALLER_NAME)..."
-	$(OUT_DIR)/vogo answer $(CALLER_NAME) --config=$(ANSWERER_CONFIG_PATH)
+	@echo "$(USER_TWO) answering $(USER_ONE)..."
+	$(OUT_DIR)/vogo answer $(USER_ONE) --config=$(USER_TWO_CONFIG)
 
 # using VOGOENV, join the channel created by `make channel`.
 join: announce build
-	@echo "joining $(CALLER_NAME)/$(CHANNEL_NAME)..."
-	$(OUT_DIR)/vogo channel join $(CALLER_NAME)/$(CHANNEL_NAME) --config=$(CONFIG_PATH)
+	@echo "joining $(USER_ONE)/$(CHANNEL_NAME)..."
+	$(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH)
 
 # lint:
 # 	go vet ./...

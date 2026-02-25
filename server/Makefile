@@ -5,6 +5,9 @@ build:
 run:
 	go run . run
 
+serve:
+	go run . run --config=./configs/vogo-server.toml
+
 invite:
 	go run . create-invite
 

@@ -23,16 +23,9 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// - remote track automatically created once connection established? yes, per PC
 	// - note: later, bulkConnectionRequest could be parallized, and the GUI could use recent status polling to
 	//         issue offers ahead of time, cancelling them if joinRoom returns that the user is no longer in the room
-	// - TODO: WILL NEED TO DECOUPLE AUDIO MIXER FROM REMOTE TRACKS! needs to communicate between PeerConnections
 	//
 	// pseudocode:
 	// - make sure to send connection successful sentinels
-
-	// pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, creds.username, true)
-	// if err != nil {
-	// 	return fmt.Errorf("error initializing webrtc: %v", err)
-	// }
-	// defer wrtc.ClosePC(pc, true)
 
 	track, err := wrtc.CreateAudioTrack(creds.username)
 	if err != nil {

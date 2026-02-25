@@ -1,10 +1,10 @@
 debug = true
 
 [server]
-host = "localhost"
+host = "0.0.0.0"
 port = "8039"
 
 [database]
-host = "localhost"
+host = "0.0.0.0"
 port = "5432"
 name = "vogo-server"

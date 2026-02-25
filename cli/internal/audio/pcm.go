@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"log"
 	"math"
 	"sync"
 )
@@ -40,6 +41,7 @@ func NewChannelStreams() *ChannelStreams {
 // Add adds a newly-created empty pcm buffer to the list of buffers (bufs) being tracked. It takes its pointer,
 // so that the caller can continue modifying the original, and using this struct will always point to the same memory.
 func (ab *ChannelStreams) addStream(b *[]int16) {
+	log.Println("ADDING NEW STREAM!")
 	ab.mu.Lock()
 	ab.bufs = append(ab.bufs, b)
 	ab.mu.Unlock()

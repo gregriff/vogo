@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sync"
 
 	"github.com/gen2brain/malgo"
@@ -201,6 +202,7 @@ func createChannelDevice(streams *ChannelStreams) (ctx *malgo.AllocatedContext, 
 		err = fmt.Errorf("error initializing device context: %w", err)
 		return
 	}
+	user := os.Getenv("VOGOENV")
 
 	// read into output sample buf, for output to speaker device. this fires every X milliseconds
 	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
@@ -217,7 +219,9 @@ func createChannelDevice(streams *ChannelStreams) (ctx *malgo.AllocatedContext, 
 		mixed := streams.mixAudio(fullBufs, samplesToRead)
 
 		// write a full mixed sample to the speaker buffer
-		copy(pOutputSample, int16ToBytes(mixed[:samplesToRead]))
+		if user != "two" { // temp for testing
+			copy(pOutputSample, int16ToBytes(mixed[:samplesToRead]))
+		}
 
 		// reslice all bufs that were just mixed, removing the mixed pcm from each
 		for _, p := range fullBufs {

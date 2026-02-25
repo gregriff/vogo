@@ -1,15 +1,19 @@
 # TODOs
 
 ### Next:
+
+##### Windows:
+- config file path uses a fwdslash for 'vogo/vogo.toml'
+- help menu shows double back slashes for each dir step
+- get create-shortcut to run by double clicking it
+- test out ASAN/MSAN
+
+##### Client:
 - client: put room structs in wrtc package, req structs in netw (requests.go?) or crud?
-- client/server: gracefully fail when channel not found (sentinel?)
+- client: add friend should 409 when friend already exists
 - client: user disconnect needs to call destructor on pc and importantly the channelStream struct so that there are
-never more than 5 audio streams
-- handle EOF: this always means the ws is closed. if it happens during normal operation this is bad... this should also not signal a successful call, instead use a sentinel
-- server should listen for a client-sent ACK of successful connection, to delete the pendingConnection entry
-- pull out msgHandler switch and eventHandler switch into funcs. 
-- ice sending on client side needs to send a sentinel for DONE status, since room ws needs to stay open and can't 
-  recv EOFs at any time (already does this with empty candidate??)
+  never more than 5 audio streams. and exit on PC disconnect
+- client: ensure mtu=3000 is ok.
 - client-side ICE sending should not fail the entire join thread and should instead retry per PC
 - parallelize client sending offers when joining a room: this requires ws multiplexer on server-side
 - add poll to status
@@ -19,6 +23,16 @@ never more than 5 audio streams
 - impl PLC?
 - ensure DTLS is working correctly and encrypting
 - look here https://github.com/pion/webrtc/blob/master/examples/README.md#media-api to see info about rtcp media stats
+
+##### Server:
+- client/server: gracefully fail when channel not found (sentinel?)
+- disallow user in room to join twice
+- return 409 for duplicate add friend
+- handle EOF: this always means the ws is closed. if it happens during normal operation this is bad... this should also not signal a successful call, instead use a sentinel
+- server should listen for a client-sent ACK of successful connection, to delete the pendingConnection entry
+- pull out msgHandler switch and eventHandler switch into funcs. 
+- ice sending on client side needs to send a sentinel for DONE status, since room ws needs to stay open and can't 
+  recv EOFs at any time (already does this with empty candidate??)
 
 ### Polish before release
 - ensure ws is using TLS
