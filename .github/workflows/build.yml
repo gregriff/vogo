@@ -81,7 +81,6 @@ jobs:
     if: ${{ needs.changes.outputs.cli == 'true' }}
     runs-on: windows-latest
     env:
-      OPUS: "opus-${{ env.OPUS_VERSION }}"
       OPUS_CHECKSUM: 6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
       OPUS_INSTALL_PREFIX: /c/deps/opus
     defaults:
@@ -97,6 +96,8 @@ jobs:
           install: >-
             curl
             mingw-w64-ucrt-x86_64-go
+      - name: set-opus
+        run: echo "OPUS=opus-${{ env.OPUS_VERSION }}" >> $GITHUB_ENV
       - name: build-opus
         run: |
             curl -L https://downloads.xiph.org/releases/opus/${OPUS}.tar.gz -o ${OPUS}.tar.gz
