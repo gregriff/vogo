@@ -98,7 +98,7 @@ jobs:
         # run: echo "OPUS=opus-${{ env.OPUS_VERSION }}" >> $GITHUB_ENV
       - name: build-opus
         run: |
-            export OPUS="opus-${{ env.OPUS_VERSION }}"
+            export OPUS="opus-1.6.1"
             curl -L https://downloads.xiph.org/releases/opus/${OPUS}.tar.gz -o ${OPUS}.tar.gz
             echo "${OPUS_CHECKSUM}  ${OPUS}.tar.gz" | sha256sum --check
             tar -xzf ${OPUS}.tar.gz
