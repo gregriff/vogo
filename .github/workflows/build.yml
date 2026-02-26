@@ -1,11 +1,13 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: build
+env:
+  OPUS_VERSION: 1.6.1
 
 on:
   push:
     branches: [ "master" ]
-  # pull_request:
-    # branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
 
 jobs:
   cli-darwin:
@@ -17,8 +19,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/go-base
 
+      # TODO: compile manually if ML features not present.
       - name: install-dependencies
-        run: brew install opus
+        run: |
+            brew install opus
+            [ "$(echo $(pkg-config --modversion opus))" = "${OPUS_VERSION}" ] || exit 1
 
       - name: build
         run: go build -tags nolibopusfile -o bin/vogo main.go
@@ -51,6 +56,10 @@ jobs:
 
   cli-windows:
     runs-on: windows-latest
+    env:
+      OPUS: "opus-${{ env.OPUS_VERSION }}"
+      OPUS_CHECKSUM: 6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
+      OPUS_INSTALL_PREFIX: /c/deps/opus
     defaults:
       run:
         working-directory: ./cli
@@ -62,20 +71,36 @@ jobs:
           update: true
           install: >-
             curl
-            git
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-opus
-            mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-go
+      - name: build-opus
+        run: |
+            curl -L https://downloads.xiph.org/releases/opus/${OPUS}.tar.gz -o ${OPUS}.tar.gz
+            echo "${OPUS_CHECKSUM}  ${OPUS}.tar.gz" | sha256sum --check
+            tar -xzf ${OPUS}.tar.gz
+            cmake -S ${OPUS} -B ${OPUS}/build -G "MinGW Makefiles" \
+            -DCMAKE_FLAGS="-march=x86-64-v3 -O3" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPUS_X86_PRESUME_AVX2=ON -DOPUS_X86_PRESUME_SSE2=ON -DOPUS_X86_PRESUME_SSE4_1=ON \
+            -DCMAKE_INSTALL_PREFIX="${OPUS_INSTALL_PREFIX}" \
+            -DOPUS_BUILD_SHARED_LIBRARY=ON \
+            -DOPUS_DEEP_PLC=ON -DOPUS_OSCE=ON
+            cmake --build ${OPUS}/build --parallel
+            cmake --install ${OPUS}/build
 
       - uses: actions/checkout@v6
       - name: build
-        run: go build -tags nolibopusfile -o bin/vogo.exe main.go
-
+        run: |
+            go version
+            CC=gcc \
+            CGO_FLAGS="-I${OPUS_INSTALL_PREFIX}/include/opus" \
+            CGO_LDFLAGS="-L${OPUS_INSTALL_PREFIX}/lib -lopus" \
+            PKG_CONFIG=true \
+            go build -tags nolibopusfile -o bin/vogo.exe main.go
+            cp "${OPUS_INSTALL_PREFIX}/bin/libopus.dll" bin/libopus.dll
       - uses: actions/upload-artifact@v6
         with:
-          name: vogo-windows-amd64
-          path: cli/bin/vogo.exe
+          name: vogo-windows-amd64-2
+          path: cli/bin/
 
     # will need to do something like this to have goreleaser do the releases.
       # release:
