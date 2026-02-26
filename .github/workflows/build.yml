@@ -124,8 +124,9 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-go
             mingw-w64-ucrt-x86_64-cmake
-      # - name: set-opus
-        # run: echo "OPUS=opus-${{ env.OPUS_VERSION }}" >> $GITHUB_ENV
+            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-gcc
+            git
       - name: build-opus
         run: |
             export OPUS="opus-1.6.1"
