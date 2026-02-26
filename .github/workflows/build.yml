@@ -10,7 +10,27 @@ on:
     branches: [ "master" ]
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      cli: ${{ steps.filter.outputs.cli }}
+      server: ${{ steps.filter.outputs.server }}
+    steps:
+    # For pull requests it's not necessary to checkout the code
+    - uses: dorny/paths-filter@v3
+      id: filter
+      with:
+        filters: |
+          cli:
+            - 'cli/**'
+          server:
+            - 'server/**'
+
   cli-darwin:
+    needs: changes
+    if: ${{ needs.changes.outputs.cli == 'true' }}
     runs-on: macos-14
     defaults:
       run:
@@ -34,6 +54,8 @@ jobs:
           path: cli/bin/vogo
 
   server-darwin:
+    needs: changes
+    if: ${{ needs.changes.outputs.server == 'true' }}
     runs-on: macos-14
     defaults:
       run:
@@ -55,6 +77,8 @@ jobs:
           path: server/bin/vogo-server
 
   cli-windows:
+    needs: changes
+    if: ${{ needs.changes.outputs.cli == 'true' }}
     runs-on: windows-latest
     env:
       OPUS: "opus-${{ env.OPUS_VERSION }}"
@@ -65,6 +89,7 @@ jobs:
         working-directory: ./cli
         shell: msys2 {0}
     steps:
+      # - uses: ./.github/actions/go-base  # TODO: try this and find go bin
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
