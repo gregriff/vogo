@@ -121,7 +121,9 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: mingw-w64-ucrt-x86_64-go
+          install: >-
+            mingw-w64-ucrt-x86_64-go
+            mingw-w64-ucrt-x86_64-cmake
       # - name: set-opus
         # run: echo "OPUS=opus-${{ env.OPUS_VERSION }}" >> $GITHUB_ENV
       - name: build-opus
