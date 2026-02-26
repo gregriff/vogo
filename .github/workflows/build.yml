@@ -85,7 +85,7 @@ jobs:
       OPUS_INSTALL_PREFIX: /c/deps/opus
     defaults:
       run:
-        working-directory: ./cli
+        # working-directory: ./cli
         shell: msys2 {0}
     steps:
       # - uses: ./.github/actions/go-base  # TODO: try this and find go bin
@@ -97,6 +97,7 @@ jobs:
       # - name: set-opus
         # run: echo "OPUS=opus-${{ env.OPUS_VERSION }}" >> $GITHUB_ENV
       - name: build-opus
+        working-directory: ./cli
         run: |
             export OPUS="opus-1.6.1"
             curl -L https://downloads.xiph.org/releases/opus/${OPUS}.tar.gz -o ${OPUS}.tar.gz
@@ -114,6 +115,7 @@ jobs:
 
       - uses: actions/checkout@v6
       - name: build
+        working-directory: ./cli
         run: |
             go version
             CC=gcc \
