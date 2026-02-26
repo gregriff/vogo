@@ -13,40 +13,28 @@ permissions:
   # pull-requests: read
 
 jobs:
-  lint-cli:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./cli
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/go-base
+  golangci:
+  # lint-cli:
+  #   runs-on: ubuntu-latest
+  #   defaults:
+  #     run:
+  #       working-directory: ./cli
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/go-base
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-    # name: lint
-    # runs-on: ubuntu-latest
-    # strategy:
-    #   matrix:
-    #     program: [cli, server]
+  #     - name: golangci-lint
+  #       uses: golangci/golangci-lint-action@v9
+  #       with:
+  #         version: latest
+    name: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        program: [cli, server]
     # defaults:
-    #   run:
-    #     working-directory: ./${{ matrix.program }}
-    # steps:
-    #   - uses: actions/checkout@v6
-    #   - uses: ./.github/actions/go-base
-
-    #   - name: golangci-lint
-    #     uses: golangci/golangci-lint-action@v9
-    #     with:
-    #       version: latest
-  lint-server:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./server
+      # run:
+        # working-directory: ./${{ matrix.program }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/go-base
@@ -55,3 +43,18 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+          working-directory: ./${{ matrix.program }}
+
+  # lint-server:
+  #   runs-on: ubuntu-latest
+  #   defaults:
+  #     run:
+  #       working-directory: ./server
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: ./.github/actions/go-base
+
+  #     - name: golangci-lint
+  #       uses: golangci/golangci-lint-action@v9
+  #       with:
+  #         version: latest
