@@ -110,8 +110,7 @@ jobs:
     runs-on: windows-latest
     env:
       OPUS_CHECKSUM: 6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
-      OPUS_INSTALL_PREFIX: /c/deps/opus
-      # ${{ github.workspace }}/deps/opus
+      OPUS_INSTALL_PREFIX: ${{ github.workspace }}/deps/opus
     defaults:
       run:
         shell: msys2 {0}
