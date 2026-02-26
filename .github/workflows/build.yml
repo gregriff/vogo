@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
-name: ci
+name: build
 
 on:
   push:
@@ -8,19 +8,7 @@ on:
     branches: [ "master" ]
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        program: [cli, server]
-    defaults:
-      run:
-        working-directory: ./${{ matrix.program }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/linter-base
-
-  build-cli-darwin:
+  cli-darwin:
     runs-on: macos-14
     defaults:
       run:
@@ -30,7 +18,7 @@ jobs:
       - uses: ./.github/actions/go-base
 
       - name: install-dependencies
-        run: brew install pkg-config opus
+        run: brew install opus
 
       - name: build
         run: go build -tags nolibopusfile -o bin/vogo main.go
@@ -38,9 +26,9 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: vogo-darwin-arm64
-          path: bin/vogo
+          path: cli/bin/vogo
 
-  build-server-darwin:
+  server-darwin:
     runs-on: macos-14
     defaults:
       run:
@@ -59,9 +47,9 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: vogo-server-darwin-arm64
-          path: bin/vogo-server
+          path: server/bin/vogo-server
 
-  build-cli-windows:
+  cli-windows:
     runs-on: windows-latest
     defaults:
       run:
@@ -87,7 +75,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: vogo-windows-amd64
-          path: bin/vogo.exe
+          path: cli/bin/vogo.exe
 
     # will need to do something like this to have goreleaser do the releases.
       # release:
