@@ -1,0 +1,110 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: ci
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        program: [cli, server]
+    defaults:
+      run:
+        working-directory: ./${{ matrix.program }}
+    steps:
+      - uses: ./.github/actions/linter-base
+
+  build-cli-darwin:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: ./cli
+    steps:
+      - uses: ./.github/actions/go-base
+
+      - name: install-dependencies
+        run: brew install pkg-config opus
+
+      - name: build
+        run: go build -tags nolibopusfile -o bin/vogo main.go
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: vogo-darwin-arm64
+          path: bin/vogo
+
+  build-server-darwin:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: ./server
+    steps:
+      - uses: ./.github/actions/go-base
+
+      # this would only be needed for testing
+      # - name: install-dependencies
+      #   run: brew install postgres
+
+      - name: build
+        run: go build -o bin/vogo-server main.go
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: vogo-server-darwin-arm64
+          path: bin/vogo-server
+
+  build-cli-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ./cli
+        shell: msys2 {0}
+    steps:
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            curl
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-pkgconf
+
+      - uses: actions/checkout@v6
+      - name: build
+        run: go build -tags nolibopusfile -o bin/vogo.exe main.go
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: vogo-windows-amd64
+          path: bin/vogo.exe
+
+    # will need to do something like this to have goreleaser do the releases.
+      # release:
+      # needs: [lint, test, build]
+      # runs-on: ubuntu-latest
+      # if: startsWith(github.ref, 'refs/tags/v')
+      # permissions:
+      #   contents: write
+      # steps:
+      #   - uses: actions/checkout@v6
+      #     with:
+      #       fetch-depth: 0
+
+      #   - uses: actions/download-artifact@v6
+      #     with:
+      #       pattern: binary-*
+      #       path: dist/
+      #       merge-multiple: true
+
+      #   - uses: goreleaser/goreleaser-action@v6
+      #     with:
+      #       args: release --clean
+      #     env:
+      #       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+
+name: linter-base
+description: "sets up a go action using checkout, setup-go, and golangci-lint"
+
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/go-base
+    - uses: golangci/golangci-lint-action@v9
+      with:
+        version: v2.5.0
