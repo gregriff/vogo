@@ -17,6 +17,7 @@ jobs:
       run:
         working-directory: ./${{ matrix.program }}
     steps:
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/linter-base
 
   build-cli-darwin:
@@ -25,6 +26,7 @@ jobs:
       run:
         working-directory: ./cli
     steps:
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/go-base
 
       - name: install-dependencies
@@ -44,6 +46,7 @@ jobs:
       run:
         working-directory: ./server
     steps:
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/go-base
 
       # this would only be needed for testing
@@ -75,6 +78,7 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-opus
             mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-go
 
       - uses: actions/checkout@v6
       - name: build
