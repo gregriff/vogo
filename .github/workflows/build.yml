@@ -93,13 +93,12 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: >-
-            curl
-            mingw-w64-ucrt-x86_64-go
-      - name: set-opus
-        run: echo "OPUS=opus-${{ env.OPUS_VERSION }}" >> $GITHUB_ENV
+          install: mingw-w64-ucrt-x86_64-go
+      # - name: set-opus
+        # run: echo "OPUS=opus-${{ env.OPUS_VERSION }}" >> $GITHUB_ENV
       - name: build-opus
         run: |
+            export OPUS="opus-${{ env.OPUS_VERSION }}"
             curl -L https://downloads.xiph.org/releases/opus/${OPUS}.tar.gz -o ${OPUS}.tar.gz
             echo "${OPUS_CHECKSUM}  ${OPUS}.tar.gz" | sha256sum --check
             tar -xzf ${OPUS}.tar.gz
