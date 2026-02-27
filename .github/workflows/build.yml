@@ -76,34 +76,6 @@ jobs:
           name: vogo-server-darwin-arm64
           path: server/bin/vogo-server
 
-  # cli-windows:
-  #   runs-on: windows-latest
-  #   defaults:
-  #     run:
-  #       working-directory: ./cli
-  #       shell: msys2 {0}
-  #   steps:
-  #     - uses: msys2/setup-msys2@v2
-  #       with:
-  #         msystem: UCRT64
-  #         update: true
-  #         install: >-
-  #           curl
-  #           git
-  #           mingw-w64-ucrt-x86_64-gcc
-  #           mingw-w64-ucrt-x86_64-opus
-  #           mingw-w64-ucrt-x86_64-pkgconf
-  #           mingw-w64-ucrt-x86_64-go
-
-  #     - uses: actions/checkout@v6
-  #     - name: build
-  #       run: go build -tags nolibopusfile -o bin/vogo.exe main.go
-
-  #     - uses: actions/upload-artifact@v6
-  #       with:
-  #         name: vogo-windows-amd64
-  #         path: cli/bin/vogo.exe
-
   cli-windows:
     needs: changes
     if: ${{ needs.changes.outputs.cli == 'true' }}
@@ -143,7 +115,6 @@ jobs:
             cmake --build ${OPUS}/build --parallel
             cmake --install ${OPUS}/build
 
-      # - uses: actions/checkout@v6
       - name: build
         working-directory: ./cli
         run: |
@@ -157,7 +128,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: vogo-windows-amd64-2
+          name: vogo-windows-amd64
           path: cli/bin/
 
     # will need to do something like this to have goreleaser do the releases.
