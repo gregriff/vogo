@@ -15,18 +15,19 @@ var validCharsUsername = regexp.MustCompile(`^[A-Za-z\d@$!%*?&]+$`)
 var validCharsPassword = regexp.MustCompile(`^[A-Za-z\d@$!%*?&#]+$`)
 
 // CheckRegistrationCredentials validates user credentials during registration
-func CheckRegistrationCredentials(db *sql.DB, inviteCode, username, password string) (error, int) {
-	if vErr := dal.ValidateInviteCode(db, inviteCode); vErr != nil {
-		log.Printf("invite code validation error: %v", vErr)
-		return errors.New("invalid invite code"), http.StatusUnauthorized
+func CheckRegistrationCredentials(db *sql.DB, inviteCode, username, password string) (int, error) {
+	var err error
+	if err = dal.ValidateInviteCode(db, inviteCode); err != nil {
+		log.Printf("invite code validation error: %v", err)
+		return http.StatusUnauthorized, errors.New("invalid invite code")
 	}
-	if vErr := validateUsername(username); vErr != nil {
-		return fmt.Errorf("invalid username %s (%w)", username, vErr), http.StatusBadRequest
+	if err = validateUsername(username); err != nil {
+		return http.StatusBadRequest, fmt.Errorf("invalid username %s (%w)", username, err)
 	}
-	if vErr := validatePassword(password); vErr != nil {
-		return fmt.Errorf("invalid password (%w)", vErr), http.StatusBadRequest
+	if err = validatePassword(password); err != nil {
+		return http.StatusBadRequest, fmt.Errorf("invalid password (%w)", err)
 	}
-	return nil, http.StatusOK
+	return http.StatusOK, nil
 }
 
 // validateUsername returns user-friendly errors

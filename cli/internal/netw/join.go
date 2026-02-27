@@ -160,7 +160,7 @@ type Connection struct {
 	track *webrtc.TrackLocalStaticSample
 
 	// client's offer.
-	offer *webrtc.SessionDescription
+	// offer *webrtc.SessionDescription
 
 	// channel for sending ICE candidates
 	candidates chan webrtc.ICECandidateInit
@@ -357,7 +357,9 @@ func joinChannelAndConnect(
 					conn *Connection
 					ok   bool
 				)
-				json.Unmarshal(msg.Data, &data)
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					return fmt.Errorf("error unmarshaling ice-offer candidate: %w", err)
+				}
 				if conn, ok = conns.Get(data.Username); !ok {
 					return fmt.Errorf("error: connection for user %s not found", data.Username)
 				}
@@ -376,7 +378,9 @@ func joinChannelAndConnect(
 					conn *Connection
 					ok   bool
 				)
-				json.Unmarshal(msg.Data, &data)
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					return fmt.Errorf("error unmarshaling ice-answer candidate: %w", err)
+				}
 				if conn, ok = conns.Get(data.Username); !ok {
 					return fmt.Errorf("error: connection for user %s not found", data.Username)
 				}
@@ -396,7 +400,9 @@ func joinChannelAndConnect(
 					conn   *Connection
 					ok     bool
 				)
-				json.Unmarshal(msg.Data, &answer)
+				if err := json.Unmarshal(msg.Data, &answer); err != nil {
+					return fmt.Errorf("error unmarshaling answer: %w", err)
+				}
 				log.Printf("received answer from ws: from:%s to: %s\n", answer.From, answer.To)
 				if conn, ok = conns.Get(answer.To); !ok {
 					return fmt.Errorf("error: connection for user %s not found", answer.From)
@@ -413,7 +419,9 @@ func joinChannelAndConnect(
 					conn  *Connection
 					ok    bool
 				)
-				json.Unmarshal(msg.Data, &offer)
+				if err := json.Unmarshal(msg.Data, &offer); err != nil {
+					return fmt.Errorf("error unmarshaling offer: %w", err)
+				}
 				if conn, ok = conns.Get(offer.From); ok {
 					_ = conn.pc.Close() // temp
 					log.Printf("recreating offer to %s", offer.From)

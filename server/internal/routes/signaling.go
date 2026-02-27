@@ -577,7 +577,11 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			// TODO: try to combine offer and answer handlers with additional property in CandidateMessage
 			case "ice-offer":
 				var data schemas.CandidateMessage
-				json.Unmarshal(msg.Data, &data)
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					log.Printf("error unmarshaling ice-offer candidate: %v", err)
+					_ = ws.WriteClose(http.StatusBadRequest)
+					return
+				}
 
 				conn, err := roomUser.PendingConnections.Get(data.UserId)
 				if err != nil {
@@ -593,7 +597,11 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				conn.From.Candidates <- data.Candidate
 			case "ice-answer":
 				var data schemas.CandidateMessage
-				json.Unmarshal(msg.Data, &data)
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					log.Printf("error unmarshaling ice-answer candidate: %v", err)
+					_ = ws.WriteClose(http.StatusBadRequest)
+					return
+				}
 
 				caller := room.GetUser(data.UserId)
 				if caller == nil {
@@ -616,7 +624,11 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			// this is when the client answers a new user's offer
 			case "answer":
 				var answer schemas.ConnectionRequestWithId
-				json.Unmarshal(msg.Data, &answer)
+				if err := json.Unmarshal(msg.Data, &answer); err != nil {
+					log.Printf("error unmarshaling answer: %v", err)
+					_ = ws.WriteClose(http.StatusBadRequest)
+					return
+				}
 
 				if answer.Sd.SDP == "" {
 					log.Println("empty answer")
@@ -634,7 +646,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				conn, err := caller.PendingConnections.Get(roomUser.Id)
 				// conn, err := roomUser.PendingConnections.Get(answer.FromId)
 				if err != nil {
-					log.Printf("%s unable to get %s's conn for %s in answer handler\n", caller.Name, username)
+					log.Printf("%s unable to get %s's conn for %s in answer handler\n", username, caller.Name, conn.To.User.Name)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}

@@ -19,7 +19,11 @@ import (
 
 func CreateAndListen(debug bool, host string, port int) {
 	db := db.GetDB()
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Fatalf("error closing database: %v", err)
+		}
+	}()
 
 	// Initialize handlers with dependencies
 	h := routes.NewRouteHandler(db)

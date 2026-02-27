@@ -142,7 +142,9 @@ func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSamp
 	if err != nil {
 		return fmt.Errorf("error adding transceiver: %v", err)
 	}
-	audioTrsv.Sender().ReplaceTrack(track)
+	if err = audioTrsv.Sender().ReplaceTrack(track); err != nil {
+		return fmt.Errorf("error replacing track")
+	}
 	return nil
 }
 

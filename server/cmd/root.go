@@ -40,7 +40,9 @@ func init() {
 		log.Printf("using config file: %s", ConfigFile)
 		configs.InitConfig(ConfigFile)
 
-		configs.ConfigurePostgres()
+		if err := configs.ConfigurePostgres(); err != nil {
+			log.Fatal(err)
+		}
 	})
 
 	configDir := configs.GetConfigDir()

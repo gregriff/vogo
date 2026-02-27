@@ -17,14 +17,14 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 	userId := uuid.New()
 	username = strings.ToLower(username)
 
-	tx, tErr := db.Begin()
-	if tErr != nil {
-		return nil, tErr
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
 	}
-	defer tx.Rollback()
+	defer rollback(tx, err)
 
 	var dbUsername string
-	err := tx.QueryRow(
+	err = tx.QueryRow(
 		"INSERT INTO users (id, username, password) VALUES ($1, $2, $3) RETURNING username",
 		userId,
 		username,
@@ -35,14 +35,19 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 	}
 
 	// update invite code
-	result, err := tx.Exec(
+	var result sql.Result
+	result, err = tx.Exec(
 		"UPDATE invite_codes SET registered_user_id = $1 WHERE code = $2 AND registered_user_id IS NULL",
 		userId, inviteCode,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("error updating invite code: %w", err)
 	}
-	rows, _ := result.RowsAffected()
+
+	var rows int64
+	if rows, err = result.RowsAffected(); err != nil {
+		return nil, fmt.Errorf("error getting rows affected: %w", err)
+	}
 	if rows == 0 {
 		return nil, fmt.Errorf("invite code not found or already used")
 	}

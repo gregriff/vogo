@@ -57,18 +57,18 @@ func CreateChannel(db *sql.DB, ownerId uuid.UUID, data schemas.CreateChannelRequ
 	var channel public.Channel
 	var channelId uuid.UUID
 
-	tx, tErr := db.Begin()
-	if tErr != nil {
-		return nil, tErr
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
 	}
-	defer tx.Rollback()
+	defer rollback(tx, err)
 
 	query := `
 		INSERT INTO channels (id, owner_id, name, description, capacity)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT DO NOTHING RETURNING id, name, description, capacity
 	`
-	err := tx.QueryRow(query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
+	err = tx.QueryRow(query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
 		Scan(&channelId, &channel.Name, &channel.Description, &channel.Capacity)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -82,8 +82,7 @@ func CreateChannel(db *sql.DB, ownerId uuid.UUID, data schemas.CreateChannelRequ
 		VALUES ($1, $2, $3)
 		ON CONFLICT DO NOTHING
 	`
-	_, err = tx.Exec(query, channelId, ownerId, ownerId)
-	if err != nil {
+	if _, err = tx.Exec(query, channelId, ownerId, ownerId); err != nil {
 		return nil, fmt.Errorf("error adding creator as a member of channel")
 	}
 	if err = tx.Commit(); err != nil {
@@ -148,4 +147,10 @@ func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*
 		return &channel, err
 	}
 	return &channel, nil
+}
+
+func rollback(tx *sql.Tx, err error) {
+	if rErr := tx.Rollback(); rErr != nil {
+		log.Printf("rollback error: %v, caused by %v", rErr, err)
+	}
 }

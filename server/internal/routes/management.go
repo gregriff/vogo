@@ -23,7 +23,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 	}
 	log.Printf("new user parsed: %#v", data)
 
-	err, statusCode := validation.CheckRegistrationCredentials(h.db, data.InviteCode, data.Name, data.Password)
+	statusCode, err := validation.CheckRegistrationCredentials(h.db, data.InviteCode, data.Name, data.Password)
 	if err != nil {
 		http.Error(w, err.Error(), statusCode)
 		return

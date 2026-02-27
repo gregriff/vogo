@@ -106,10 +106,10 @@ jobs:
             echo "${OPUS_CHECKSUM}  ${OPUS}.tar.gz" | sha256sum --check
             tar -xzf ${OPUS}.tar.gz
             cmake -S ${OPUS} -B ${OPUS}/build -G "MinGW Makefiles" \
-            -DCMAKE_FLAGS="-march=x86-64-v3 -O3" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DOPUS_X86_PRESUME_AVX2=ON -DOPUS_X86_PRESUME_SSE2=ON -DOPUS_X86_PRESUME_SSE4_1=ON \
             -DCMAKE_INSTALL_PREFIX="${OPUS_INSTALL_PREFIX}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_FLAGS="-march=x86-64-v3 -O3" \
+            -DOPUS_X86_PRESUME_AVX2=ON -DOPUS_X86_PRESUME_SSE2=ON -DOPUS_X86_PRESUME_SSE4_1=ON \
             -DOPUS_BUILD_SHARED_LIBRARY=ON \
             -DOPUS_DEEP_PLC=ON -DOPUS_OSCE=ON
             cmake --build ${OPUS}/build --parallel

@@ -103,7 +103,7 @@ func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm
 		err = fmt.Errorf("error creating capture device: %w", err)
 		return
 	}
-	if err := device.Start(); err != nil {
+	if err = device.Start(); err != nil {
 		err = fmt.Errorf("error starting capture device: %w", err)
 	}
 	return

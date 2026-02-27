@@ -249,7 +249,7 @@ func initDevice(ctx *malgo.AllocatedContext, onSendFrames malgo.DataProc) (devic
 		err = fmt.Errorf("error creating playback device: %w", err)
 		return
 	}
-	if err := device.Start(); err != nil {
+	if err = device.Start(); err != nil {
 		err = fmt.Errorf("error starting playback device: %w", err)
 	}
 	return

@@ -16,9 +16,9 @@ func AddInviteCode(db *sql.DB, code string) error {
 		return err
 	}
 
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("driver does not support RowsAffected")
+	var rows int64
+	if rows, err = result.RowsAffected(); err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
 	}
 	if rows == 0 {
 		return fmt.Errorf("invite code already exists")

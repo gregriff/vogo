@@ -19,4 +19,9 @@ drop-db:
 create-db:
 	createdb $(PGDATABASE)
 
-.PHONY: invite run build
+lint:
+	go vet ./...
+	gofmt -d -e .
+	golangci-lint run
+
+.PHONY: invite run build lint

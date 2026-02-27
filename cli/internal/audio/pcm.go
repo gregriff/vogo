@@ -85,7 +85,7 @@ func (ab *ChannelStreams) mixAudio(fullBufs []*[]int16, numSamples int) []int16 
 	var (
 		mixed   = make([]int16, numSamples)
 		numFull = int32(len(fullBufs))
-		sum     = zero
+		sum     int32
 	)
 	for i := range len(mixed) {
 		sum = zero
