@@ -148,10 +148,8 @@ jobs:
         working-directory: ./cli
         run: |
             go version
-            echo $OPUS_INSTALL_PREFIX
-            ls "${OPUS_INSTALL_PREFIX}"
             CC=gcc \
-            CGO_FLAGS="-I${OPUS_INSTALL_PREFIX}/include/opus" \
+            CGO_CFLAGS="-I${OPUS_INSTALL_PREFIX}/include/opus" \
             CGO_LDFLAGS="-L${OPUS_INSTALL_PREFIX}/lib -lopus" \
             PKG_CONFIG=true \
             go build -tags nolibopusfile -o bin/vogo.exe main.go
