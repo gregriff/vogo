@@ -46,12 +46,12 @@ jobs:
             [ "$(echo $(pkg-config --modversion opus))" = "${OPUS_VERSION}" ] || exit 1
 
       - name: build
-        run: go build -tags nolibopusfile -o bin/vogo main.go
+        run: go build -tags nolibopusfile -o dist/vogo main.go
 
       - uses: actions/upload-artifact@v6
         with:
           name: vogo-darwin-arm64
-          path: cli/bin/vogo
+          path: cli/dist/vogo
 
   server-darwin:
     needs: changes
@@ -69,12 +69,12 @@ jobs:
       #   run: brew install postgres
 
       - name: build
-        run: go build -o bin/vogo-server main.go
+        run: go build -o dist/vogo-server main.go
 
       - uses: actions/upload-artifact@v6
         with:
           name: vogo-server-darwin-arm64
-          path: server/bin/vogo-server
+          path: server/dist/vogo-server
 
   cli-windows:
     needs: changes
@@ -123,13 +123,14 @@ jobs:
             CGO_CFLAGS="-I${OPUS_INSTALL_PREFIX}/include/opus" \
             CGO_LDFLAGS="-L${OPUS_INSTALL_PREFIX}/lib -lopus" \
             PKG_CONFIG=true \
-            go build -tags nolibopusfile -o bin/vogo.exe main.go
-            cp "${OPUS_INSTALL_PREFIX}/bin/libopus.dll" bin/libopus.dll
+            go build -tags nolibopusfile -o dist/vogo.exe main.go
+            cp "${OPUS_INSTALL_PREFIX}/bin/libopus.dll" dist/libopus.dll
+            cp ./packaging/windows/* dist/
 
       - uses: actions/upload-artifact@v6
         with:
           name: vogo-windows-amd64
-          path: cli/bin/
+          path: cli/dist/
 
     # will need to do something like this to have goreleaser do the releases.
       # release:

@@ -1,4 +1,4 @@
-// Package config contains the logic to obtain app configuration from a file or the environment
+// Package config contains the logic to obtain server configuration from a file or the environment
 package configs
 
 import (

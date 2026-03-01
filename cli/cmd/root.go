@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/gregriff/vogo/cli/cmd/channel"
 	"github.com/gregriff/vogo/cli/configs"
@@ -42,7 +43,11 @@ func init() {
 
 	// deferring this allows user to override config path with cli option
 	cobra.OnInitialize(func() {
-		log.Printf("using config file: %s", ConfigFile)
+		nativeFilepath, err := filepath.Abs(ConfigFile)
+		if err != nil {
+			log.Fatalf("error resolving config file: %v", err)
+		}
+		log.Printf("using config file: %s", nativeFilepath)
 		configs.InitConfig(ConfigFile)
 
 		username, password := viper.GetString("user.name"), viper.GetString("user.password")
@@ -55,7 +60,7 @@ func init() {
 	})
 
 	configDir := configs.GetConfigDir()
-	defaultConfigFilePath := fmt.Sprintf("%s/vogo.toml", configDir)
+	defaultConfigFilePath := filepath.Join(configDir, "vogo.toml")
 	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config", defaultConfigFilePath, "config file")
 
 	rootCmd.PersistentFlags().String("stun-server", "stun:stun.l.google.com:19302", "STUN server origin")

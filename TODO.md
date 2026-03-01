@@ -3,9 +3,6 @@
 ### Next:
 
 ##### CI:
-- ignore or fix client opus/cgo errs
-- fix all server errs
-- consult upload-artifact to upload outdir with libopus.dll and README
 
 ##### Windows:
 - config file path uses a fwdslash for 'vogo/vogo.toml'
