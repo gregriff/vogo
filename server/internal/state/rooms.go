@@ -8,16 +8,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gregriff/vogo/server/internal/schemas"
+	"github.com/gregriff/vogo/server/internal/dal"
+	"github.com/gregriff/vogo/shared/requests"
 )
 
 const MaxRoomUsers = 6
-
-// BulkConnectionRequest is sent to the client when they need to start connecting with multiple
-// users in a room. This happens when a client joins a room. Users may be empty if noone is in the room.
-type BulkConnectionRequest struct {
-	Users map[uuid.UUID]string
-}
 
 // RoomUser represents a user that is actively participating in a Room.
 type RoomUser struct {
@@ -29,23 +24,23 @@ type RoomUser struct {
 	// user first joins the channel and is connecting to the other users. It maps the recipient's uuid
 	// to their connection struct.
 	PendingConnections *connMap
-	Offers             chan schemas.ConnectionRequestWithId
+	Offers             chan requests.ConnectionWithId
 }
 
 // NewRoomUser creates a user struct for sending and recieving data to and from the room and its users.
-func NewRoomUser(u *schemas.User) *RoomUser {
+func NewRoomUser(u *dal.User) *RoomUser {
 	return &RoomUser{
 		Id:                 u.Id,
 		Name:               u.Name,
 		PendingConnections: &connMap{conns: make(map[uuid.UUID]*connection, MaxRoomUsers-1)},
-		Offers:             make(chan schemas.ConnectionRequestWithId, MaxRoomUsers-1),
+		Offers:             make(chan requests.ConnectionWithId, MaxRoomUsers-1),
 	}
 }
 
 // room is a representation of a database Channel that is actively being used by one
 // or more of its members for voice chat.
 type room struct {
-	schemas.Channel
+	dal.Channel
 
 	mu    sync.Mutex
 	users map[uuid.UUID]*RoomUser
@@ -53,7 +48,7 @@ type room struct {
 
 // newRoom instantiates a new Room with the user that has just joined it. This
 // should only be run inside of the lock of roomMap
-func newRoom(c *schemas.Channel, user *RoomUser) *room {
+func newRoom(c *dal.Channel, user *RoomUser) *room {
 	users := make(map[uuid.UUID]*RoomUser, MaxRoomUsers)
 	user.joinedAt = time.Now()
 	users[user.Id] = user
@@ -106,7 +101,7 @@ func (r *room) Leave(user *RoomUser) {
 	delete(r.users, user.Id)
 }
 
-func CreateOrJoinRoom(c *schemas.Channel, user *RoomUser) (*room, error) {
+func CreateOrJoinRoom(c *dal.Channel, user *RoomUser) (*room, error) {
 	rooms := getRooms()
 	rooms.mu.Lock()
 	r, exists := rooms.active[c.Id]

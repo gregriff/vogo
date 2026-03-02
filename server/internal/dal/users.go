@@ -1,16 +1,29 @@
-// package dal is the data access layer. It contains functions that perform SQL queries and logic
-// that cannot be decoupled from the queries. Files correspond to SQL tables
 package dal
 
 import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/gregriff/vogo/server/internal/schemas"
-	"github.com/gregriff/vogo/server/internal/schemas/public"
+	"github.com/gregriff/vogo/shared/public"
 )
+
+// User is the database representation of public.User, without the password column.
+type User struct {
+	Id        uuid.UUID
+	Name      string
+	CreatedAt time.Time
+}
+
+// UserWithPassword is the full database representation of User
+type UserWithPassword struct {
+	User
+
+	// hashed password
+	Password string
+}
 
 // CreateUser adds a user to the database and associates them with their invite code.
 func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*string, error) {
@@ -59,8 +72,8 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 }
 
 // GetUser returns a user from the database given their username.
-func GetUser(db *sql.DB, username string) (*schemas.User, error) {
-	var user schemas.User
+func GetUser(db *sql.DB, username string) (*User, error) {
+	var user User
 	username = strings.ToLower(username)
 
 	query := "SELECT id, username, created_at FROM users WHERE username = $1"
@@ -75,8 +88,8 @@ func GetUser(db *sql.DB, username string) (*schemas.User, error) {
 }
 
 // GetUserWithPassword returns a friend from the database with their hashed password given their username.
-func GetUserWithPassword(db *sql.DB, username string) (*schemas.UserWithPassword, error) {
-	var user schemas.UserWithPassword
+func GetUserWithPassword(db *sql.DB, username string) (*UserWithPassword, error) {
+	var user UserWithPassword
 	username = strings.ToLower(username)
 
 	query := "SELECT id, username, password, created_at FROM users WHERE username = $1"
@@ -90,8 +103,8 @@ func GetUserWithPassword(db *sql.DB, username string) (*schemas.UserWithPassword
 	return &user, nil
 }
 
-func GetUserById(db *sql.DB, id string) (*schemas.User, error) {
-	var user schemas.User
+func GetUserById(db *sql.DB, id string) (*User, error) {
+	var user User
 
 	query := "SELECT id, username, created_at FROM users WHERE id = $1"
 	err := db.QueryRow(query, id).Scan(&user.Id, &user.Name, &user.CreatedAt)

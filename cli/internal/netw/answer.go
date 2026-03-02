@@ -14,6 +14,8 @@ import (
 	"github.com/gen2brain/malgo"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
+	"github.com/gregriff/vogo/shared/requests"
+	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
@@ -130,7 +132,7 @@ func answerAndConnect(
 	if err != nil {
 		return fmt.Errorf("error creating answer %w", err)
 	}
-	req := wrtc.ConnectionRequest{To: caller, Sd: *pc.LocalDescription()}
+	req := requests.Connection{To: caller, Sd: *pc.LocalDescription()}
 	if err = websocket.JSON.Send(ws, req); err != nil {
 		return fmt.Errorf("error sending answer: %w", err)
 	}
@@ -163,7 +165,7 @@ func answerAndConnect(
 // It blocks while waiting to read from the ws.
 func recieveOffer(ctx context.Context, ws *websocket.Conn) (*webrtc.SessionDescription, error) {
 	var offer webrtc.SessionDescription
-	if err := receiveWithContext(ctx, ws, &offer); err != nil {
+	if err := wsock.ReceiveJSON(ctx, ws, &offer); err != nil {
 		if err == io.EOF {
 			// TODO: this doesn't necessarily mean call not found. request ws could have closed on an error...
 			return nil, fmt.Errorf("call not found") // should make this a sentinal

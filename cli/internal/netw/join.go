@@ -14,6 +14,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
+	"github.com/gregriff/vogo/shared/requests"
+	"github.com/gregriff/vogo/shared/wsock"
+	"github.com/gregriff/vogo/shared/wsock/messages"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
@@ -21,7 +24,7 @@ import (
 func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName string) error {
 	// TODO:
 	// - remote track automatically created once connection established? yes, per PC
-	// - note: later, bulkConnectionRequest could be parallized, and the GUI could use recent status polling to
+	// - note: later, requests.BulkConnection could be parallized, and the GUI could use recent status polling to
 	//         issue offers ahead of time, cancelling them if joinRoom returns that the user is no longer in the room
 	//
 	// pseudocode:
@@ -130,24 +133,6 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 
 // NOTE: the below are types shared with the server repo
 
-type JoinChannelRequest struct {
-	RoomName,
-	OwnerName string
-}
-
-// BulkConnectionRequest is sent to the client when they need to start connecting with multiple
-// users in a room. This happens when a client joins a room. Users may be empty if noone is in the room.
-type BulkConnectionRequest struct {
-	Users map[uuid.UUID]string
-}
-
-// BulkConnectionMessage is sent from the client when they are joining a room and
-// have prepared offers for all users currently in the channel. Data maps the usernames
-// to the offer being made to them.
-type BulkConnectionMessage struct {
-	Data map[uuid.UUID]wrtc.ConnectionRequest
-}
-
 // Connection encapsulates a bidirectional audio webrtc connection.
 type Connection struct {
 	// the uuid of the recipient user.
@@ -219,14 +204,14 @@ func joinChannelAndConnect(
 	}
 	defer closeAndWait(ws, nil)
 
-	req := JoinChannelRequest{RoomName: channelName, OwnerName: ownerName}
+	req := requests.JoinChannel{RoomName: channelName, OwnerName: ownerName}
 	if err = websocket.JSON.Send(ws, req); err != nil {
 		return fmt.Errorf("error sending join channel request: %w", err)
 	}
 
 	// contains users to send offers to
-	var res BulkConnectionRequest
-	if err := receiveWithContext(ctx, ws, &res); err != nil {
+	var res requests.BulkConnection
+	if err := wsock.ReceiveJSON(ctx, ws, &res); err != nil {
 		return fmt.Errorf("error reading channel users from ws: %v", err)
 	}
 
@@ -256,7 +241,7 @@ func joinChannelAndConnect(
 
 	// create all offers and send in bulk to server
 	start := time.Now()
-	bulkReq := BulkConnectionMessage{Data: make(map[uuid.UUID]wrtc.ConnectionRequest, 6)}
+	bulkReq := messages.BulkConnection{Data: make(map[uuid.UUID]requests.Connection, 6)}
 	for recipient, c := range conns.data {
 		if recipient == "" {
 			return errors.New("empty recipient")
@@ -266,7 +251,7 @@ func joinChannelAndConnect(
 		if err != nil {
 			return fmt.Errorf("error creating offer for %s: %w", recipient, err)
 		}
-		bulkReq.Data[c.id] = wrtc.ConnectionRequest{From: creds.username, To: recipient, Sd: offer}
+		bulkReq.Data[c.id] = requests.Connection{From: creds.username, To: recipient, Sd: offer}
 		log.Printf("%s will send offer to %s...\n", creds.username, recipient)
 	}
 	fmt.Printf("offers took %v to generate\n", time.Since(start))
@@ -316,13 +301,13 @@ func joinChannelAndConnect(
 	}
 
 	// TODO:
-	// all the below needs to happen per room user returned in the bulkconnectionMessage,
+	// all the below needs to happen per room user returned in the messages.BulkConnection,
 	// and in their own goroutines
 
 	var (
 		wsRecvWg                sync.WaitGroup
 		wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
-		msgChan                 = make(chan Message)
+		msgChan                 = make(chan wsock.Message)
 	)
 	defer func() {
 		cancelWsRecv()
@@ -330,7 +315,7 @@ func joinChannelAndConnect(
 	}()
 	wsRecvWg.Go(func() {
 		var err error
-		if err = startMessageLoop(wsRecvCtx, ws, msgChan); err != nil {
+		if err = wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
 			if err == io.EOF { // todo: may need to handle this in startMessageLoop
 				err = errors.New("closed by server")
 			}
@@ -350,10 +335,10 @@ func joinChannelAndConnect(
 			// TODO: put this switch into its own func. run it in its own goroutine. it should use a waitgroup defined before this
 			// event loop "msgHandlerWg". 'tick' will report the wg's counter (manually increment a top level int).
 			switch msg.Type {
-			// TODO: try to combine offer and answer handlers with additional property in CandidateMessage
+			// TODO: try to combine offer and answer handlers with additional property in messages.Candidate
 			case "ice-offer":
 				var (
-					data CandidateMessage
+					data messages.Candidate
 					conn *Connection
 					ok   bool
 				)
@@ -374,7 +359,7 @@ func joinChannelAndConnect(
 				}
 			case "ice-answer":
 				var (
-					data CandidateMessage
+					data messages.Candidate
 					conn *Connection
 					ok   bool
 				)
@@ -396,7 +381,7 @@ func joinChannelAndConnect(
 			// when the client receives an answer from a recipient
 			case "answer":
 				var (
-					answer wrtc.ConnectionRequest
+					answer requests.Connection
 					conn   *Connection
 					ok     bool
 				)
@@ -415,7 +400,7 @@ func joinChannelAndConnect(
 			// sending the client their offer
 			case "offer":
 				var (
-					offer wrtc.ConnectionRequestWithId
+					offer requests.ConnectionWithId
 					conn  *Connection
 					ok    bool
 				)
@@ -452,17 +437,17 @@ func joinChannelAndConnect(
 					log.Printf("%s's pc gracefully closed", offer.From)
 				}()
 
-				answer := wrtc.ConnectionRequest{From: offer.To, To: offer.From, Sd: *conn.pc.LocalDescription()}
-				bytes, err := json.Marshal(wrtc.ConnectionRequestWithId{
-					ConnectionRequest: answer,
-					FromId:            offer.ToId,
-					ToId:              offer.FromId,
+				answer := requests.Connection{From: offer.To, To: offer.From, Sd: *conn.pc.LocalDescription()}
+				bytes, err := json.Marshal(requests.ConnectionWithId{
+					Connection: answer,
+					FromId:     offer.ToId,
+					ToId:       offer.FromId,
 				})
 				if err != nil {
 					return fmt.Errorf("error encoding answer: %w", err)
 				}
 
-				msg := Message{Type: "answer", Data: bytes}
+				msg := wsock.Message{Type: "answer", Data: bytes}
 				if err := websocket.JSON.Send(ws, msg); err != nil {
 					return fmt.Errorf("error sending candidate: %w", err)
 				}
@@ -495,30 +480,6 @@ func joinChannelAndConnect(
 	}
 }
 
-type Message struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
-}
-
-// startMessageLoop reads from ws until it is closed or errors, and sends the data it reads to ch.
-// It assumes ws frames are structured according to the Message struct. It enables the caller to react
-// to ws frames in an event-based manner.
-func startMessageLoop(ctx context.Context, ws *websocket.Conn, ch chan<- Message) error {
-	for {
-		var msg Message
-		if err := receiveWithContext(ctx, ws, &msg); err != nil {
-			return err
-		}
-		ch <- msg
-	}
-}
-
-type CandidateMessage struct {
-	UserId    uuid.UUID
-	Username  string
-	Candidate webrtc.ICECandidateInit
-}
-
 // sendTaggedCandidates sends the client's ICE candidates from ch to the websocket as they're gathered.
 // It sends the client's name along with the candidate. It returns when there are no more
 // candidates or the context is cancelled.
@@ -529,7 +490,7 @@ func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn *Connect
 		case <-ctx.Done():
 			return nil
 		case candidate, ok := <-conn.candidates:
-			bytes, err := json.Marshal(CandidateMessage{
+			bytes, err := json.Marshal(messages.Candidate{
 				UserId:    conn.id,
 				Username:  callerName,
 				Candidate: candidate,
@@ -538,7 +499,7 @@ func sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, conn *Connect
 				return fmt.Errorf("error encoding candidate: %w", err)
 			}
 
-			msg := Message{Type: tag, Data: bytes}
+			msg := wsock.Message{Type: tag, Data: bytes}
 			if err := websocket.JSON.Send(ws, msg); err != nil {
 				return fmt.Errorf("error sending candidate: %w", err)
 			}

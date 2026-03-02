@@ -1,15 +1,8 @@
 package routes
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 	"net/http"
-	"sync"
-	"time"
-
-	"golang.org/x/net/websocket"
 )
 
 func writeJSON(w http.ResponseWriter, data any) {
@@ -18,47 +11,4 @@ func writeJSON(w http.ResponseWriter, data any) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-}
-
-// receiveWithContext reads json into v from ws in a new goroutine and cancels
-// the read if ctx is cancelled. Param v should be a pointer.
-func receiveWithContext(ctx context.Context, ws *websocket.Conn, v any) error {
-	var (
-		recv sync.WaitGroup
-		done = make(chan error, 1)
-	)
-	defer recv.Wait()
-
-	recv.Go(func() {
-		done <- websocket.JSON.Receive(ws, v)
-	})
-
-	select {
-	case <-ctx.Done():
-		if err := ws.SetReadDeadline(time.Now()); err != nil { // interrupt the read
-			return fmt.Errorf("context cancelled: %w; and error setting read deadline: %w", ctx.Err(), err)
-		}
-		return ctx.Err()
-	case err := <-done:
-		return err
-	}
-}
-
-type Message struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
-}
-
-// startMessageLoop reads from ws until it is closed or errors, and sends the data it reads to ch.
-// It assumes ws frames are structured according to the Message struct. It enables the caller to react
-// to ws frames in an event-based manner.
-func startMessageLoop(ctx context.Context, ws *websocket.Conn, ch chan<- Message) error {
-	for {
-		var msg Message
-		if err := receiveWithContext(ctx, ws, &msg); err != nil {
-			log.Printf("error reading answer from ws: %v", err)
-			return err
-		}
-		ch <- msg
-	}
 }

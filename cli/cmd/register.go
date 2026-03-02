@@ -1,15 +1,15 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"log"
-	"regexp"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
 	// _ "net/http/pprof".
+	"github.com/gregriff/vogo/shared/validation"
 )
 
 var registerCmd = &cobra.Command{
@@ -42,11 +42,11 @@ func registerUser(_ *cobra.Command, _ []string) {
 		viper.GetString("code"),
 		viper.GetString("servers.vogo-origin")
 
-	if vErr := validateUsername(username); vErr != nil {
+	if vErr := validation.CheckUsername(username); vErr != nil {
 		msg := fmt.Errorf("invalid username %s (%w)", username, vErr)
 		log.Fatal(msg.Error())
 	}
-	if vErr := validatePassword(password); vErr != nil {
+	if vErr := validation.CheckPassword(password); vErr != nil {
 		msg := fmt.Errorf("invalid password %s (%w)", password, vErr)
 		log.Fatal(msg.Error())
 	}
@@ -65,33 +65,4 @@ func registerUser(_ *cobra.Command, _ []string) {
 	// 	)
 	// }
 	log.Printf("Now registered with username: %s", username)
-}
-
-var validCharsUsername = regexp.MustCompile(`^[A-Za-z\d@$!%*?&]+$`)
-var validCharsPassword = regexp.MustCompile(`^[A-Za-z\d@$!%*?&#]+$`)
-
-func validateUsername(username string) error {
-	if len(username) == 0 {
-		return errors.New("empty username")
-	}
-	if len(username) > 16 {
-		return errors.New("username too long. Must be 16 characters or less")
-	}
-	if valid := validCharsUsername.MatchString(username); !valid {
-		return errors.New("invalid character(s) detected. only normal characters, numbers, and some symbols (no #) allowed")
-	}
-	return nil
-}
-
-func validatePassword(password string) error {
-	if len(password) == 0 {
-		return errors.New("empty password. please ensure it's your config file")
-	}
-	if len(password) > 30 {
-		return errors.New("password too long. Must be 30 characters or less")
-	}
-	if valid := validCharsPassword.MatchString(password); !valid {
-		return errors.New("invalid character(s) detected. only normal characters, numbers, and some symbols allowed")
-	}
-	return nil
 }

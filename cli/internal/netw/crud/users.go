@@ -7,19 +7,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-)
 
-type newUser struct {
-	Name,
-	Password string
-	InviteCode string
-}
+	"github.com/gregriff/vogo/shared/public"
+	"github.com/gregriff/vogo/shared/requests"
+	"github.com/gregriff/vogo/shared/responses"
+)
 
 // Register asks the vogo-server to create a new user given the provided credentials and returns
 // the official username and friend code if sucessful. It will exit if an error is encountered.
 func Register(client *http.Client, username, password, inviteCode string) (string, error) {
-	newUser := newUser{Name: username, Password: password, InviteCode: inviteCode}
-	payload, err := json.Marshal(newUser)
+	req := requests.NewUser{Name: username, Password: password, InviteCode: inviteCode}
+	payload, err := json.Marshal(req)
 	if err != nil {
 		return "", fmt.Errorf("json marshal error: %w", err)
 	}
@@ -48,32 +46,8 @@ func Register(client *http.Client, username, password, inviteCode string) (strin
 	return username, nil
 }
 
-type user struct {
-	Name string
-}
-
-type Friend struct {
-	user
-	Status string
-}
-
-type Channel struct {
-	Owner,
-	Name,
-	Description string
-
-	Capacity int
-
-	MemberNames string
-}
-
-type statusResponse struct {
-	Friends  []Friend
-	Channels []Channel
-}
-
 // Status fetches friends, channels, and incoming calls.
-func Status(client *http.Client) (status *statusResponse, err error) {
+func Status(client *http.Client) (status *responses.Status, err error) {
 	res, err := client.Get("/status")
 	if err != nil {
 		err = fmt.Errorf("request error: %w", err)
@@ -97,16 +71,9 @@ func Status(client *http.Client) (status *statusResponse, err error) {
 	return
 }
 
-type addFriendResponse struct {
-	Name string
-}
-
 // AddFriend adds a friend. TODO: make this return a friend
-func AddFriend(client *http.Client, friendName string) (status *addFriendResponse, err error) {
-	req := struct {
-		Name string
-	}{Name: friendName}
-
+func AddFriend(client *http.Client, friendName string) (friend *public.User, err error) {
+	req := requests.AddFriend{Name: friendName}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		err = fmt.Errorf("json marshal err")
@@ -132,7 +99,7 @@ func AddFriend(client *http.Client, friendName string) (status *addFriendRespons
 		return
 	}
 
-	if err = json.NewDecoder(res.Body).Decode(&status); err != nil {
+	if err = json.NewDecoder(res.Body).Decode(&friend); err != nil {
 		err = fmt.Errorf("json decode error: %w", err)
 		return
 	}
@@ -140,13 +107,8 @@ func AddFriend(client *http.Client, friendName string) (status *addFriendRespons
 }
 
 // CreateChannel creates a persistent voice-chat channel.
-func CreateChannel(client *http.Client, name, desc string, cap int) (channel *Channel, err error) {
-	req := struct {
-		Name,
-		Description string
-		Capacity int
-	}{Name: name}
-
+func CreateChannel(client *http.Client, name, desc string, cap int) (channel *public.Channel, err error) {
+	req := requests.CreateChannel{Name: name}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		err = fmt.Errorf("json marshal err")
@@ -179,17 +141,9 @@ func CreateChannel(client *http.Client, name, desc string, cap int) (channel *Ch
 	return
 }
 
-type inviteFriendResponse struct {
-	Name string
-}
-
 // InviteFriend invites a friend to a channel owned by the user inviting.
-func InviteFriend(client *http.Client, channelName, friendName string) (friend *inviteFriendResponse, err error) {
-	req := struct {
-		ChannelName,
-		FriendName string
-	}{ChannelName: channelName, FriendName: friendName}
-
+func InviteFriend(client *http.Client, channelName, friendName string) (friend *public.User, err error) {
+	req := requests.InviteFriend{ChannelName: channelName, FriendName: friendName}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		err = fmt.Errorf("json marshal err")

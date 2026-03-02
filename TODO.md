@@ -1,6 +1,24 @@
 # TODOs
 
 ### Next:
+- create shared code module: 
+```
+shared/go.mod:
+
+    module github.com/you/repo/shared
+
+    go 1.26
+
+  In program-a/go.mod and program-b/go.mod:
+
+    require github.com/you/repo/shared v0.0.0
+
+    replace github.com/you/repo/shared => ../shared
+
+  Then import it normally:
+
+    import "github.com/you/repo/shared/yourpackage"
+```
 
 ##### CI:
 

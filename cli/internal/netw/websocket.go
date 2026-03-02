@@ -7,8 +7,8 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"time"
 
+	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
@@ -74,7 +74,7 @@ func newWebsocketConfig(c *credentials, endpoint string) (*websocket.Config, err
 func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICECandidateInit) error {
 	var candidate webrtc.ICECandidateInit
 	for {
-		err := receiveWithContext(ctx, ws, &candidate)
+		err := wsock.ReceiveJSON(ctx, ws, &candidate)
 		if err != nil {
 			return fmt.Errorf("error reading from ws: %w", err)
 		}
@@ -85,30 +85,6 @@ func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICEC
 			return nil
 		}
 		ch <- candidate
-	}
-}
-
-// receiveWithContext reads json into v from ws in a new goroutine and cancels
-// the read if ctx is cancelled. Param v should be a pointer.
-func receiveWithContext(ctx context.Context, ws *websocket.Conn, v any) error {
-	var (
-		recv sync.WaitGroup
-		done = make(chan error, 1)
-	)
-	defer recv.Wait()
-
-	recv.Go(func() {
-		done <- websocket.JSON.Receive(ws, v)
-	})
-
-	select {
-	case <-ctx.Done():
-		if err := ws.SetReadDeadline(time.Now()); err != nil { // interrupt the read
-			return fmt.Errorf("context cancelled: %w; and error setting read deadline: %w", ctx.Err(), err)
-		}
-		return ctx.Err()
-	case err := <-done:
-		return err
 	}
 }
 

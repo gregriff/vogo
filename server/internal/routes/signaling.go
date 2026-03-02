@@ -13,8 +13,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/server/internal/middleware"
-	"github.com/gregriff/vogo/server/internal/schemas"
 	"github.com/gregriff/vogo/server/internal/state"
+	"github.com/gregriff/vogo/shared/requests"
+	"github.com/gregriff/vogo/shared/wsock"
+	"github.com/gregriff/vogo/shared/wsock/messages"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
@@ -39,8 +41,8 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		return
 	}
 
-	var offer schemas.ConnectionRequest
-	err = receiveWithContext(ctx, ws, &offer)
+	var offer requests.Connection
+	err = wsock.ReceiveJSON(ctx, ws, &offer)
 	if err != nil {
 		if err == io.EOF {
 			return
@@ -120,7 +122,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		if _, ok := <-canListenForClose; !ok {
 			return
 		}
-		err := receiveWithContext(ctx, ws, &struct{}{})
+		err := wsock.ReceiveJSON(ctx, ws, &struct{}{})
 		if err == io.EOF {
 			log.Println("listenForClose EOF")
 			closed <- struct{}{}
@@ -214,8 +216,8 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	}
 
 	// wait for answer from client
-	var answer schemas.ConnectionRequest
-	err = receiveWithContext(ctx, ws, &answer)
+	var answer requests.Connection
+	err = wsock.ReceiveJSON(ctx, ws, &answer)
 	if err != nil {
 		if err == io.EOF {
 			return
@@ -270,7 +272,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 		if _, ok := <-canListenForClose; !ok {
 			return
 		}
-		err := receiveWithContext(ctx, ws, &struct{}{})
+		err := wsock.ReceiveJSON(ctx, ws, &struct{}{})
 		if err == io.EOF {
 			log.Println("listenForClose EOF")
 			closed <- struct{}{}
@@ -317,7 +319,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICECandidateInit) error {
 	var candidate webrtc.ICECandidateInit
 	for {
-		if err := receiveWithContext(ctx, ws, &candidate); err != nil {
+		if err := wsock.ReceiveJSON(ctx, ws, &candidate); err != nil {
 			if err == io.EOF {
 				return err // ws closed, propogate up
 			}
@@ -353,8 +355,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		return
 	}
 
-	var req schemas.JoinRoomRequest
-	err = receiveWithContext(ctx, ws, &req)
+	var req requests.JoinRoom
+	err = wsock.ReceiveJSON(ctx, ws, &req)
 	if err != nil {
 		if err == io.EOF {
 			return
@@ -393,7 +395,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 	users := room.Users(roomUser.Id)
 	// own func
-	newConns := state.BulkConnectionRequest{
+	newConns := requests.BulkConnection{
 		Users: make(map[uuid.UUID]string, state.MaxRoomUsers-1),
 	}
 	for id, user := range users {
@@ -406,8 +408,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	// ^^
 
 	// note: parallelize this
-	var offers schemas.BulkConnectionMessage
-	err = receiveWithContext(ctx, ws, &offers)
+	var offers messages.BulkConnection
+	err = wsock.ReceiveJSON(ctx, ws, &offers)
 	if err != nil {
 		if err == io.EOF {
 			return
@@ -442,7 +444,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				return
 			}
 
-			recipient := schemas.User{
+			recipient := dal.User{
 				Id:   recipientId,
 				Name: users[recipientId].Name,
 			}
@@ -452,8 +454,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			// note: its important to ensure that none of the below goroutines never die and
 			// keep holding references to this connection^^ (could set it to nil to debug?)
 
-			offer := schemas.ConnectionRequestWithId{
-				ConnectionRequest: schemas.ConnectionRequest{
+			offer := requests.ConnectionWithId{
+				Connection: requests.Connection{
 					From: user.Name, // this is the caller's name
 					To:   recipient.Name,
 					Sd:   conn.From.Sd,
@@ -475,7 +477,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 						continue
 					}
 					log.Printf("%s received %s's answer from chan\n", username, req.To)
-					bytes, err := json.Marshal(schemas.ConnectionRequest{
+					bytes, err := json.Marshal(requests.Connection{
 						To: req.To, // this is the recipient
 						Sd: answerSd,
 					})
@@ -484,14 +486,14 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 						return
 					}
 
-					msg := Message{Type: "answer", Data: bytes}
+					msg := wsock.Message{Type: "answer", Data: bytes}
 					if err := websocket.JSON.Send(ws, msg); err != nil {
 						log.Printf("error writing answer: %v", err)
 						return
 					}
 					log.Printf("%s's answer sent to %s\n", req.To, username)
 				case answerCandidate, ok := <-conn.To.Candidates:
-					bytes, err := json.Marshal(schemas.CandidateMessage{
+					bytes, err := json.Marshal(messages.Candidate{
 						UserId:    recipientId,
 						Username:  req.To, // this is the recipient
 						Candidate: answerCandidate,
@@ -501,7 +503,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 						return
 					}
 
-					msg := Message{Type: "ice-answer", Data: bytes}
+					msg := wsock.Message{Type: "ice-answer", Data: bytes}
 					if err := websocket.JSON.Send(ws, msg); err != nil {
 						log.Printf("error writing answer candidate: %v", err)
 						return
@@ -520,7 +522,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	var (
 		wsRecvWg                sync.WaitGroup
 		wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
-		msgChan                 = make(chan Message)
+		msgChan                 = make(chan wsock.Message)
 	)
 	defer func() {
 		cancelWsRecv()
@@ -528,7 +530,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	}()
 	wsRecvWg.Go(func() {
 		defer cancel() // if websocket closes, end all goroutines
-		if err := startMessageLoop(wsRecvCtx, ws, msgChan); err != nil {
+		if err := wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
 			if err == io.EOF { // todo: may need to handle this in startMessageLoop
 				log.Println("messageLoop EOF")
 			} else {
@@ -564,7 +566,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				return
 			}
 
-			msg := Message{Type: "offer", Data: bytes}
+			msg := wsock.Message{Type: "offer", Data: bytes}
 			if err := websocket.JSON.Send(ws, msg); err != nil {
 				log.Printf("error sending new offer to existing user %s: %v", offer.To, err)
 			}
@@ -574,9 +576,9 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			// TODO: put this switch into its own func. run it in its own goroutine. it should use a waitgroup defined before this
 			// event loop "msgHandlerWg". 'tick' will report the wg's counter (manually increment a top level int).
 			switch msg.Type {
-			// TODO: try to combine offer and answer handlers with additional property in CandidateMessage
+			// TODO: try to combine offer and answer handlers with additional property in messages.Candidate
 			case "ice-offer":
-				var data schemas.CandidateMessage
+				var data messages.Candidate
 				if err := json.Unmarshal(msg.Data, &data); err != nil {
 					log.Printf("error unmarshaling ice-offer candidate: %v", err)
 					_ = ws.WriteClose(http.StatusBadRequest)
@@ -596,7 +598,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				}
 				conn.From.Candidates <- data.Candidate
 			case "ice-answer":
-				var data schemas.CandidateMessage
+				var data messages.Candidate
 				if err := json.Unmarshal(msg.Data, &data); err != nil {
 					log.Printf("error unmarshaling ice-answer candidate: %v", err)
 					_ = ws.WriteClose(http.StatusBadRequest)
@@ -623,7 +625,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				conn.To.Candidates <- data.Candidate
 			// this is when the client answers a new user's offer
 			case "answer":
-				var answer schemas.ConnectionRequestWithId
+				var answer requests.ConnectionWithId
 				if err := json.Unmarshal(msg.Data, &answer); err != nil {
 					log.Printf("error unmarshaling answer: %v", err)
 					_ = ws.WriteClose(http.StatusBadRequest)
@@ -665,7 +667,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 							return
 						// forwards caller's candidates to answerer
 						case candidate, ok := <-conn.From.Candidates:
-							bytes, err := json.Marshal(schemas.CandidateMessage{
+							bytes, err := json.Marshal(messages.Candidate{
 								UserId:    caller.Id,
 								Username:  caller.Name,
 								Candidate: candidate,
@@ -675,7 +677,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 								return
 							}
 
-							msg := Message{Type: "ice-offer", Data: bytes}
+							msg := wsock.Message{Type: "ice-offer", Data: bytes}
 							if err := websocket.JSON.Send(ws, msg); err != nil {
 								log.Printf("error writing caller candidate to answerer ws: %v", err)
 								return

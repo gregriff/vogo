@@ -10,13 +10,13 @@ import (
 	"github.com/gregriff/vogo/server/internal/crypto"
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/server/internal/middleware"
-	"github.com/gregriff/vogo/server/internal/schemas"
-	"github.com/gregriff/vogo/server/internal/schemas/public"
 	"github.com/gregriff/vogo/server/internal/validation"
+	"github.com/gregriff/vogo/shared/requests"
+	"github.com/gregriff/vogo/shared/responses"
 )
 
 func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
-	data := schemas.NewUserRequest{}
+	data := requests.NewUser{}
 	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -75,7 +75,7 @@ func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// TODO: check for any pending calls with callMap
-	res := public.StatusResponse{Friends: friends, Channels: channels}
+	res := responses.Status{Friends: friends, Channels: channels}
 	writeJSON(w, &res)
 }
 
@@ -90,7 +90,7 @@ func (h *RouteHandler) CreateChannel(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	channel := schemas.CreateChannelRequest{}
+	channel := requests.CreateChannel{}
 	if err := json.NewDecoder(req.Body).Decode(&channel); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -126,7 +126,7 @@ func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	data := schemas.AddFriendRequest{}
+	data := requests.AddFriend{}
 	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -158,7 +158,7 @@ func (h *RouteHandler) InviteFriend(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	data := schemas.InviteFriendRequest{}
+	data := requests.InviteFriend{}
 	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

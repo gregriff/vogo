@@ -4,6 +4,7 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"path/filepath"
 
 	"github.com/gregriff/vogo/server/configs"
 	"github.com/spf13/cobra"
@@ -37,15 +38,19 @@ func init() {
 
 	// deferring this allows user to override config path with cli option
 	cobra.OnInitialize(func() {
-		log.Printf("using config file: %s", ConfigFile)
-		configs.InitConfig(ConfigFile)
+		nativeFilepath, err := filepath.Abs(ConfigFile)
+		if err != nil {
+			log.Fatalf("error resolving config file: %v", err)
+		}
+		log.Printf("using config file: %s", nativeFilepath)
+		configs.Init("vogo-server", nativeFilepath)
 
 		if err := configs.ConfigurePostgres(); err != nil {
 			log.Fatal(err)
 		}
 	})
 
-	configDir := configs.GetConfigDir()
+	configDir := configs.Dir("vogo-server")
 	defaultConfigFilePath := fmt.Sprintf("%s/vogo-server.toml", configDir)
 	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config", defaultConfigFilePath, "config file")
 

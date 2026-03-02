@@ -3,24 +3,8 @@ package wrtc
 import (
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/pion/webrtc/v4"
 )
-
-// ConnectionRequest encapsulates offers and answers. It can optionally contain
-// the username of the sender and/or the recipient, depending on if additional context is needed.
-type ConnectionRequest struct {
-	From,
-	To string
-	Sd webrtc.SessionDescription
-}
-
-// ConnectionRequestWithId extends ConnectionRequest with user Ids.
-type ConnectionRequestWithId struct {
-	ConnectionRequest
-	FromId,
-	ToId uuid.UUID
-}
 
 // CreateOffer creates a webrtc offer, sets the local description and starts ice gathering.
 func CreateOffer(pc *webrtc.PeerConnection) (offer webrtc.SessionDescription, err error) {

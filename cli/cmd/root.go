@@ -48,7 +48,7 @@ func init() {
 			log.Fatalf("error resolving config file: %v", err)
 		}
 		log.Printf("using config file: %s", nativeFilepath)
-		configs.InitConfig(ConfigFile)
+		configs.Init("vogo", nativeFilepath)
 
 		username, password := viper.GetString("user.name"), viper.GetString("user.password")
 		if len(username) == 0 {
@@ -59,7 +59,7 @@ func init() {
 		}
 	})
 
-	configDir := configs.GetConfigDir()
+	configDir := configs.Dir("vogo")
 	defaultConfigFilePath := filepath.Join(configDir, "vogo.toml")
 	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config", defaultConfigFilePath, "config file")
 

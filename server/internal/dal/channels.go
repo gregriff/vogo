@@ -1,3 +1,6 @@
+// package dal is the data access layer. It contains functions that perform SQL queries and logic
+// that cannot be decoupled from the queries, as well as structs representing database records.
+// Filenames correspond to SQL tables.
 package dal
 
 import (
@@ -5,11 +8,20 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/gregriff/vogo/server/internal/schemas"
-	"github.com/gregriff/vogo/server/internal/schemas/public"
+	"github.com/gregriff/vogo/shared/public"
+	"github.com/gregriff/vogo/shared/requests"
 )
+
+// Channel is the database representation of public.Channel
+type Channel struct {
+	public.Channel
+
+	Id        uuid.UUID
+	CreatedAt time.Time
+}
 
 // GetChannels returns the channels a user with a given id is a member of.
 // The result contains the user names of the channel members as a property of each channel.
@@ -53,7 +65,7 @@ func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
 }
 
 // CreateChannel creates a channel in the database. TODO: handle onconflict, tell user to use PUT to edit.
-func CreateChannel(db *sql.DB, ownerId uuid.UUID, data schemas.CreateChannelRequest) (*public.Channel, error) {
+func CreateChannel(db *sql.DB, ownerId uuid.UUID, data requests.CreateChannel) (*public.Channel, error) {
 	var channel public.Channel
 	var channelId uuid.UUID
 
@@ -128,8 +140,8 @@ func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) 
 // GetChannelOfMember returns a channel with a given name, that is owned by ownerId and memberId
 // is a member of. It prevents a member from accessing a channel of another owner with the same name.
 // This is because there is a unique constraint on db::channels(owner_id, name)
-func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*schemas.Channel, error) {
-	var channel schemas.Channel
+func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*Channel, error) {
+	var channel Channel
 	query := `
         SELECT
             c.id, c.name, c.description, c.capacity, c.created_at

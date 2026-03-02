@@ -8,6 +8,8 @@ import (
 
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
+	"github.com/gregriff/vogo/shared/requests"
+	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
@@ -128,7 +130,7 @@ func sendCallAndConnect(
 	}
 
 	// send offer
-	req := wrtc.ConnectionRequest{To: recipient, Sd: offer}
+	req := requests.Connection{To: recipient, Sd: offer}
 	if err = websocket.JSON.Send(ws, req); err != nil {
 		return fmt.Errorf("error sending offer: %w", err)
 	}
@@ -150,7 +152,7 @@ func sendCallAndConnect(
 
 	// wait to recv answer
 	var answer webrtc.SessionDescription
-	if err := receiveWithContext(ctx, ws, &answer); err != nil {
+	if err := wsock.ReceiveJSON(ctx, ws, &answer); err != nil {
 		return fmt.Errorf("error reading answer from ws: %v", err)
 	}
 	if err = pc.SetRemoteDescription(answer); err != nil {
