@@ -70,7 +70,9 @@ join: announce build
 	@echo "joining $(USER_ONE)/$(CHANNEL_NAME)..."
 	$(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH)
 
+format:
+	golangci-lint fmt
+
 lint:
 	go vet ./...
-	gofmt -d -e .
-	golangci-lint run
+	golangci-lint run -c ./../golangci.yml --fix

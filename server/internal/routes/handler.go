@@ -56,13 +56,13 @@ func (rl routeLoggers) forRequest(r *http.Request) routeLoggers {
 	}
 }
 
-// RouteHandler provides the dependencies for any endpoint, and is the reciever of the endpoint handling functions
+// RouteHandler provides the dependencies for any endpoint, and is the receiver of the endpoint handling functions.
 type RouteHandler struct {
 	db      *sql.DB
 	loggers routeLoggers
 }
 
-// NewRouteHandler creates the reciever for all endpoint handling functions
+// NewRouteHandler creates the receiver for all endpoint handling functions.
 func NewRouteHandler(db *sql.DB, logOpts logging.Opts) *RouteHandler {
 	return &RouteHandler{
 		db:      db,

@@ -27,7 +27,7 @@ import (
 
 // Call initiates signaling for a voice call that may only be accepted by the intended recipient. The caller's
 // ICE candidates are stored in memory until the recipient answers, where they are then forwarded. Call then
-// recieves the recipient's ICE candidates and forwards them to the caller. When candidates have been fully
+// receives the recipient's ICE candidates and forwards them to the caller. When candidates have been fully
 // exchanged Call deletes the signaling data from memory and returns.
 func (h *RouteHandler) Call(ws *websocket.Conn) {
 	ctx, cancel := context.WithTimeout(ws.Request().Context(), time.Second*30)
@@ -56,7 +56,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
-	log.Println("callWS: offer recieved")
+	log.Println("callWS: offer received")
 	recipient, err := dal.GetUser(h.db, offer.To)
 	if err != nil {
 		log.Println(fmt.Errorf("error fetching recipient: %w", err))
@@ -231,7 +231,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
-	log.Println("answerWS: answer recieved")
+	log.Println("answerWS: answer received")
 	call.Answer <- answer.Sd
 
 	// read incoming candidates
@@ -321,7 +321,7 @@ func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICEC
 	for {
 		if err := wsock.ReceiveJSON(ctx, ws, &candidate); err != nil {
 			if err == io.EOF {
-				return err // ws closed, propogate up
+				return err // ws closed, propagate up
 			}
 			if cErr := ws.Close(); cErr != nil {
 				return fmt.Errorf("error closing ws: %v, after err: %v", cErr, err)

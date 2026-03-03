@@ -19,9 +19,12 @@ drop-db:
 create-db:
 	createdb $(PGDATABASE)
 
+format:
+	golangci-lint fmt
+
 lint:
 	go vet ./...
 	gofmt -d -e .
-	golangci-lint run
+	golangci-lint run -c ./../golangci.yml --fix
 
-.PHONY: invite run build lint
+.PHONY: invite run build lint format

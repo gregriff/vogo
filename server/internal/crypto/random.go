@@ -8,7 +8,7 @@ import (
 const InviteCodeLength = 6
 
 // GenerateInviteCode creates an invite code to be used by one client during registration. At time of registration,
-// server should check that this invite code has not already been used
+// server should check that this invite code has not already been used.
 func GenerateInviteCode() string {
 	return secureRandomString(InviteCodeLength)
 }

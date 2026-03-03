@@ -14,14 +14,14 @@ import (
 // connMap stores signaling information for pending connections.
 // (the time from when a conn is created until it is answered).
 // Entries are deleted when the recipient answers or if the connection fails.
-// Takes a user's UUID as a key
+// Takes a user's UUID as a key.
 type connMap struct {
 	mu    sync.Mutex
 	conns map[uuid.UUID]*connection
 }
 
 // Add inserts or updates a connection for a given user id.
-// TODO: move this to a new method? combine with createConnection into a createCall func
+// TODO: move this to a new method? combine with createConnection into a createCall func.
 func (m *connMap) Add(id uuid.UUID, call *connection) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -29,18 +29,17 @@ func (m *connMap) Add(id uuid.UUID, call *connection) {
 }
 
 // Get returns a copy of a connection for a given id, returning an error if not found.
-// Updating a connection should be done with CallMap.Update
+// Updating a connection should be done with CallMap.Update.
 func (m *connMap) Get(id uuid.UUID) (*connection, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if c, exists := m.conns[id]; exists {
 		return c, nil
-	} else {
-		return &connection{}, errors.New("connection not found")
 	}
+	return &connection{}, errors.New("connection not found")
 }
 
-// Delete removes a call entry from the PendingCalls map
+// Delete removes a call entry from the PendingCalls map.
 func (m *connMap) Delete(id uuid.UUID) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -60,7 +59,7 @@ func GetPendingCalls() *connMap {
 	return &pendingCalls
 }
 
-// connection is the struct that stores the signalling state between two webrtc peers
+// connection is the struct that stores the signalling state between two webrtc peers.
 type connection struct {
 	From,
 	To clientInfo

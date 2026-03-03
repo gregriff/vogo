@@ -13,7 +13,7 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-// credentials are for signaling and connecting
+// credentials are for signaling and connecting.
 type credentials struct {
 	stunServer,
 	baseURL,

@@ -17,7 +17,7 @@ var addFriendCmd = &cobra.Command{
       name    The username of the friend to add (required)
 	`,
 	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRunE: func(_ *cobra.Command, args []string) error {
 		friendName := args[0]
 		if len(friendName) > 16 {
 			return fmt.Errorf("friend's name too long")

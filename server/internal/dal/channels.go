@@ -4,6 +4,7 @@
 package dal
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 	"github.com/gregriff/vogo/shared/requests"
 )
 
-// Channel is the database representation of public.Channel
+// Channel is the database representation of public.Channel.
 type Channel struct {
 	public.Channel
 
@@ -26,6 +27,7 @@ type Channel struct {
 // GetChannels returns the channels a user with a given id is a member of.
 // The result contains the user names of the channel members as a property of each channel.
 func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
+	ctx := context.TODO()
 	channels := make([]public.Channel, 0, 10)
 	query := `
         SELECT
@@ -40,7 +42,7 @@ func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
         GROUP BY c.id, owner_user.username, c.name, c.description, c.capacity
     `
 
-	rows, err := db.Query(query, userId)
+	rows, err := db.QueryContext(ctx, query, userId)
 	if err != nil {
 		return nil, err
 	}
@@ -66,10 +68,11 @@ func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
 
 // CreateChannel creates a channel in the database. TODO: handle onconflict, tell user to use PUT to edit.
 func CreateChannel(db *sql.DB, ownerId uuid.UUID, data requests.CreateChannel) (*public.Channel, error) {
+	ctx := context.TODO()
 	var channel public.Channel
 	var channelId uuid.UUID
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +83,7 @@ func CreateChannel(db *sql.DB, ownerId uuid.UUID, data requests.CreateChannel) (
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT DO NOTHING RETURNING id, name, description, capacity
 	`
-	err = tx.QueryRow(query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
+	err = tx.QueryRowContext(ctx, query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
 		Scan(&channelId, &channel.Name, &channel.Description, &channel.Capacity)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -94,7 +97,7 @@ func CreateChannel(db *sql.DB, ownerId uuid.UUID, data requests.CreateChannel) (
 		VALUES ($1, $2, $3)
 		ON CONFLICT DO NOTHING
 	`
-	if _, err = tx.Exec(query, channelId, ownerId, ownerId); err != nil {
+	if _, err = tx.ExecContext(ctx, query, channelId, ownerId, ownerId); err != nil {
 		return nil, fmt.Errorf("error adding creator as a member of channel")
 	}
 	if err = tx.Commit(); err != nil {
@@ -105,6 +108,7 @@ func CreateChannel(db *sql.DB, ownerId uuid.UUID, data requests.CreateChannel) (
 
 // InviteFriend adds a friend to an existing channel. Only the owner can invite.
 func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) (*public.User, error) {
+	ctx := context.TODO()
 	friend := public.User{}
 
 	dbFriend, err := GetUser(db, friendName)
@@ -125,7 +129,7 @@ func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) 
     `
 
 	var channelId uuid.UUID
-	err = db.QueryRow(query, channelName, userId, dbFriend.Id).Scan(&channelId)
+	err = db.QueryRowContext(ctx, query, channelName, userId, dbFriend.Id).Scan(&channelId)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, errors.New("channel not found or inviter is not owner")
@@ -139,8 +143,9 @@ func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) 
 
 // GetChannelOfMember returns a channel with a given name, that is owned by ownerId and memberId
 // is a member of. It prevents a member from accessing a channel of another owner with the same name.
-// This is because there is a unique constraint on db::channels(owner_id, name)
+// This is because there is a unique constraint on db::channels(owner_id, name).
 func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*Channel, error) {
+	ctx := context.TODO()
 	var channel Channel
 	query := `
         SELECT
@@ -150,7 +155,7 @@ func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*
         WHERE m.user_id = $1 AND c.owner_id = $2 AND c.name = $3
     `
 
-	err := db.QueryRow(query, memberId, ownerId, name).
+	err := db.QueryRowContext(ctx, query, memberId, ownerId, name).
 		Scan(&channel.Id, &channel.Name, &channel.Description, &channel.Capacity, &channel.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {

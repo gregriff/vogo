@@ -18,7 +18,7 @@ func StartCapture(ctx context.Context, track *webrtc.TrackLocalStaticSample) err
 	log.Println("capture device created")
 	defer uninitCapture(deviceCtx, device)
 	if initErr != nil {
-		return fmt.Errorf("error initalizing capture device: %w", initErr)
+		return fmt.Errorf("error initializing capture device: %w", initErr)
 	}
 
 	opusBuffer := make([]byte, opusBufferSize)
@@ -121,7 +121,7 @@ func uninitCapture(ctx *malgo.AllocatedContext, device *malgo.Device) {
 }
 
 // bytesToInt16 turns a byte slice of PCM audio into an int16 slice for the opus encoder to use.
-// TODO: can replace this with an unsafe alternative that reinterprets the memory
+// TODO: can replace this with an unsafe alternative that reinterprets the memory.
 func bytesToInt16(b []byte) []int16 {
 	result := make([]int16, len(b)/2)
 	for i := range result {

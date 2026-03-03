@@ -1,6 +1,7 @@
 package dal
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -17,7 +18,7 @@ type User struct {
 	CreatedAt time.Time
 }
 
-// UserWithPassword is the full database representation of User
+// UserWithPassword is the full database representation of User.
 type UserWithPassword struct {
 	User
 
@@ -27,17 +28,19 @@ type UserWithPassword struct {
 
 // CreateUser adds a user to the database and associates them with their invite code.
 func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*string, error) {
+	ctx := context.TODO()
+
 	userId := uuid.New()
 	username = strings.ToLower(username)
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer rollback(tx, err)
 
 	var dbUsername string
-	err = tx.QueryRow(
+	err = tx.QueryRowContext(ctx,
 		"INSERT INTO users (id, username, password) VALUES ($1, $2, $3) RETURNING username",
 		userId,
 		username,
@@ -49,7 +52,7 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 
 	// update invite code
 	var result sql.Result
-	result, err = tx.Exec(
+	result, err = tx.ExecContext(ctx,
 		"UPDATE invite_codes SET registered_user_id = $1 WHERE code = $2 AND registered_user_id IS NULL",
 		userId, inviteCode,
 	)
@@ -73,11 +76,12 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 
 // GetUser returns a user from the database given their username.
 func GetUser(db *sql.DB, username string) (*User, error) {
+	ctx := context.TODO()
 	var user User
 	username = strings.ToLower(username)
 
 	query := "SELECT id, username, created_at FROM users WHERE username = $1"
-	err := db.QueryRow(query, username).Scan(&user.Id, &user.Name, &user.CreatedAt)
+	err := db.QueryRowContext(ctx, query, username).Scan(&user.Id, &user.Name, &user.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found: %s", username)
@@ -89,11 +93,12 @@ func GetUser(db *sql.DB, username string) (*User, error) {
 
 // GetUserWithPassword returns a friend from the database with their hashed password given their username.
 func GetUserWithPassword(db *sql.DB, username string) (*UserWithPassword, error) {
+	ctx := context.TODO()
 	var user UserWithPassword
 	username = strings.ToLower(username)
 
 	query := "SELECT id, username, password, created_at FROM users WHERE username = $1"
-	err := db.QueryRow(query, username).Scan(&user.Id, &user.Name, &user.Password, &user.CreatedAt)
+	err := db.QueryRowContext(ctx, query, username).Scan(&user.Id, &user.Name, &user.Password, &user.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found: %s", username)
@@ -104,10 +109,11 @@ func GetUserWithPassword(db *sql.DB, username string) (*UserWithPassword, error)
 }
 
 func GetUserById(db *sql.DB, id string) (*User, error) {
+	ctx := context.TODO()
 	var user User
 
 	query := "SELECT id, username, created_at FROM users WHERE id = $1"
-	err := db.QueryRow(query, id).Scan(&user.Id, &user.Name, &user.CreatedAt)
+	err := db.QueryRowContext(ctx, query, id).Scan(&user.Id, &user.Name, &user.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found: %s", id)
@@ -120,6 +126,7 @@ func GetUserById(db *sql.DB, id string) (*User, error) {
 // GetFriends returns the names of the friends of a user with a given id.
 // Use pending to control returning incoming friend requests.
 func GetFriends(db *sql.DB, userId string, pending bool) ([]public.Friend, error) {
+	ctx := context.TODO()
 	friends := make([]public.Friend, 0, 10)
 
 	template := `
@@ -136,7 +143,7 @@ func GetFriends(db *sql.DB, userId string, pending bool) ([]public.Friend, error
 	}
 
 	query := fmt.Sprintf(template, filter)
-	rows, err := db.Query(query, userId)
+	rows, err := db.QueryContext(ctx, query, userId)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +164,7 @@ func GetFriends(db *sql.DB, userId string, pending bool) ([]public.Friend, error
 
 // AddFriend adds a friend with a given name.
 func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, error) {
+	ctx := context.TODO()
 	friend := public.User{}
 
 	dbFriend, err := GetUser(db, friendName)
@@ -172,7 +180,7 @@ func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, e
 		DO UPDATE SET status = 'accepted'
     	WHERE friendships.status = 'pending'
        `
-	_, err = db.Exec(query, userId, dbFriend.Id)
+	_, err = db.ExecContext(ctx, query, userId, dbFriend.Id)
 	if err != nil {
 		return nil, fmt.Errorf("error during add friend query: %w", err)
 	}
@@ -182,6 +190,7 @@ func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, e
 
 // AreFriends returns true if the two users are friends.
 func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
+	ctx := context.TODO()
 	query := `
 	    SELECT EXISTS(
 	        SELECT 1 FROM friendships
@@ -191,7 +200,7 @@ func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
 		)`
 
 	var areFriends bool
-	err := db.QueryRow(query, userId, friendId).Scan(&areFriends)
+	err := db.QueryRowContext(ctx, query, userId, friendId).Scan(&areFriends)
 	if err != nil {
 		return false, fmt.Errorf("query error: %w", err)
 	}

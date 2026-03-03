@@ -48,7 +48,7 @@ func (ab *ChannelStreams) addStream(b *[]int16) {
 }
 
 // HasFullSample iterates through all the audio buffers, and if any have at least `amt` samples (elements),
-// returns true. This is used to short-circuit the speaker callback if no data has been recieved over the wire.
+// returns true. This is used to short-circuit the speaker callback if no data has been received over the wire.
 // This function also returns an array of pointers to each buffers containing a full sample to be mixed.
 // NOTES:
 // - if returns false, speaker will not play sound for this frame
@@ -91,7 +91,6 @@ func (ab *ChannelStreams) mixAudio(fullBufs []*[]int16, numSamples int) []int16 
 		sum = zero
 		for _, p := range fullBufs { // TODO: use SIMD in Go 1.26
 			sum += int32((*p)[i])
-
 		}
 		mixed[i] = clampInt16(sum / numFull)
 	}

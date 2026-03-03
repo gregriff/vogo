@@ -27,7 +27,7 @@ type RoomUser struct {
 	Offers             chan requests.ConnectionWithId
 }
 
-// NewRoomUser creates a user struct for sending and recieving data to and from the room and its users.
+// NewRoomUser creates a user struct for sending and receiving data to and from the room and its users.
 func NewRoomUser(u *dal.User) *RoomUser {
 	return &RoomUser{
 		Id:                 u.Id,
@@ -86,7 +86,7 @@ func (r *room) Users(omitId uuid.UUID) map[uuid.UUID]*RoomUser {
 }
 
 // addUser adds a member to the room. This should only be run inside
-// of the room's lock
+// of the room's lock.
 func (r *room) addUser(user *RoomUser) error {
 	if userCount := len(r.users); userCount >= r.Capacity {
 		if userCount > r.Capacity {
@@ -131,7 +131,7 @@ func CreateOrJoinRoom(c *dal.Channel, user *RoomUser, logger *slog.Logger) (*roo
 // Since the database only stores info about Room members and not their connection status,
 // this in-memory roomMap is the source of truth for Room connection information and
 // facilitates creating Rooms and signalling between participants when they
-// join or leave
+// join or leave.
 type roomMap struct {
 	mu     sync.Mutex
 	active map[uuid.UUID]*room
@@ -145,10 +145,9 @@ func (m *roomMap) Get(id uuid.UUID) (*room, error) {
 		return r, nil
 	}
 	return &room{}, errors.New("channel not found")
-
 }
 
-// Delete removes a room entry from the activeRooms map
+// Delete removes a room entry from the activeRooms map.
 func (m *roomMap) Delete(id uuid.UUID) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -1,6 +1,7 @@
 package dal
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -10,8 +11,11 @@ import (
 )
 
 func AddInviteCode(db *sql.DB, code string) error {
+	ctx := context.TODO()
 	id := uuid.New()
-	result, err := db.Exec("INSERT INTO invite_codes (id, code) VALUES ($1, $2) ON CONFLICT DO NOTHING", id, code)
+	result, err := db.ExecContext(ctx,
+		"INSERT INTO invite_codes (id, code) VALUES ($1, $2) ON CONFLICT DO NOTHING", id, code,
+	)
 	if err != nil {
 		return err
 	}
@@ -27,13 +31,14 @@ func AddInviteCode(db *sql.DB, code string) error {
 }
 
 func ValidateInviteCode(db *sql.DB, code string) error {
+	ctx := context.TODO()
 	if len(code) < crypto.InviteCodeLength || len(code) > crypto.InviteCodeLength {
 		return errors.New("invalid length")
 	}
 	var registeredUserId sql.NullString
 
 	query := "SELECT registered_user_id FROM invite_codes WHERE code = $1 LIMIT 1"
-	err := db.QueryRow(query, code).Scan(&registeredUserId)
+	err := db.QueryRowContext(ctx, query, code).Scan(&registeredUserId)
 	if err == sql.ErrNoRows {
 		return errors.New("not found in database")
 	}

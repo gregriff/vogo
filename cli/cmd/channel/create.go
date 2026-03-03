@@ -16,7 +16,7 @@ var createChannelCmd = &cobra.Command{
       name    The name of the channel (required)
 	`,
 	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRunE: func(_ *cobra.Command, args []string) error {
 		channelName := args[0]
 		if len(channelName) > 20 {
 			return fmt.Errorf("channel name too long")

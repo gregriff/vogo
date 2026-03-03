@@ -18,9 +18,9 @@ var opusCodec = webrtc.RTPCodecCapability{
 
 // NewAudioPeerConnection creates the PeerConnection for a bidirectional audio webrtc connection.
 // It also returns the TrackLocalStaticSample used to write microphone audio to, and two channels,
-// one for recieving the client's ICE candidates as they're gathered, and the other for signaling
+// one for receiving the client's ICE candidates as they're gathered, and the other for signaling
 // when the PeerConnection moves to a connected state.
-// TODO: create a struct for this retval
+// TODO: create a struct for this retval.
 func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample, exitOnFail bool) (
 	*webrtc.PeerConnection,
 	*webrtc.TrackLocalStaticSample,
@@ -60,7 +60,7 @@ func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSam
 
 // newPeerConnection creates a PeerConnection configured with the Opus audio codec.
 // It sets the STUN server and configures the MTU to avoid packet read underruns.
-// TODO: config creation and PeerConnection creation needs to be split into seperate functions for room use case
+// TODO: config creation and PeerConnection creation needs to be split into separate functions for room use case.
 func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 	mediaEngine := &webrtc.MediaEngine{}
 	codecParams := webrtc.RTPCodecParameters{
@@ -118,7 +118,7 @@ func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 	return api.NewPeerConnection(config)
 }
 
-// CreateAudioTrack creates the opus audio track
+// CreateAudioTrack creates the opus audio track.
 func CreateAudioTrack(trackId string) (*webrtc.TrackLocalStaticSample, error) {
 	t, err := webrtc.NewTrackLocalStaticSample(
 		opusCodec,
@@ -126,7 +126,7 @@ func CreateAudioTrack(trackId string) (*webrtc.TrackLocalStaticSample, error) {
 		"captureTrack"+trackId,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error initalizing capture track: %v", err)
+		return nil, fmt.Errorf("error initializing capture track: %v", err)
 	}
 	return t, nil
 }

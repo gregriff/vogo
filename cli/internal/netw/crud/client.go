@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// NewClient provides an http.Client for miscellaneous requests to the vogo server
+// NewClient provides an http.Client for miscellaneous requests to the vogo server.
 func NewClient(baseUrl, username, password string) *http.Client {
 	vogoTransport := transport{
 		BaseURL:               baseUrl,
@@ -26,7 +26,7 @@ func NewClient(baseUrl, username, password string) *http.Client {
 	}
 }
 
-// transport allows custom attributes to be added to each HTTP request sent by an http.Client that uses this transport
+// transport allows custom attributes to be added to each HTTP request sent by an http.Client that uses this transport.
 type transport struct {
 	BaseURL,
 	Username,

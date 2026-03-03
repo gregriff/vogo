@@ -17,7 +17,7 @@ var inviteCmd = &cobra.Command{
       channel 	  The name of the channel (required)
 	`,
 	Args: cobra.ExactArgs(2),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRunE: func(_ *cobra.Command, args []string) error {
 		friendName := args[0]
 		if len(friendName) == 0 {
 			return fmt.Errorf("must specify a friend to invite")

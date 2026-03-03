@@ -51,5 +51,4 @@ func init() {
 	configDir := configs.Dir("vogo")
 	defaultConfigFilePath := filepath.Join(configDir, "vogo-server.toml")
 	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config", defaultConfigFilePath, "config file")
-
 }

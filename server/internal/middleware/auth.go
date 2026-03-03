@@ -16,7 +16,7 @@ type contextKey string
 
 const authKey contextKey = "authorization"
 
-// BasicAuth is a middleware that mandates basic auth is present in the headers and validates
+// BasicAuth is a middleware that mandates basic auth is present in the headers and validates.
 func BasicAuth(next http.Handler, db *sql.DB, logOpts logging.Opts) http.Handler {
 	logger := logging.New(logOpts).With("type", "AUTH")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +51,7 @@ func writeAuthError(w http.ResponseWriter) {
 }
 
 // GetUsername is used in endpoint handlers to retrieve the username of the client that created the request.
-// This should probably be a func in the route handler since its a dependency
+// This should probably be a func in the route handler since its a dependency.
 func GetUsername(r *http.Request) string {
 	username, _ := r.Context().Value(authKey).(string)
 	return username

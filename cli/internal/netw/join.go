@@ -47,7 +47,7 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 		}
 	}()
 
-	// initalize speaker asynchronously
+	// initialize speaker asynchronously
 	var (
 		playbackWg       sync.WaitGroup
 		playbackCtx      *malgo.AllocatedContext
@@ -182,7 +182,7 @@ func (cm *ConnectionMap) Get(username string) (*Connection, bool) {
 	return c, ok
 }
 
-// TODO: make updater
+// TODO: make updater.
 func (cm *ConnectionMap) Update(key string, c *Connection) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -350,12 +350,12 @@ func joinChannelAndConnect(
 				}
 
 				if err := conn.pc.AddICECandidate(data.Candidate); err != nil {
-					return fmt.Errorf("error recieving ICE candidate: %w", err)
+					return fmt.Errorf("error receiving ICE candidate: %w", err)
 				}
 				if data.Candidate.Candidate == "" {
 					log.Printf("ICE offer NIL recv")
 				} else {
-					log.Printf("ICE offer candidate recieved: %s\n", *data.Candidate.SDPMid)
+					log.Printf("ICE offer candidate received: %s\n", *data.Candidate.SDPMid)
 				}
 			case "ice-answer":
 				var (
@@ -371,12 +371,12 @@ func joinChannelAndConnect(
 				}
 
 				if err := conn.pc.AddICECandidate(data.Candidate); err != nil {
-					return fmt.Errorf("error recieving ICE candidate: %w", err)
+					return fmt.Errorf("error receiving ICE candidate: %w", err)
 				}
 				if data.Candidate.Candidate == "" {
 					log.Printf("ICE answer NIL recv")
 				} else {
-					log.Printf("ICE answer candidate recieved: %s\n", *data.Candidate.SDPMid)
+					log.Printf("ICE answer candidate received: %s\n", *data.Candidate.SDPMid)
 				}
 			// when the client receives an answer from a recipient
 			case "answer":

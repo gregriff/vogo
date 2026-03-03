@@ -14,7 +14,7 @@ import (
 )
 
 // Register asks the vogo-server to create a new user given the provided credentials and returns
-// the official username and friend code if sucessful. It will exit if an error is encountered.
+// the official username and friend code if successful. It will exit if an error is encountered.
 func Register(client *http.Client, username, password, inviteCode string) (string, error) {
 	req := requests.NewUser{Name: username, Password: password, InviteCode: inviteCode}
 	payload, err := json.Marshal(req)
@@ -71,7 +71,7 @@ func Status(client *http.Client) (status *responses.Status, err error) {
 	return
 }
 
-// AddFriend adds a friend. TODO: make this return a friend
+// AddFriend adds a friend. TODO: make this return a friend.
 func AddFriend(client *http.Client, friendName string) (friend *public.User, err error) {
 	req := requests.AddFriend{Name: friendName}
 	payload, err := json.Marshal(req)
@@ -107,8 +107,8 @@ func AddFriend(client *http.Client, friendName string) (friend *public.User, err
 }
 
 // CreateChannel creates a persistent voice-chat channel.
-func CreateChannel(client *http.Client, name, desc string, cap int) (channel *public.Channel, err error) {
-	req := requests.CreateChannel{Name: name}
+func CreateChannel(client *http.Client, name, desc string, capacity int) (channel *public.Channel, err error) {
+	req := requests.CreateChannel{Name: name, Description: desc, Capacity: capacity}
 	payload, err := json.Marshal(req)
 	if err != nil {
 		err = fmt.Errorf("json marshal err")

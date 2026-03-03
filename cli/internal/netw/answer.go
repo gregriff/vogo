@@ -38,7 +38,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	// sending an error on this channel will abort the call process
 	abort := make(chan error, 10)
 
-	// initalize speaker asynchronously
+	// initialize speaker asynchronously
 	var (
 		playbackWg  sync.WaitGroup
 		playbackCtx *malgo.AllocatedContext
@@ -126,7 +126,7 @@ func answerAndConnect(
 
 	offer, err := recieveOffer(ctx, ws)
 	if err != nil {
-		return fmt.Errorf("error recieving offer: %w", err)
+		return fmt.Errorf("error receiving offer: %w", err)
 	}
 	_, err = wrtc.CreateAnswer(pc, offer)
 	if err != nil {
@@ -176,7 +176,7 @@ func recieveOffer(ctx context.Context, ws *websocket.Conn) (*webrtc.SessionDescr
 }
 
 // exchangeCandidates handles sending the client's ICE candidates to the websocket to be
-// forwarded to the caller, and adding the caller's candidates recieved from the websocket.
+// forwarded to the caller, and adding the caller's candidates received from the websocket.
 // It does this until both sources are exhausted, or until the context is cancelled.
 func exchangeCandidates(
 	ctx context.Context,
@@ -207,7 +207,7 @@ func exchangeCandidates(
 			}
 			log.Println("recv caller candidate")
 			if err := pc.AddICECandidate(callerCandidate); err != nil {
-				return fmt.Errorf("error recieving ICE candidate: %w", err)
+				return fmt.Errorf("error receiving ICE candidate: %w", err)
 			}
 		}
 	}

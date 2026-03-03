@@ -17,7 +17,7 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func CreateAndListen(debug bool, host string, port int, logOpts logging.Opts) {
+func CreateAndListen(host string, port int, logOpts logging.Opts) {
 	log := logging.New(logOpts)
 
 	db := db.GetDB()
@@ -63,7 +63,7 @@ func CreateAndListen(debug bool, host string, port int, logOpts logging.Opts) {
 		log.Info("stopped serving new connections")
 	}()
 
-	// recieve stop signals
+	// receive stop signals
 	<-sigChan
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -76,7 +76,7 @@ func CreateAndListen(debug bool, host string, port int, logOpts logging.Opts) {
 	log.Info("graceful shutdown complete")
 }
 
-// createRoutes creates the routing rules for the webserver
+// createRoutes creates the routing rules for the webserver.
 func createRoutes(mux *http.ServeMux, h *routes.RouteHandler) {
 	mux.HandleFunc("POST /register", h.Register)
 	mux.HandleFunc("GET /status", h.Status)

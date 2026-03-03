@@ -16,7 +16,7 @@ var registerCmd = &cobra.Command{
 	Use:   "register",
 	Short: "Register this client with a new user",
 	Args:  cobra.NoArgs,
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRunE: func(_ *cobra.Command, args []string) error {
 		inviteCode := viper.GetString("code")
 		if inviteCode == "" {
 			return fmt.Errorf("must specify an invite code to register")
@@ -32,7 +32,6 @@ func init() {
 	flagName := "code"
 	registerCmd.PersistentFlags().String(flagName, "", "invite code for a vogo server")
 	_ = viper.BindPFlag(flagName, registerCmd.PersistentFlags().Lookup(flagName))
-
 }
 
 func registerUser(_ *cobra.Command, _ []string) {

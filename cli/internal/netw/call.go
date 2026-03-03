@@ -41,7 +41,7 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 		}
 	}()
 
-	// initalize speaker asynchronously
+	// initialize speaker asynchronously
 	// var (
 	// 	playbackWg  sync.WaitGroup
 	// 	playbackCtx *malgo.AllocatedContext
@@ -158,7 +158,7 @@ func sendCallAndConnect(
 	if err = pc.SetRemoteDescription(answer); err != nil {
 		return fmt.Errorf("error while setting remote description: %w", err)
 	}
-	log.Println("recieved answer")
+	log.Println("received answer")
 
 	var (
 		readIce                   sync.WaitGroup
@@ -205,7 +205,7 @@ func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.IC
 
 // addCandidates adds the recipient's ICE candidates from ch to the peer connection. This function will continue
 // until its context is cancelled even once all candidates are exhausted.
-// TODO: i think this could be done in the readIce goroutine
+// TODO: i think this could be done in the readIce goroutine.
 func addCandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan webrtc.ICECandidateInit) error {
 	for {
 		select {
@@ -219,7 +219,7 @@ func addCandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan web
 			}
 			log.Println("recv recipient candidate")
 			if err := pc.AddICECandidate(candidate); err != nil {
-				return fmt.Errorf("error recieving ICE candidate: %w", err)
+				return fmt.Errorf("error receiving ICE candidate: %w", err)
 			}
 		}
 	}

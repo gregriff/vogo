@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// ConfigurePostgres should be run after viper has read the config file
+// ConfigurePostgres should be run after viper has read the config file.
 func ConfigurePostgres() error {
 	if os.Getenv("PGHOST") == "" {
 		if err := os.Setenv("PGHOST", viper.GetString("database.host")); err != nil {

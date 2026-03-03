@@ -11,19 +11,19 @@ const (
 	SampleRate   = 48_000
 	samplesPerMs = SampleRate / 1000
 
-	// denotes how many bytes per element of pcm
+	// denotes how many bytes per element of pcm.
 	AudioFormat = malgo.FormatS16
 
-	// the frameDuration is used for webrtc metadata and for packetizing the correct amount of pcm into opus
+	// the frameDuration is used for webrtc metadata and for packetizing the correct amount of pcm into opus.
 	frameDuration   = 20 * time.Millisecond
 	frameDurationMs = 20
 
-	// frameSize is the number of samples per frame
+	// frameSize is the number of samples per frame.
 	frameSize = NumChannels * frameDurationMs * samplesPerMs
 
-	// size of buffer to hold encoded opus to be written to packets
+	// size of buffer to hold encoded opus to be written to packets.
 	opusBufferSize = frameSize / 2
 
-	// size of buffer to hold decoded PCM from the network
+	// size of buffer to hold decoded PCM from the network.
 	pcmBufferSize = frameSize
 )

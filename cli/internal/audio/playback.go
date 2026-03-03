@@ -24,7 +24,7 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 ) {
 	deviceCtx, device, pcm, err := createCallDevice()
 	if err != nil {
-		err = fmt.Errorf("error initalizing playback device: %w", err)
+		err = fmt.Errorf("error initializing playback device: %w", err)
 		return
 	}
 
@@ -72,7 +72,7 @@ func SetupPlayback(pc *webrtc.PeerConnection, wg *sync.WaitGroup) (
 
 // SetupPlaybackChannel initializes the playback device with malgo,
 // using the pcm struct for handling multiple audio streams.
-// // TODO: combine ctx and device into a Speaker struct
+// // TODO: combine ctx and device into a Speaker struct.
 func SetupPlaybackChannel(pcmBuffers *ChannelStreams) (
 	deviceCtx *malgo.AllocatedContext,
 	device *malgo.Device,
@@ -80,7 +80,7 @@ func SetupPlaybackChannel(pcmBuffers *ChannelStreams) (
 ) {
 	deviceCtx, device, err = createChannelDevice(pcmBuffers)
 	if err != nil {
-		err = fmt.Errorf("error initalizing playback device: %w", err)
+		err = fmt.Errorf("error initializing playback device: %w", err)
 	}
 	return
 }
@@ -90,7 +90,7 @@ func SetupPlaybackChannel(pcmBuffers *ChannelStreams) (
 // RemoteTrack. Decoded audio is written to pcmBuffers, from which the speaker goroutine reads and mixes
 // with other PC's audio streams for playback. This should only be used for multi-user voice chat channels/rooms.
 // NOTE: DecodeFEC and DecodePLC are available for later use
-// NOTE: if text remote tracks are added, this will have to not add those to audio stream struct
+// NOTE: if text remote tracks are added, this will have to not add those to audio stream struct.
 func OnRemoteTrack(
 	wg *sync.WaitGroup,
 	pcmBuffers *ChannelStreams,
@@ -111,7 +111,7 @@ func OnRemoteTrack(
 	// 	 note: could do this flag stuff with a bitfield and bitwise ops if it seems expensive (its operated on in locks)
 	// 		   and the bitfield len is maxTracks (6)
 	// - another strategy would be for each track to write to its own pcm buf, and have the speaker callback join frames from
-	//   all present pcm bufs (one per track). so the first strategy is the onTrack doing the mixing, and this strat is the
+	//   all present pcm bufs (one per track). so the first strategy is the onTrack doing the mixing, and this start is the
 	//   onSample doing the mixing... onSample joining is prob more robust but may be slower if pcm bufs are fragmented in the heap...
 	// NOTE: should ensure that a 1:1 voice call never does any of this... only multi-user channels
 	return func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
@@ -233,7 +233,7 @@ func createChannelDevice(streams *ChannelStreams) (ctx *malgo.AllocatedContext, 
 	return
 }
 
-// initDevice initalizes and starts the speaker device for playback.
+// initDevice initializes and starts the speaker device for playback.
 func initDevice(ctx *malgo.AllocatedContext, onSendFrames malgo.DataProc) (device *malgo.Device, err error) {
 	config := malgo.DefaultDeviceConfig(malgo.Playback)
 	config.Playback.Format = AudioFormat
@@ -288,7 +288,7 @@ func UninitPlayback(ctx *malgo.AllocatedContext, device *malgo.Device) {
 	fmt.Println("uninit and freed playback device")
 }
 
-// int16ToBytes converts an int16 slice to a byte slice of PCM audio. TODO: can be reimpl with unsafe
+// int16ToBytes converts an int16 slice to a byte slice of PCM audio. TODO: can be reimpl with unsafe.
 func int16ToBytes(s []int16) []byte {
 	result := make([]byte, len(s)*2)
 	for i, v := range s {

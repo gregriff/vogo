@@ -1,12 +1,12 @@
 package db
 
 import (
+	"context"
 	"database/sql"
+	"embed"
 	"fmt"
 	"log"
 	"sync"
-
-	"embed"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -37,7 +37,8 @@ func createDB() (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error opening db: %w", err)
 	}
-	if err := db.Ping(); err != nil {
+	ctx := context.TODO()
+	if err := db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("error pinging db: %w", err)
 	}
 
@@ -46,7 +47,8 @@ func createDB() (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error reading ddl file: %w", err)
 	}
-	_, err = db.Exec(string(schema))
+	ctx = context.TODO()
+	_, err = db.ExecContext(ctx, string(schema))
 	if err != nil {
 		return nil, fmt.Errorf("error creating tables: %w", err)
 	}

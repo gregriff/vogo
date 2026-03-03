@@ -48,7 +48,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, &username)
 }
 
-// Status writes a response containing the user's friends and any channels they are a member of
+// Status writes a response containing the user's friends and any channels they are a member of.
 func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
 	username := middleware.GetUsername(req)
 
@@ -147,7 +147,7 @@ func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, &friend)
 }
 
-// InviteFriend invites a friend to an existing channel. Currently they join immediately (without having to accept)
+// InviteFriend invites a friend to an existing channel. Currently they join immediately (without having to accept).
 func (h *RouteHandler) InviteFriend(w http.ResponseWriter, req *http.Request) {
 	username := middleware.GetUsername(req)
 
