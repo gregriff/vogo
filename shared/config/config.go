@@ -13,7 +13,8 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Init initializes the app config with Viper from the environment, a specified file, or a default file.
+// Init initializes the config with Viper from the environment, a specified file, or a default file.
+// defaultConfigFile is expected to be an embedded file containing default configuration.
 func Init(name, file string, defaultConfigFile []byte) {
 	if file == "" {
 		log.Fatal("error, no config file specified")
@@ -49,19 +50,19 @@ func Init(name, file string, defaultConfigFile []byte) {
 // always respecting the XDG_CONFIG_HOME env var, using standard defaults on all OS's,
 // but overriding to ~/.config on macOS
 func Dir(name string) string {
-	var xdgConfigHome string
+	var configHome string
 	if envVar := os.Getenv("XDG_CONFIG_HOME"); envVar != "" {
-		xdgConfigHome = envVar
+		configHome = envVar
 	} else if runtime.GOOS == "darwin" {
 		home, _ := os.UserHomeDir()
-		xdgConfigHome = filepath.Join(home, ".config") // override for mac
+		configHome = filepath.Join(home, ".config") // override for mac
 	} else {
-		xdgConfigHome = xdg.ConfigHome
+		configHome = xdg.ConfigHome
 	}
 
-	appConfigDir := filepath.Join(xdgConfigHome, name)
-	if err := os.MkdirAll(appConfigDir, 0o750); err != nil {
-		log.Fatalf("Error creating application config directory (%s): %v", appConfigDir, err)
+	configDir := filepath.Join(configHome, name)
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
+		log.Fatalf("error creating config directory (%s): %v", configDir, err)
 	}
-	return appConfigDir
+	return configDir
 }

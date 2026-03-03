@@ -11,8 +11,8 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-// Message is sent between client and server via websocket. The vogo server uses
-// Listen() and a switch statement to mux Messages from multiple clients at once.
+// Message is data tied to an event (Type) sent between client and server via
+// websocket. Use Listen() and a switch statement to mux Messages from multiple senders at once.
 type Message struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
@@ -33,8 +33,7 @@ func Listen(ctx context.Context, ws *websocket.Conn, ch chan<- Message) error {
 
 // ReceiveJSON reads json into v from ws in a new goroutine and cancels
 // the read if ctx is cancelled, waiting for the spawned goroutine to finish.
-// Param v should be a pointer.
-func ReceiveJSON(ctx context.Context, ws *websocket.Conn, v any) error {
+func ReceiveJSON[T any](ctx context.Context, ws *websocket.Conn, v *T) error {
 	var (
 		recv sync.WaitGroup
 		done = make(chan error, 1)

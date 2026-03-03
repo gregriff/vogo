@@ -42,12 +42,12 @@ func registerUser(_ *cobra.Command, _ []string) {
 		viper.GetString("code"),
 		viper.GetString("servers.vogo-origin")
 
-	if vErr := validation.CheckUsername(username); vErr != nil {
-		msg := fmt.Errorf("invalid username %s (%w)", username, vErr)
+	if err := validation.CheckUsername(username); err != nil {
+		msg := fmt.Errorf("invalid username %s (%w)", username, err)
 		log.Fatal(msg.Error())
 	}
-	if vErr := validation.CheckPassword(password); vErr != nil {
-		msg := fmt.Errorf("invalid password %s (%w)", password, vErr)
+	if err := validation.CheckPassword(password); err != nil {
+		msg := fmt.Errorf("invalid password %s (%w)", password, err)
 		log.Fatal(msg.Error())
 	}
 

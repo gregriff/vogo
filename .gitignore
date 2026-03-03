@@ -2,3 +2,5 @@ bin/
 
 *.sqlite
 **/dev.*
+
+logs/

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	server "github.com/gregriff/vogo/server/internal"
+	"github.com/gregriff/vogo/server/internal/logging"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	// _ "net/http/pprof".
@@ -24,9 +25,12 @@ func init() {
 }
 
 func runServer(_ *cobra.Command, _ []string) {
-	debug, host, port := viper.GetBool("debug"),
+	debug, host, port, logFile, logLevel := viper.GetBool("debug"),
 		viper.GetString("server.host"),
-		viper.GetInt("server.port")
+		viper.GetInt("server.port"),
+		viper.GetString("logging.file"),
+		viper.GetString("logging.level")
 
-	server.CreateAndListen(debug, host, port)
+	logOpts := logging.NewOpts(logFile, logLevel)
+	server.CreateAndListen(debug, host, port, logOpts)
 }

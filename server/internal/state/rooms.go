@@ -3,7 +3,7 @@ package state
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -44,17 +44,21 @@ type room struct {
 
 	mu    sync.Mutex
 	users map[uuid.UUID]*RoomUser
+
+	logger *slog.Logger
 }
 
 // newRoom instantiates a new Room with the user that has just joined it. This
-// should only be run inside of the lock of roomMap
-func newRoom(c *dal.Channel, user *RoomUser) *room {
+// should only be run inside of the lock of roomMap. A parent logger
+// is used to create a child logger to report events in the room.
+func newRoom(c *dal.Channel, user *RoomUser, logger *slog.Logger) *room {
 	users := make(map[uuid.UUID]*RoomUser, MaxRoomUsers)
 	user.joinedAt = time.Now()
 	users[user.Id] = user
 	return &room{
 		Channel: *c,
 		users:   users,
+		logger:  logger.WithGroup("room").With("owner", c.Owner, "name", c.Name),
 	}
 }
 
@@ -101,24 +105,24 @@ func (r *room) Leave(user *RoomUser) {
 	delete(r.users, user.Id)
 }
 
-func CreateOrJoinRoom(c *dal.Channel, user *RoomUser) (*room, error) {
+func CreateOrJoinRoom(c *dal.Channel, user *RoomUser, logger *slog.Logger) (*room, error) {
 	rooms := getRooms()
 	rooms.mu.Lock()
 	r, exists := rooms.active[c.Id]
 	if !exists {
-		r = newRoom(c, user)
+		r = newRoom(c, user, logger)
 		rooms.active[c.Id] = r
 		rooms.mu.Unlock()
-		log.Printf("room %s created", c.Name)
+		r.logger.Debug("created")
 		return r, nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rooms.mu.Unlock()
 	if err := r.addUser(user); err != nil {
-		return &room{}, fmt.Errorf("error adding participant: %w", err)
+		return nil, fmt.Errorf("error adding participant: %w", err)
 	}
-	log.Printf("joined room %s", c.Name)
+	r.logger.Debug("join_event", "user_joined", user.Name)
 	return r, nil
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,33 +11,34 @@ import (
 	"time"
 
 	"github.com/gregriff/vogo/server/internal/db"
+	"github.com/gregriff/vogo/server/internal/logging"
 	"github.com/gregriff/vogo/server/internal/middleware"
 	"github.com/gregriff/vogo/server/internal/routes"
 	"golang.org/x/net/websocket"
 )
 
-func CreateAndListen(debug bool, host string, port int) {
+func CreateAndListen(debug bool, host string, port int, logOpts logging.Opts) {
+	log := logging.New(logOpts)
+
 	db := db.GetDB()
 	defer func() {
 		if err := db.Close(); err != nil {
-			log.Fatalf("error closing database: %v", err)
+			log.Error("closing database", "err", err)
+			os.Exit(1)
 		}
 	}()
 
 	// Initialize handlers with dependencies
-	h := routes.NewRouteHandler(db)
+	h := routes.NewRouteHandler(db, logOpts)
 
 	mux := http.NewServeMux()
 	createRoutes(mux, h)
 
+	httpLogger := logging.New(logOpts)
+
 	// apply middlewares
-	var handler http.Handler
-	if debug {
-		handler = middleware.DebugLogging(mux)
-	} else {
-		handler = mux
-	}
-	handler = middleware.BasicAuth(handler, db)
+	handler := middleware.Logging(mux, httpLogger)
+	handler = middleware.BasicAuth(handler, db, logOpts)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", host, port),
@@ -55,11 +55,12 @@ func CreateAndListen(debug bool, host string, port int) {
 
 	// run server
 	go func() {
-		log.Printf("Starting server on %s", server.Addr)
+		log.Info("starting server", "addr", server.Addr)
 		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("http server error: %v", err)
+			log.Error("http server error", "err", err)
+			os.Exit(1)
 		}
-		log.Println("Stopped serving new connections.")
+		log.Info("stopped serving new connections")
 	}()
 
 	// recieve stop signals
@@ -69,9 +70,10 @@ func CreateAndListen(debug bool, host string, port int) {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("http shutdown error: %v", err)
+		log.Error("http server shutdown error", "err", err)
+		return
 	}
-	log.Println("Graceful shutdown complete.")
+	log.Info("graceful shutdown complete")
 }
 
 // createRoutes creates the routing rules for the webserver
