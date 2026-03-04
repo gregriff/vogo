@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/gen2brain/malgo"
@@ -13,18 +14,36 @@ import (
 	"gopkg.in/hraban/opus.v2"
 )
 
+type capture struct {
+	ctx    *malgo.AllocatedContext
+	wg     *sync.WaitGroup
+	device *malgo.Device
+
+	// initialized will be closed when the microphone device is initalized.
+	initialized chan struct{}
+}
+
+func newCapture() *capture {
+	return &capture{
+		ctx:         &malgo.AllocatedContext{},
+		wg:          &sync.WaitGroup{},
+		device:      &malgo.Device{},
+		initialized: make(chan struct{}),
+	}
+}
+
 func StartCapture(ctx context.Context, track *webrtc.TrackLocalStaticSample) error {
-	deviceCtx, device, pcm, initErr := initCaptureDevice()
+	deviceCtx, device, pcm, err := initCaptureDevice()
 	log.Println("capture device created")
 	defer uninitCapture(deviceCtx, device)
-	if initErr != nil {
-		return fmt.Errorf("error initializing capture device: %w", initErr)
+	if err != nil {
+		return fmt.Errorf("error initializing capture device: %w", err)
 	}
 
 	opusBuffer := make([]byte, opusBufferSize)
-	encoder, encErr := opus.NewEncoder(SampleRate, NumChannels, opus.AppVoIP)
-	if encErr != nil {
-		return fmt.Errorf("encoder error: %w", encErr)
+	encoder, err := opus.NewEncoder(SampleRate, NumChannels, opus.AppVoIP)
+	if err != nil {
+		return fmt.Errorf("encoder error: %w", err)
 	}
 	// complexity, _ := encoder.Complexity()
 	// encoder.SetInBandFEC(true)  // adds latency, probably use PLC
@@ -72,7 +91,7 @@ func StartCapture(ctx context.Context, track *webrtc.TrackLocalStaticSample) err
 	}
 }
 
-func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm *CallStream, err error) {
+func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm *callStream, err error) {
 	// configure playback device
 	ctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
@@ -86,7 +105,7 @@ func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm
 	deviceConfig.SampleRate = SampleRate
 	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
 
-	pcm = &CallStream{}
+	pcm = &callStream{}
 
 	// read into capture buffer, to write to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {

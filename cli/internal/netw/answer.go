@@ -11,7 +11,6 @@ import (
 	"log"
 	"sync"
 
-	"github.com/gen2brain/malgo"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/requests"
@@ -36,26 +35,20 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	// sending an error on this channel will abort the call process
 	abort := make(chan error, 10)
 
-	// initialize speaker asynchronously
-	var (
-		playbackWg  sync.WaitGroup
-		playbackCtx *malgo.AllocatedContext
-		speaker     *malgo.Device
-		err         error
-	)
+	audioState := audio.NewCallState(track)
+
 	go func() {
 		// TODO: mic capture needs to start after this is completed. add a noti chan.
 		// also, find slowest part of speaker init with logging.
 		// also, manually start mic once speaker is started. but let mic init async
 		// also, manually start devices onPeerStateConnecting
-		playbackCtx, speaker, err = audio.SetupPlayback(pc, &playbackWg)
-		if err != nil {
+		if err := audioState.InitPlayback(pc); err != nil {
 			abort <- fmt.Errorf("error initializing playback system: %w", err)
 			return
 		}
 		log.Println("playback device created")
 	}()
-	defer audio.UninitCallPlayback(pc, playbackCtx, speaker, &playbackWg)
+	defer audioState.UninitPlayback(pc)
 
 	var answer sync.WaitGroup
 	answerCtx, cancelAnswer := context.WithCancel(ctx)

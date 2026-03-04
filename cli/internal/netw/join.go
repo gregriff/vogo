@@ -10,14 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gen2brain/malgo"
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
-	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
@@ -30,45 +28,22 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// pseudocode:
 	// - make sure to send connection successful sentinels
 
-	track := wrtc.CreateAudioTrack(creds.username)
-
 	// sending an error on this channel will abort the call process
 	abort := make(chan error, 10)
-	defer func() {
-		log.Println("ABORT ERRS:")
-		select {
-		case err := <-abort:
-			log.Println(err)
-		default:
-			return
-		}
-	}()
+
+	track := wrtc.CreateAudioTrack(creds.username)
+	audioState := audio.NewChannelState(track)
 
 	// initialize speaker asynchronously
-	var (
-		playbackWg       sync.WaitGroup
-		playbackCtx      *malgo.AllocatedContext
-		speaker          *malgo.Device
-		pcmBufs          = audio.NewChannelStreams()
-		playbackInitDone = make(chan struct{})
-		err              error
-	)
 	go func() {
 		// TODO: mic capture needs to start after this is completed. add a noti chan
-		playbackCtx, speaker, err = audio.SetupPlaybackChannel(pcmBufs)
-		if err != nil {
+		if err := audioState.InitPlayback(); err != nil {
 			abort <- fmt.Errorf("error initializing playback system: %w", err)
 			return
 		}
 		log.Println("playback device created")
-		playbackInitDone <- struct{}{}
 	}()
-	defer func() {
-		// waits for all PeerConnections to close, so that nothing is writing to the
-		// speaker devices when they are uninitialized
-		playbackWg.Wait()
-		audio.UninitPlayback(playbackCtx, speaker)
-	}()
+	defer audioState.UninitPlayback()
 
 	var join sync.WaitGroup
 	joinCtx, cancelJoin := context.WithCancel(ctx)
@@ -79,11 +54,10 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 
 	join.Go(func() {
 		defer cancelJoin()
-		defer close(abort)
 
 		// note: could create and return conns in main thread, then merge connected channels to prevent mic
 		// init until ness.
-		err := joinChannelAndConnect(joinCtx, creds, track, ownerName, channelName, &playbackWg, pcmBufs, abort)
+		err := joinChannelAndConnect(joinCtx, creds, ownerName, channelName, audioState, abort)
 		if err != nil {
 			abort <- err
 			return
@@ -95,7 +69,6 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// and will wait until at least 1 PC is in connected state
 
 	var capture sync.WaitGroup
-	captureAbort := make(chan error, 10)
 	captureCtx, cancelCapture := context.WithCancel(ctx)
 	defer func() {
 		cancelCapture()
@@ -105,24 +78,21 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// NOTE: this cannot run until at least 1 PeerConnection (and therefore the Track) has been created.
 	// setup microphone once call is connected and capture until cancelled
 	capture.Go(func() {
-		defer close(captureAbort)
 		select {
 		case <-captureCtx.Done():
 			return
-		case <-playbackInitDone:
+		case <-audioState.PlaybackInitialized():
 			break
 		}
 		if err := audio.StartCapture(captureCtx, track); err != nil {
 			log.Println("error in startCapture")
-			captureAbort <- fmt.Errorf("error with capture device: %w", err)
+			abort <- fmt.Errorf("error with capture device: %w", err)
 		}
 	})
 
 	// block until sigint or error in goroutines above
 	select {
 	case err := <-abort:
-		return fmt.Errorf("call aborted: %w", err)
-	case err := <-captureAbort:
 		return fmt.Errorf("call aborted: %w", err)
 	case <-ctx.Done():
 		return nil
@@ -132,10 +102,8 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 func joinChannelAndConnect(
 	ctx context.Context,
 	creds *credentials,
-	track *webrtc.TrackLocalStaticSample,
 	ownerName, channelName string,
-	playbackWg *sync.WaitGroup,
-	pcmBufs *audio.ChannelStreams,
+	audioState *audio.ChannelState,
 	abort chan<- error,
 ) error {
 	ws, err := newWebsocket(ctx, creds, "/channel/join")
@@ -171,7 +139,7 @@ func joinChannelAndConnect(
 	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username, iceCtx, &iceWg)
 	defer conns.CloseAll()
 	for id, name := range res.Users {
-		c := wrtc.NewConnection(id, creds.stunServer, track)
+		c := wrtc.NewConnection(id, creds.stunServer, audioState.CaptureTrack)
 		conns.Update(name, c)
 	}
 	// todo: track, cleanup failed/expired connections
@@ -188,7 +156,7 @@ func joinChannelAndConnect(
 	// TODO: can combine these two snapshot loops
 	start = time.Now()
 	for _, c := range conns.Snapshot() {
-		c.Pc.OnTrack(audio.OnRemoteTrack(playbackWg, pcmBufs)) // set up audio mixing
+		c.Pc.OnTrack(audioState.OnRemoteTrack()) // set up audio mixing
 	}
 	log.Printf("remote handlers took %v to call\n", time.Since(start))
 
@@ -239,7 +207,7 @@ func joinChannelAndConnect(
 			return nil
 		case msg := <-msgs:
 			handlerWg.Go(func() {
-				handleMessage(msg, conns, track, playbackWg, pcmBufs)
+				handleMessage(msg, conns, audioState)
 			})
 		}
 	}
@@ -250,11 +218,7 @@ func joinChannelAndConnect(
 func handleMessage(
 	msg wsock.Message,
 	conns *wrtc.ConnectionMap,
-
-	// note: the below are only used for handleOfferMessage
-	track *webrtc.TrackLocalStaticSample,
-	playbackWg *sync.WaitGroup,
-	pcmBufs *audio.ChannelStreams,
+	audioState *audio.ChannelState,
 ) {
 	switch msg.Type {
 	case "ice-offer", "ice-answer":
@@ -262,7 +226,7 @@ func handleMessage(
 	case "answer":
 		handleAnswerMessage(msg, conns)
 	case "offer":
-		handleOfferMessage(msg, conns, track, playbackWg, pcmBufs)
+		handleOfferMessage(msg, conns, audioState)
 	default:
 		log.Printf("WARN: unknown message: %v", msg)
 	}
@@ -273,9 +237,7 @@ func handleMessage(
 func handleOfferMessage(
 	msg wsock.Message,
 	conns *wrtc.ConnectionMap,
-	track *webrtc.TrackLocalStaticSample,
-	playbackWg *sync.WaitGroup,
-	pcmBufs *audio.ChannelStreams,
+	audioState *audio.ChannelState,
 ) {
 	var (
 		offer requests.ConnectionWithId
@@ -291,7 +253,7 @@ func handleOfferMessage(
 		}
 		log.Printf("recreating offer to %s", offer.From)
 	}
-	conn = wrtc.NewConnection(offer.FromId, conns.Server.StunServer, track)
+	conn = wrtc.NewConnection(offer.FromId, conns.Server.StunServer, audioState.CaptureTrack)
 	conns.Update(offer.From, conn)
 	log.Printf("received offer from %s, created conn", offer.From)
 
@@ -326,7 +288,7 @@ func handleOfferMessage(
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
 	conn.SendCandidates(conns.IceCtx, conns.IceWg, conns.Server.Ws, conns.Server.Username, "ice-answer")
-	conn.Pc.OnTrack(audio.OnRemoteTrack(playbackWg, pcmBufs))
+	conn.Pc.OnTrack(audioState.OnRemoteTrack())
 }
 
 // handleAnswerMessage handles when the client receives an answer from a recipient

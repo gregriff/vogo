@@ -11,15 +11,15 @@ import (
 // Note: this would have to be doubled if you want to allow users to send text also.
 const maxStreams = 5 // max remote tracks (max users - 1)
 
-// CallStream is a shared buffer of PCM data that is written to from the network
+// callStream is a shared buffer of PCM data that is written to from the network
 // by the remoteTrack and read by malgo for playback during a 1:1 voice call. It's also
 // used during capture, where its contents are written to the network.
-type CallStream struct {
+type callStream struct {
 	mu  sync.Mutex
 	buf []int16
 }
 
-// ChannelStreams is a shared set of PCM buffers that is written to from the network by each remoteTrack
+// channelStreams is a shared set of PCM buffers that is written to from the network by each remoteTrack
 // and read by malgo for playback. It is used for channel calls, storing the incoming
 // audio data from the other users.
 // TODO: experiment with storing fixed arrays per stream (5), and a []*[]int of overrun slices for the streams,
@@ -27,20 +27,20 @@ type CallStream struct {
 // this may allow mixing to be faster since in most cases all streams could be prefetched and next to eachother
 // in cache lines. this would require returning the pointer to the arrays in addStream and bounds checking
 // each copy of decoded PCM.
-type ChannelStreams struct {
+type channelStreams struct {
 	mu   sync.Mutex
 	bufs []*[]int16
 }
 
-func NewChannelStreams() *ChannelStreams {
-	return &ChannelStreams{
+func newChannelStreams() *channelStreams {
+	return &channelStreams{
 		bufs: make([]*[]int16, 0, maxStreams),
 	}
 }
 
 // Add adds a newly-created empty pcm buffer to the list of buffers (bufs) being tracked. It takes its pointer,
 // so that the caller can continue modifying the original, and using this struct will always point to the same memory.
-func (ab *ChannelStreams) addStream(b *[]int16) {
+func (ab *channelStreams) addStream(b *[]int16) {
 	log.Println("ADDING NEW STREAM!")
 	ab.mu.Lock()
 	ab.bufs = append(ab.bufs, b)
@@ -56,7 +56,7 @@ func (ab *ChannelStreams) addStream(b *[]int16) {
 // - this may be unnessicary at a certain point, but it may also prime the cache with all the PCM before
 // the mixing happens, so profile to see.
 // ex: if 3 full buffers, returns {[ptr, ptr, ptr], (cap=len(ab.bufs)), true}
-func (ab *ChannelStreams) hasFullSample(amt int) (fullBufs []*[]int16, ok bool) {
+func (ab *channelStreams) hasFullSample(amt int) (fullBufs []*[]int16, ok bool) {
 	// fullBufs = make([]*[]int16, len(ab.bufs))
 	fullBufs = make([]*[]int16, 0, len(ab.bufs))
 	for i := range len(ab.bufs) {
@@ -73,7 +73,7 @@ func (ab *ChannelStreams) hasFullSample(amt int) (fullBufs []*[]int16, ok bool) 
 // numSamples elements. This is enforced by the fullBufs param, which may only contain pointers
 // to such slices. fullBufs needs to be created by ab.hasFullSample, and both of these functions
 // must execute within the same mutex lock.
-func (ab *ChannelStreams) mixAudio(fullBufs []*[]int16, numSamples int) []int16 {
+func (ab *channelStreams) mixAudio(fullBufs []*[]int16, numSamples int) []int16 {
 	if len(ab.bufs) == 0 {
 		return nil
 	}
