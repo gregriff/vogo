@@ -36,7 +36,11 @@ type Connection struct {
 
 // NewConnection creates a new peer connection with a vogo user given their uuid, and returns a *Connection
 // so the caller can keep track of the connection and signaling states.
-func NewConnection(id uuid.UUID, stunServer string, track *webrtc.TrackLocalStaticSample) *Connection {
+func NewConnection(
+	id uuid.UUID,
+	stunServer string,
+	track *webrtc.TrackLocalStaticSample,
+) *Connection {
 	pc, candidates, connected := NewAudioPeerConnection(stunServer, track, false)
 	c := Connection{
 		Id: id,
@@ -130,9 +134,20 @@ type ConnectionMap struct {
 	data map[string]*Connection
 
 	Server serverConn
+
+	// all conns use this for sending ice candidates
+	IceCtx context.Context
+
+	// all conns use this for sending ice candidates
+	IceWg *sync.WaitGroup
 }
 
-func NewConnectionMap(ws *websocket.Conn, stunServer, username string) *ConnectionMap {
+func NewConnectionMap(
+	ws *websocket.Conn,
+	stunServer, username string,
+	iceCtx context.Context,
+	iceWg *sync.WaitGroup,
+) *ConnectionMap {
 	return &ConnectionMap{
 		data: make(map[string]*Connection, 6),
 		Server: serverConn{
@@ -140,6 +155,8 @@ func NewConnectionMap(ws *websocket.Conn, stunServer, username string) *Connecti
 			StunServer: stunServer,
 			Username:   username,
 		},
+		IceCtx: iceCtx,
+		IceWg:  iceWg,
 	}
 }
 

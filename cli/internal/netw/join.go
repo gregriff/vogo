@@ -160,8 +160,15 @@ func joinChannelAndConnect(
 		log.Println("no users in channel")
 	}
 
+	var iceWg sync.WaitGroup
+	iceCtx, cancelIce := context.WithCancel(ctx)
+	defer func() {
+		cancelIce()
+		iceWg.Wait()
+	}()
+
 	// this holds the state of the room from this client's perspective
-	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username)
+	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username, iceCtx, &iceWg)
 	defer conns.CloseAll()
 	for id, name := range res.Users {
 		c := wrtc.NewConnection(id, creds.stunServer, track)
@@ -189,16 +196,9 @@ func joinChannelAndConnect(
 		return fmt.Errorf("error sending bulk offers: %w", err)
 	}
 
-	var sendIceWg sync.WaitGroup
-	sendIceCtx, cancelSendIce := context.WithCancel(ctx)
-	defer func() {
-		cancelSendIce()
-		sendIceWg.Wait()
-	}()
-
 	// send ice candidates to each user in the room
 	for _, c := range conns.Snapshot() {
-		c.SendCandidates(sendIceCtx, &sendIceWg, ws, creds.username, "ice-offer")
+		c.SendCandidates(iceCtx, &iceWg, ws, creds.username, "ice-offer")
 	}
 
 	// TODO:
@@ -239,7 +239,7 @@ func joinChannelAndConnect(
 			return nil
 		case msg := <-msgs:
 			handlerWg.Go(func() {
-				handleMessage(msg, conns, track, sendIceCtx, &sendIceWg, playbackWg, pcmBufs)
+				handleMessage(msg, conns, track, playbackWg, pcmBufs)
 			})
 		}
 	}
@@ -253,8 +253,6 @@ func handleMessage(
 
 	// note: the below are only used for handleOfferMessage
 	track *webrtc.TrackLocalStaticSample,
-	sendIceCtx context.Context,
-	sendIceWg,
 	playbackWg *sync.WaitGroup,
 	pcmBufs *audio.ChannelStreams,
 ) {
@@ -264,9 +262,9 @@ func handleMessage(
 	case "answer":
 		handleAnswerMessage(msg, conns)
 	case "offer":
-		handleOfferMessage(msg, conns, track, sendIceCtx, sendIceWg, playbackWg, pcmBufs)
+		handleOfferMessage(msg, conns, track, playbackWg, pcmBufs)
 	default:
-		log.Panicf("unknown message: %v", msg)
+		log.Printf("WARN: unknown message: %v", msg)
 	}
 }
 
@@ -276,8 +274,6 @@ func handleOfferMessage(
 	msg wsock.Message,
 	conns *wrtc.ConnectionMap,
 	track *webrtc.TrackLocalStaticSample,
-	sendIceCtx context.Context,
-	sendIceWg,
 	playbackWg *sync.WaitGroup,
 	pcmBufs *audio.ChannelStreams,
 ) {
@@ -329,7 +325,7 @@ func handleOfferMessage(
 	}
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
-	conn.SendCandidates(sendIceCtx, sendIceWg, conns.Server.Ws, conns.Server.Username, "ice-answer")
+	conn.SendCandidates(conns.IceCtx, conns.IceWg, conns.Server.Ws, conns.Server.Username, "ice-answer")
 	conn.Pc.OnTrack(audio.OnRemoteTrack(playbackWg, pcmBufs))
 }
 
