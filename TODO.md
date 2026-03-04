@@ -1,29 +1,18 @@
 # TODOs
 
 ### Next:
-- create shared code module: 
+- get lower MTU working:
+```use pion's webrtc package in my go program for voice chats. I set the MTU to 3000 to avoid overruns. is this too high or could
+this cause trouble? If so, how cna I address the issue in a differeent way? I have full control over the opus enc/dec.
 ```
-shared/go.mod:
-
-    module github.com/you/repo/shared
-
-    go 1.26
-
-  In program-a/go.mod and program-b/go.mod:
-
-    require github.com/you/repo/shared v0.0.0
-
-    replace github.com/you/repo/shared => ../shared
-
-  Then import it normally:
-
-    import "github.com/you/repo/shared/yourpackage"
-```
+- use Connection struct for all calls. use chans for all pc events, incl connection status at all times. have room
+code listen for these to know when to destruct audiomixing and connmap
+- ErrGroup for each Connection? (inherits from global ctx). listening for cancel would allow us to destruct easily. 
+- use context values for ws, username, stunserver?
 
 ##### CI:
 
 ##### Windows:
-- config file path uses a fwdslash for 'vogo/vogo.toml'
 - help menu shows double back slashes for each dir step
 - get create-shortcut to run by double clicking it
 - test out ASAN/MSAN

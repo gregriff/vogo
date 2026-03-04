@@ -14,9 +14,6 @@ permissions:
 jobs:
   lint-cli:
     runs-on: macos-14
-    defaults:
-      run:
-        working-directory: ./cli
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/go-base
@@ -26,24 +23,27 @@ jobs:
 
       - name: vet
         run: go vet ./...
+        with:
+          working-directory: ./cli
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+          working-directory: ./cli
   lint-server:
     runs-on: macos-14
-    defaults:
-      run:
-        working-directory: ./server
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/go-base
 
       - name: vet
         run: go vet ./...
+        with:
+          working-directory: ./server
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+          working-directory: ./server

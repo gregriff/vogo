@@ -114,10 +114,10 @@ func uninitCapture(ctx *malgo.AllocatedContext, device *malgo.Device) {
 		device.Uninit()
 	}
 	if err := ctx.Uninit(); err != nil {
-		fmt.Printf("error uninitializing capture device context: %v", err)
+		log.Printf("error uninitializing capture device context: %v", err)
 	}
 	ctx.Free()
-	fmt.Println("uninit and freed capture device")
+	log.Println("uninit and freed capture device")
 }
 
 // bytesToInt16 turns a byte slice of PCM audio into an int16 slice for the opus encoder to use.

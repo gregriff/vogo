@@ -23,24 +23,11 @@ var opusCodec = webrtc.RTPCodecCapability{
 // TODO: create a struct for this retval.
 func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample, exitOnFail bool) (
 	*webrtc.PeerConnection,
-	*webrtc.TrackLocalStaticSample,
 	chan webrtc.ICECandidateInit,
 	chan struct{},
-	error,
 ) {
-	pc, err := newPeerConnection(stunServer)
-	if err != nil {
-		ClosePC(pc, true)
-		return pc, nil, nil, nil, fmt.Errorf("error creating peer connection %w", err)
-	}
-	// if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
-	// 	panic(err)
-	// }
-	err = addAudioTrack(pc, track)
-	if err != nil {
-		ClosePC(pc, true)
-		return pc, track, nil, nil, fmt.Errorf("error adding audio track: %w", err)
-	}
+	pc := newPeerConnection(stunServer)
+	addAudioTrack(pc, track)
 
 	var (
 		// carries this client's ICE candidates as they're gathered
@@ -55,20 +42,20 @@ func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSam
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		onConnectionStateChange(s, connected, exitOnFail)
 	})
-	return pc, track, candidates, connected, nil
+	return pc, candidates, connected
 }
 
 // newPeerConnection creates a PeerConnection configured with the Opus audio codec.
 // It sets the STUN server and configures the MTU to avoid packet read underruns.
 // TODO: config creation and PeerConnection creation needs to be split into separate functions for room use case.
-func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
+func newPeerConnection(stunServer string) *webrtc.PeerConnection {
 	mediaEngine := &webrtc.MediaEngine{}
 	codecParams := webrtc.RTPCodecParameters{
 		RTPCodecCapability: opusCodec,
 		PayloadType:        111, // should this be negotiated and not hard coded?
 	}
 	if err := mediaEngine.RegisterCodec(codecParams, webrtc.RTPCodecTypeAudio); err != nil {
-		return nil, fmt.Errorf("error registering codec: %w", err)
+		log.Panicf("error registering codec: %v", err)
 	}
 
 	// Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
@@ -115,24 +102,29 @@ func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 			},
 		},
 	}
-	return api.NewPeerConnection(config)
+	pc, err := api.NewPeerConnection(config)
+	if err != nil {
+		ClosePC(pc, true)
+		log.Panicf("error creating PeerConnection: %v", err)
+	}
+	return pc
 }
 
 // CreateAudioTrack creates the opus audio track.
-func CreateAudioTrack(trackId string) (*webrtc.TrackLocalStaticSample, error) {
+func CreateAudioTrack(trackId string) *webrtc.TrackLocalStaticSample {
 	t, err := webrtc.NewTrackLocalStaticSample(
 		opusCodec,
 		"captureTrack",
 		"captureTrack"+trackId,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error initializing capture track: %v", err)
+		log.Panicf("error initializing capture track: %v", err)
 	}
-	return t, nil
+	return t
 }
 
 // addAudioTrack configures a PeerConnection with a bidirectional transceiver and adds the track to it.
-func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) error {
+func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) {
 	audioTrsv, err := pc.AddTransceiverFromKind(
 		webrtc.RTPCodecTypeAudio,
 		webrtc.RTPTransceiverInit{
@@ -140,19 +132,21 @@ func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSamp
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("error adding transceiver: %v", err)
+		ClosePC(pc, true)
+		log.Panicf("error adding transceiver: %v", err)
 	}
 	if err = audioTrsv.Sender().ReplaceTrack(track); err != nil {
-		return fmt.Errorf("error replacing track")
+		ClosePC(pc, true)
+		log.Panicf("error replacing track: %v", err)
 	}
-	return nil
 }
 
-func ClosePC(pc *webrtc.PeerConnection, verbose bool) {
+func ClosePC(pc *webrtc.PeerConnection, verbose bool) error {
 	if verbose {
 		log.Println("closing peer connection")
 	}
 	if err := pc.Close(); err != nil {
-		fmt.Printf("cannot close peer connection: %v", err)
+		return fmt.Errorf("cannot close peer connection: %w", err)
 	}
+	return nil
 }

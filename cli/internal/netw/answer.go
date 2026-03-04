@@ -25,15 +25,13 @@ import (
 // organized with waitgroups and synchronized with channels. The entire process can
 // be cancelled with the provided context, and the first error encountered will be returned.
 func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
-	track, err := wrtc.CreateAudioTrack(creds.username)
-	if err != nil {
-		return err
-	}
-	pc, track, candidates, connected, err := wrtc.NewAudioPeerConnection(creds.stunServer, track, true)
-	if err != nil {
-		return fmt.Errorf("error initializing webrtc: %w", err)
-	}
-	defer wrtc.ClosePC(pc, true)
+	track := wrtc.CreateAudioTrack(creds.username)
+	pc, candidates, connected := wrtc.NewAudioPeerConnection(creds.stunServer, track, true)
+	defer func() {
+		if err := wrtc.ClosePC(pc, true); err != nil {
+			log.Println(err)
+		}
+	}()
 
 	// sending an error on this channel will abort the call process
 	abort := make(chan error, 10)
@@ -43,6 +41,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 		playbackWg  sync.WaitGroup
 		playbackCtx *malgo.AllocatedContext
 		speaker     *malgo.Device
+		err         error
 	)
 	go func() {
 		// TODO: mic capture needs to start after this is completed. add a noti chan.

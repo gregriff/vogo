@@ -2,7 +2,6 @@
 package wrtc
 
 import (
-	"fmt"
 	"log"
 	"os"
 
@@ -23,8 +22,12 @@ func onICECandidate(candidate *webrtc.ICECandidate, ch chan<- webrtc.ICECandidat
 	ch <- candidate.ToJSON()
 }
 
+func onSignalingStateChange(state webrtc.SignalingState, from, to string) {
+	log.Printf("%s's connection with %s signaling state changed to %s", from, to, state.String())
+}
+
 func onConnectionStateChange(state webrtc.PeerConnectionState, ch chan<- struct{}, exitOnFail bool) {
-	fmt.Printf("Peer Connection State has changed: %s\n", state.String())
+	log.Printf("Peer Connection State has changed: %s\n", state.String())
 
 	if state == webrtc.PeerConnectionStateConnected {
 		ch <- struct{}{}

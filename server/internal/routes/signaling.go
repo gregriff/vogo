@@ -161,7 +161,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 				continue
 			}
 			call.From.Candidates <- callerCandidate
-			fmt.Println("caller candidate sent")
+			log.Println("caller candidate sent")
 		}
 	}
 }
@@ -308,13 +308,13 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 				return
 			}
 			call.To.Candidates <- answerCandidate
-			fmt.Println("answer candidate sent")
+			log.Println("answer candidate sent")
 		}
 	}
 }
 
 // readCandidates reads from ws in a loop, sending candidates read to the channel ch.
-// When an empty candidate is read, the channel is closed, signalling that ICE gather on this
+// When an empty candidate is read, the channel is closed, signaling that ICE gather on this
 // websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
 func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICECandidateInit) error {
 	var candidate webrtc.ICECandidateInit
@@ -342,7 +342,7 @@ func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICEC
 // and creates the in-memory representation of that room if no members are currently connected
 // to it. This is a websocket endpoint that will stay open until the user leaves the room call
 // or is disconnected. When another member joins the room, this endpoint will send their Sd to
-// the user, to facilitate the webrtc signalling for all members connected to the room.
+// the user, to facilitate the webrtc signaling for all members connected to the room.
 func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	ctx, cancel := context.WithCancel(ws.Request().Context())
 	defer cancel()
@@ -465,7 +465,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				ToId:   recipientId,
 			}
 			users[recipientId].Offers <- offer
-			logger.WRTC.Debug("conn created, signalling beginning", "with", req.To)
+			logger.WRTC.Debug("conn created, signaling beginning", "with", req.To)
 
 			// own func
 			for {
@@ -551,7 +551,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	}()
 
 	// this is logic that needs to run for the duration of the session/ws.
-	// listen for room events. when another user joins, this logic must begin signalling with that user
+	// listen for room events. when another user joins, this logic must begin signaling with that user
 	for {
 		select {
 		case <-ctx.Done():

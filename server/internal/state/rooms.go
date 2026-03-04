@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"sync"
 	"time"
@@ -20,7 +21,7 @@ type RoomUser struct {
 	Name     string
 	joinedAt time.Time
 
-	// PendingConnections maintains signalling state between other users. It is only used when the
+	// PendingConnections maintains signaling state between other users. It is only used when the
 	// user first joins the channel and is connecting to the other users. It maps the recipient's uuid
 	// to their connection struct.
 	PendingConnections *connMap
@@ -90,7 +91,7 @@ func (r *room) Users(omitId uuid.UUID) map[uuid.UUID]*RoomUser {
 func (r *room) addUser(user *RoomUser) error {
 	if userCount := len(r.users); userCount >= r.Capacity {
 		if userCount > r.Capacity {
-			fmt.Printf("ERROR!! room %v is above capacity: %d", r, userCount)
+			log.Printf("ERROR!! room %v is above capacity: %d", r, userCount)
 		}
 		return fmt.Errorf("room is at capacity")
 	}
@@ -130,7 +131,7 @@ func CreateOrJoinRoom(c *dal.Channel, user *RoomUser, logger *slog.Logger) (*roo
 // a channel from the database that has been joined by one or more of its members.
 // Since the database only stores info about Room members and not their connection status,
 // this in-memory roomMap is the source of truth for Room connection information and
-// facilitates creating Rooms and signalling between participants when they
+// facilitates creating Rooms and signaling between participants when they
 // join or leave.
 type roomMap struct {
 	mu     sync.Mutex

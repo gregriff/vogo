@@ -125,7 +125,7 @@ func OnRemoteTrack(
 			panic(fmt.Errorf("decoder init error: %w", err))
 		}
 
-		fmt.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
+		log.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
 		decodeBuf := make([]int16, pcmBufferSize)
 		pcm := make([]int16, pcmBufferSize)
 		pcmBuffers.addStream(&pcm)
@@ -262,7 +262,7 @@ func initDevice(ctx *malgo.AllocatedContext, onSendFrames malgo.DataProc) (devic
 func UninitCallPlayback(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, device *malgo.Device, wg *sync.WaitGroup) {
 	// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
 	if closeErr := pc.GracefulClose(); closeErr != nil {
-		fmt.Printf("cannot gracefully close recipient connection: %v\n", closeErr)
+		log.Printf("cannot gracefully close recipient connection: %v\n", closeErr)
 	} else {
 		wg.Wait()
 	}
@@ -275,17 +275,17 @@ func UninitCallPlayback(pc *webrtc.PeerConnection, ctx *malgo.AllocatedContext, 
 // closing all PeerConnections beforehand, since their RemoteTrack handlers write to the device.
 func UninitPlayback(ctx *malgo.AllocatedContext, device *malgo.Device) {
 	if ctx == nil {
-		fmt.Println("playback ctx uninit before init")
+		log.Println("playback ctx uninit before init")
 		return
 	}
 	if device != nil {
 		device.Uninit()
 	}
 	if err := ctx.Uninit(); err != nil {
-		fmt.Printf("error uninitializing playback device context: %v", err)
+		log.Printf("error uninitializing playback device context: %v", err)
 	}
 	ctx.Free()
-	fmt.Println("uninit and freed playback device")
+	log.Println("uninit and freed playback device")
 }
 
 // int16ToBytes converts an int16 slice to a byte slice of PCM audio. TODO: can be reimpl with unsafe.

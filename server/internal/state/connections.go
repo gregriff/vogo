@@ -59,7 +59,7 @@ func GetPendingCalls() *connMap {
 	return &pendingCalls
 }
 
-// connection is the struct that stores the signalling state between two webrtc peers.
+// connection is the struct that stores the signaling state between two webrtc peers.
 type connection struct {
 	From,
 	To clientInfo

@@ -2,20 +2,21 @@ package wrtc
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/pion/webrtc/v4"
 )
 
 // CreateOffer creates a webrtc offer, sets the local description and starts ice gathering.
-func CreateOffer(pc *webrtc.PeerConnection) (offer webrtc.SessionDescription, err error) {
+func CreateOffer(pc *webrtc.PeerConnection) (offer webrtc.SessionDescription) {
+	var err error
 	if offer, err = pc.CreateOffer(nil); err != nil {
-		err = fmt.Errorf("error creating offer: %v", err)
-		return
+		log.Panicf("error creating offer: %v", err)
 	}
 
 	// starts ICE gathering and UDP listeners
 	if err = pc.SetLocalDescription(offer); err != nil {
-		err = fmt.Errorf("error setting local description: %v", err)
+		log.Panicf("error setting local description: %v", err)
 	}
 	return
 }

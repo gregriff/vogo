@@ -69,7 +69,7 @@ func newWebsocketConfig(c *credentials, endpoint string) (*websocket.Config, err
 }
 
 // readCandidates reads from ws in a loop, sending candidates read to the channel ch.
-// When an empty candidate is read, the channel is closed, signalling that ICE gather on this
+// When an empty candidate is read, the channel is closed, signaling that ICE gather on this
 // websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
 func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICECandidateInit) error {
 	var candidate webrtc.ICECandidateInit
