@@ -39,6 +39,8 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 		}
 	}()
 
+	audioState := audio.NewCall(track)
+
 	// initialize speaker asynchronously
 	// var (
 	// 	playbackWg  sync.WaitGroup
@@ -82,14 +84,24 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 
 	// setup microphone once call is connected and capture until cancelled
 	capture.Go(func() {
+		// todo: could do this in another goroutine and use its init chan
+		if err := audioState.InitCapture(); err != nil {
+			abort <- err
+			return
+		}
+		defer audioState.UninitCapture()
+
 		select {
 		case <-captureCtx.Done():
 			return
 		case <-connected:
 			cancelCall()
+			// if err := audioState.StartSpeaker(); err != nil {
+			// 	abort <- err
+			// }
 			break
 		}
-		if err := audio.StartCapture(captureCtx, track); err != nil {
+		if err := audioState.StartCapture(captureCtx); err != nil {
 			abort <- fmt.Errorf("error with capture device: %w", err)
 			return
 		}

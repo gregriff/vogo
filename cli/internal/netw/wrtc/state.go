@@ -43,9 +43,8 @@ func NewConnection(
 ) *Connection {
 	pc, candidates, connected := NewAudioPeerConnection(stunServer, track, false)
 	c := Connection{
-		Id: id,
-		Pc: pc,
-		// track:      track,
+		Id:         id,
+		Pc:         pc,
 		Candidates: candidates,
 		Connected:  connected,
 	}

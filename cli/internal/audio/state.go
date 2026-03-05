@@ -5,42 +5,87 @@ package audio
 // or 1:many voice chat format.
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"time"
 
 	"github.com/gen2brain/malgo"
 	"github.com/pion/webrtc/v4"
 	"gopkg.in/hraban/opus.v2"
 )
 
-type ChannelState struct {
-	CaptureTrack *webrtc.TrackLocalStaticSample
-	capture      *capture
-	playback     *playback
-	pcmBufs      *channelStreams
+type devices struct {
+	mic     *microphone
+	speaker *speaker
 }
 
-func NewChannelState(track *webrtc.TrackLocalStaticSample) *ChannelState {
-	return &ChannelState{
-		CaptureTrack: track,
-		capture:      newCapture(),
-		playback:     newPlayback(),
-		pcmBufs:      newChannelStreams(),
+func newDevices(track *webrtc.TrackLocalStaticSample) devices {
+	return devices{
+		mic:     newMicrophone(track),
+		speaker: newSpeaker(),
+	}
+}
+
+func (b *devices) InitCapture() error {
+	start := time.Now()
+	defer func() {
+		log.Printf("capture initialized in %v", time.Since(start))
+	}()
+
+	if err := b.mic.init(); err != nil {
+		return fmt.Errorf("error initalizing capture %w", err)
+	}
+	return nil
+}
+
+func (b *devices) UninitCapture() error {
+	return b.mic.uninit()
+}
+
+func (b *devices) StartCapture(ctx context.Context) error {
+	return b.mic.start(ctx)
+}
+
+func (b *devices) StartSpeaker() error {
+	return b.speaker.start()
+}
+
+func (b *devices) CaptureTrack() *webrtc.TrackLocalStaticSample {
+	return b.mic.track
+}
+
+// PlaybackInitialized returns the channel to notify the caller when the playback system
+// is fully initialized. Since playback initialization is slow, this allows the caller to do
+// it asynchronously and wait for its completion.
+func (b *devices) PlaybackInitialized() <-chan struct{} {
+	return b.speaker.initialized
+}
+
+type Channel struct {
+	devices
+	pcmBufs *channelStreams
+}
+
+func NewChannel(track *webrtc.TrackLocalStaticSample) *Channel {
+	return &Channel{
+		devices: newDevices(track),
+		pcmBufs: newChannelStreams(),
 	}
 }
 
 // InitPlayback inits, configures, and sets up the speaker playback device with malgo,
 // with the callback needed to use the speaker for multi-user voice chats (channels).
-func (cs *ChannelState) InitPlayback() error {
+func (c *Channel) InitPlayback() error {
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	cs.playback.ctx = ctx
+	c.speaker.ctx = ctx
 	if err != nil {
 		return fmt.Errorf("error initializing device context: %w", err)
 	}
 	user := os.Getenv("VOGOENV")
-	streams := cs.pcmBufs
+	streams := c.pcmBufs
 
 	// read into output sample buf, for output to speaker device. this fires every X milliseconds
 	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
@@ -67,19 +112,18 @@ func (cs *ChannelState) InitPlayback() error {
 		}
 	}
 
-	if err := cs.playback.init(onSendFrames); err != nil {
+	if err := c.speaker.init(onSendFrames); err != nil {
 		return err
 	}
-	// cs.Playback.Initialized <- struct{}{}
-	close(cs.playback.initialized)
+	close(c.speaker.initialized)
 	return nil
 }
 
 // UninitPlayback waits for all PeerConnections to close, so that nothing
 // is writing to the speaker devices when they are uninitialized.
-func (cs *ChannelState) UninitPlayback() {
-	cs.playback.wg.Wait()
-	cs.playback.uninit()
+func (c *Channel) UninitPlayback() {
+	c.speaker.wg.Wait()
+	c.speaker.uninit()
 }
 
 // OnRemoteTrack handles decoding decoding opus audio for each remote track of a PeerConnection. It
@@ -88,7 +132,7 @@ func (cs *ChannelState) UninitPlayback() {
 // with other PC's audio streams for playback. This should only be used for multi-user voice chat channels/rooms.
 // NOTE: DecodeFEC and DecodePLC are available for later use
 // NOTE: if text remote tracks are added, this will have to not add those to audio stream struct.
-func (cs *ChannelState) OnRemoteTrack() func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+func (c *Channel) OnRemoteTrack() func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 	// this is where the decoder writes pcm from the network
 	// note: this callback should not panic
 	//
@@ -105,19 +149,19 @@ func (cs *ChannelState) OnRemoteTrack() func(track *webrtc.TrackRemote, receiver
 	//   all present pcm bufs (one per track). so the first strategy is the onTrack doing the mixing, and this start is the
 	//   onSample doing the mixing... onSample joining is prob more robust but may be slower if pcm bufs are fragmented in the heap...
 	return func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		cs.playback.wg.Add(1)
-		defer cs.playback.wg.Done()
+		c.speaker.wg.Add(1)
+		defer c.speaker.wg.Done()
 
 		// decoder operates on only one audio stream so init here.
 		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
 		if err != nil {
-			panic(fmt.Errorf("decoder init error: %w", err))
+			log.Panicf("decoder init error: %v", err)
 		}
 
 		log.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
 		decodeBuf := make([]int16, pcmBufferSize)
 		pcm := make([]int16, pcmBufferSize)
-		streams := cs.pcmBufs
+		streams := c.pcmBufs
 		streams.addStream(&pcm)
 
 		for {
@@ -154,24 +198,15 @@ func (cs *ChannelState) OnRemoteTrack() func(track *webrtc.TrackRemote, receiver
 	}
 }
 
-// PlaybackInitialized returns the channel to notify the caller when the playback system
-// is fully initialized. Since playback initialization is slow, this allows the caller to do
-// it asynchronously and wait for its completion.
-func (cs *ChannelState) PlaybackInitialized() <-chan struct{} {
-	return cs.playback.initialized
+type Call struct {
+	devices
+	pcm *callStream
 }
 
-type CallState struct {
-	CaptureTrack *webrtc.TrackLocalStaticSample
-	playback     *playback
-	pcm          *callStream
-}
-
-func NewCallState(track *webrtc.TrackLocalStaticSample) *CallState {
-	return &CallState{
-		CaptureTrack: track,
-		playback:     newPlayback(),
-		pcm:          &callStream{},
+func NewCall(track *webrtc.TrackLocalStaticSample) *Call {
+	return &Call{
+		devices: newDevices(track),
+		pcm:     &callStream{},
 	}
 }
 
@@ -179,24 +214,24 @@ func NewCallState(track *webrtc.TrackLocalStaticSample) *CallState {
 // reads the audio from the network and places it in the buffer for the playback device to read from. This function
 // is used by voice calls (1:1)
 // TODO: should this return the pcm stuff so that onTrack can be called by other goroutines once PCs are created?
-func (cs *CallState) InitPlayback(pc *webrtc.PeerConnection) error {
-	if err := cs.initSpeaker(); err != nil {
+func (c *Call) InitPlayback(pc *webrtc.PeerConnection) error {
+	if err := c.initSpeaker(); err != nil {
 		return fmt.Errorf("error initializing playback device: %w", err)
-	}
-
-	decoder, err := opus.NewDecoder(SampleRate, NumChannels)
-	if err != nil {
-		return fmt.Errorf("decoder init error: %w", err)
 	}
 
 	// this func runs for every remote track connected to this peer connection
 	// this is where the decoder writes pcm from the network
 	// note: this callback should not panic
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		cs.playback.wg.Add(1)
-		defer cs.playback.wg.Done()
+		c.speaker.wg.Add(1)
+		defer c.speaker.wg.Done()
 
-		pcm := cs.pcm
+		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
+		if err != nil {
+			log.Panicf("decoder init error: %w", err)
+		}
+
+		pcm := c.pcm
 		decodeBuf := make([]int16, pcmBufferSize)
 		for {
 			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
@@ -223,19 +258,19 @@ func (cs *CallState) InitPlayback(pc *webrtc.PeerConnection) error {
 			pcm.mu.Unlock()
 		}
 	})
-	close(cs.playback.initialized)
+	close(c.speaker.initialized)
 	return nil
 }
 
 // initSpeaker inits, configures, and sets up the callback needed to use the speaker for peer-to-peer (1:1) voice calls.
-func (cs *CallState) initSpeaker() error {
+func (c *Call) initSpeaker() error {
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	cs.playback.ctx = ctx
+	c.speaker.ctx = ctx
 	if err != nil {
 		return fmt.Errorf("error initializing device context: %w", err)
 	}
 
-	pcm := cs.pcm
+	pcm := c.pcm
 
 	// read into output sample buf, for output to speaker device. this fires every X milliseconds
 	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
@@ -253,19 +288,19 @@ func (cs *CallState) initSpeaker() error {
 		pcm.buf = pcm.buf[samplesToRead:] // TODO: probably leaks
 	}
 
-	if err := cs.playback.init(onSendFrames); err != nil {
+	if err := c.speaker.init(onSendFrames); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (cs *CallState) UninitPlayback(pc *webrtc.PeerConnection) {
+func (c *Call) UninitPlayback(pc *webrtc.PeerConnection) {
 	// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
 	if closeErr := pc.GracefulClose(); closeErr != nil {
 		log.Printf("cannot gracefully close recipient connection: %v\n", closeErr)
 	} else {
-		cs.playback.wg.Wait()
+		c.speaker.wg.Wait()
 	}
 
-	cs.playback.uninit()
+	c.speaker.uninit()
 }

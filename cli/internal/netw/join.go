@@ -32,11 +32,10 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	abort := make(chan error, 10)
 
 	track := wrtc.CreateAudioTrack(creds.username)
-	audioState := audio.NewChannelState(track)
+	audioState := audio.NewChannel(track)
 
 	// initialize speaker asynchronously
 	go func() {
-		// TODO: mic capture needs to start after this is completed. add a noti chan
 		if err := audioState.InitPlayback(); err != nil {
 			abort <- fmt.Errorf("error initializing playback system: %w", err)
 			return
@@ -78,13 +77,23 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// NOTE: this cannot run until at least 1 PeerConnection (and therefore the Track) has been created.
 	// setup microphone once call is connected and capture until cancelled
 	capture.Go(func() {
+		// todo: could do this in another goroutine and use its init chan
+		if err := audioState.InitCapture(); err != nil {
+			abort <- err
+			return
+		}
+		defer audioState.UninitCapture()
+
 		select {
 		case <-captureCtx.Done():
 			return
 		case <-audioState.PlaybackInitialized():
+			if err := audioState.StartSpeaker(); err != nil {
+				abort <- err
+			}
 			break
 		}
-		if err := audio.StartCapture(captureCtx, track); err != nil {
+		if err := audioState.StartCapture(captureCtx); err != nil {
 			log.Println("error in startCapture")
 			abort <- fmt.Errorf("error with capture device: %w", err)
 		}
@@ -103,7 +112,7 @@ func joinChannelAndConnect(
 	ctx context.Context,
 	creds *credentials,
 	ownerName, channelName string,
-	audioState *audio.ChannelState,
+	audioState *audio.Channel,
 	abort chan<- error,
 ) error {
 	ws, err := newWebsocket(ctx, creds, "/channel/join")
@@ -139,7 +148,7 @@ func joinChannelAndConnect(
 	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username, iceCtx, &iceWg)
 	defer conns.CloseAll()
 	for id, name := range res.Users {
-		c := wrtc.NewConnection(id, creds.stunServer, audioState.CaptureTrack)
+		c := wrtc.NewConnection(id, creds.stunServer, audioState.CaptureTrack())
 		conns.Update(name, c)
 	}
 	// todo: track, cleanup failed/expired connections
@@ -218,7 +227,7 @@ func joinChannelAndConnect(
 func handleMessage(
 	msg wsock.Message,
 	conns *wrtc.ConnectionMap,
-	audioState *audio.ChannelState,
+	audioState *audio.Channel,
 ) {
 	switch msg.Type {
 	case "ice-offer", "ice-answer":
@@ -237,7 +246,7 @@ func handleMessage(
 func handleOfferMessage(
 	msg wsock.Message,
 	conns *wrtc.ConnectionMap,
-	audioState *audio.ChannelState,
+	audioState *audio.Channel,
 ) {
 	var (
 		offer requests.ConnectionWithId
@@ -253,7 +262,7 @@ func handleOfferMessage(
 		}
 		log.Printf("recreating offer to %s", offer.From)
 	}
-	conn = wrtc.NewConnection(offer.FromId, conns.Server.StunServer, audioState.CaptureTrack)
+	conn = wrtc.NewConnection(offer.FromId, conns.Server.StunServer, audioState.CaptureTrack())
 	conns.Update(offer.From, conn)
 	log.Printf("received offer from %s, created conn", offer.From)
 

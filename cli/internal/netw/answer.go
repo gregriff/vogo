@@ -34,8 +34,17 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 
 	// sending an error on this channel will abort the call process
 	abort := make(chan error, 10)
+	defer func() {
+		log.Println("ABORT ERRS:")
+		select {
+		case err := <-abort:
+			log.Println(err)
+		default:
+			return
+		}
+	}()
 
-	audioState := audio.NewCallState(track)
+	audioState := audio.NewCall(track)
 
 	go func() {
 		// TODO: mic capture needs to start after this is completed. add a noti chan.
@@ -77,14 +86,24 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 
 	// setup microphone once call is connected and capture until cancelled
 	capture.Go(func() {
+		// todo: could do this in another goroutine and use its init chan
+		if err := audioState.InitCapture(); err != nil {
+			abort <- err
+			return
+		}
+		defer audioState.UninitCapture()
+
 		select {
 		case <-captureCtx.Done():
 			return
 		case <-connected:
 			cancelAnswer()
+			if err := audioState.StartSpeaker(); err != nil {
+				abort <- err
+			}
 			break
 		}
-		if err := audio.StartCapture(captureCtx, track); err != nil {
+		if err := audioState.StartCapture(captureCtx); err != nil {
 			abort <- fmt.Errorf("error with capture device: %w", err)
 			return
 		}

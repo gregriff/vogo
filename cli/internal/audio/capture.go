@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/gen2brain/malgo"
@@ -14,30 +13,71 @@ import (
 	"gopkg.in/hraban/opus.v2"
 )
 
-type capture struct {
+// microphone provides access to the device's
+// microphone, to record opus audio data.
+type microphone struct {
 	ctx    *malgo.AllocatedContext
-	wg     *sync.WaitGroup
 	device *malgo.Device
+
+	// the webrtc track that we use write opus to
+	track *webrtc.TrackLocalStaticSample
+
+	// this is where malgo writes microphone pcm data
+	pcm *callStream
 
 	// initialized will be closed when the microphone device is initalized.
 	initialized chan struct{}
 }
 
-func newCapture() *capture {
-	return &capture{
+func newMicrophone(track *webrtc.TrackLocalStaticSample) *microphone {
+	return &microphone{
 		ctx:         &malgo.AllocatedContext{},
-		wg:          &sync.WaitGroup{},
 		device:      &malgo.Device{},
+		track:       track,
 		initialized: make(chan struct{}),
 	}
 }
 
-func StartCapture(ctx context.Context, track *webrtc.TrackLocalStaticSample) error {
-	deviceCtx, device, pcm, err := initCaptureDevice()
-	log.Println("capture device created")
-	defer uninitCapture(deviceCtx, device)
+func (m *microphone) init() error {
+	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	m.ctx = ctx
 	if err != nil {
-		return fmt.Errorf("error initializing capture device: %w", err)
+		return fmt.Errorf("error initializing device context: %w", err)
+	}
+
+	deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
+	deviceConfig.Capture.Format = AudioFormat
+	deviceConfig.Capture.Channels = NumChannels
+	deviceConfig.SampleRate = SampleRate
+	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
+
+	m.pcm = &callStream{}
+
+	// read into capture buffer, to write to network. this fires every X milliseconds
+	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
+		m.pcm.mu.Lock()
+		m.pcm.buf = append(m.pcm.buf, bytesToInt16(pInputSample)...)
+		m.pcm.mu.Unlock()
+	}
+
+	// init playback device
+	device, err := malgo.InitDevice(ctx.Context, deviceConfig, malgo.DeviceCallbacks{
+		Data: onRecvFrames,
+	})
+	m.device = device
+	if err != nil {
+		return fmt.Errorf("error creating capture device: %w", err)
+	}
+	// if err = device.Start(); err != nil {
+	// 	return pcm, fmt.Errorf("error starting capture device: %w", err)
+	// }
+	close(m.initialized)
+	return nil
+}
+
+func (m *microphone) start(ctx context.Context) error {
+	if err := m.device.Start(); err != nil {
+		return err
 	}
 
 	opusBuffer := make([]byte, opusBufferSize)
@@ -58,18 +98,18 @@ func StartCapture(ctx context.Context, track *webrtc.TrackLocalStaticSample) err
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			pcm.mu.Lock()
+			m.pcm.mu.Lock()
 
 			// Need at least one frame worth of data
-			if len(pcm.buf) < frameSize {
-				pcm.mu.Unlock()
+			if len(m.pcm.buf) < frameSize {
+				m.pcm.mu.Unlock()
 				continue // wait for more data
 			}
 
 			// Extract one frame and remove it from the buffer
-			frameData := pcm.buf[:frameSize]
-			pcm.buf = pcm.buf[frameSize:] // TODO: this may leak
-			pcm.mu.Unlock()
+			frameData := m.pcm.buf[:frameSize]
+			m.pcm.buf = m.pcm.buf[frameSize:] // TODO: this may leak
+			m.pcm.mu.Unlock()
 
 			// encode to opus
 			bytesEncoded, err := encoder.Encode(frameData, opusBuffer)
@@ -79,7 +119,7 @@ func StartCapture(ctx context.Context, track *webrtc.TrackLocalStaticSample) err
 			}
 
 			// write to webrtc track
-			failedPeers := track.WriteSample(media.Sample{
+			failedPeers := m.track.WriteSample(media.Sample{
 				Data:     opusBuffer[:bytesEncoded], // only the first N bytes are opus data.
 				Duration: frameDuration,
 			})
@@ -91,52 +131,16 @@ func StartCapture(ctx context.Context, track *webrtc.TrackLocalStaticSample) err
 	}
 }
 
-func initCaptureDevice() (ctx *malgo.AllocatedContext, device *malgo.Device, pcm *callStream, err error) {
-	// configure playback device
-	ctx, err = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	if err != nil {
-		err = fmt.Errorf("error initializing device context: %w", err)
-		return
+func (m *microphone) uninit() error {
+	if m.device != nil {
+		m.device.Uninit()
 	}
-
-	deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
-	deviceConfig.Capture.Format = AudioFormat
-	deviceConfig.Capture.Channels = NumChannels
-	deviceConfig.SampleRate = SampleRate
-	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
-
-	pcm = &callStream{}
-
-	// read into capture buffer, to write to network. this fires every X milliseconds
-	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
-		pcm.mu.Lock()
-		pcm.buf = append(pcm.buf, bytesToInt16(pInputSample)...)
-		pcm.mu.Unlock()
+	if err := m.ctx.Uninit(); err != nil {
+		return fmt.Errorf("error uninitializing capture device context: %w", err)
 	}
-
-	// init playback device
-	device, err = malgo.InitDevice(ctx.Context, deviceConfig, malgo.DeviceCallbacks{
-		Data: onRecvFrames,
-	})
-	if err != nil {
-		err = fmt.Errorf("error creating capture device: %w", err)
-		return
-	}
-	if err = device.Start(); err != nil {
-		err = fmt.Errorf("error starting capture device: %w", err)
-	}
-	return
-}
-
-func uninitCapture(ctx *malgo.AllocatedContext, device *malgo.Device) {
-	if device != nil {
-		device.Uninit()
-	}
-	if err := ctx.Uninit(); err != nil {
-		log.Printf("error uninitializing capture device context: %v", err)
-	}
-	ctx.Free()
+	m.ctx.Free()
 	log.Println("uninit and freed capture device")
+	return nil
 }
 
 // bytesToInt16 turns a byte slice of PCM audio into an int16 slice for the opus encoder to use.
