@@ -40,34 +40,27 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 	}()
 
 	audioState := audio.NewCall(track)
-
-	// initialize speaker asynchronously
-	// var (
-	// 	playbackWg  sync.WaitGroup
-	// 	playbackCtx *malgo.AllocatedContext
-	// 	speaker     *malgo.Device
-	// )
 	// go func() {
-	// 	// TODO: mic capture needs to start after this is completed. add a noti chan
-	// 	playbackCtx, speaker, err = audio.SetupPlayback(pc, &playbackWg)
-	// 	if err != nil {
+	// 	// TODO: mic capture needs to start after this is completed. add a noti chan.
+	// 	// also, find slowest part of speaker init with logging.
+	// 	// also, manually start mic once speaker is started. but let mic init async
+	// 	// also, manually start devices onPeerStateConnecting
+	// 	start := time.Now()
+	// 	if err := audioState.InitPlayback(pc); err != nil {
 	// 		abort <- fmt.Errorf("error initializing playback system: %w", err)
 	// 		return
 	// 	}
-	// 	log.Println("playback device created")
+	// 	log.Printf("playback device created in %v", time.Since(start))
 	// }()
-	// defer audio.UninitCallPlayback(pc, playbackCtx, speaker, &playbackWg)
+	// defer audioState.UninitPlayback(pc)
 
 	var call sync.WaitGroup
 	callCtx, cancelCall := context.WithCancel(ctx)
-	defer func() {
-		cancelCall()
-		call.Wait()
-	}()
+	defer call.Wait()
+	defer cancelCall()
 
 	call.Go(func() {
 		defer cancelCall()
-
 		err := sendCallAndConnect(callCtx, pc, creds, recipient, candidates, abort)
 		if err != nil {
 			abort <- err
@@ -77,19 +70,17 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 
 	var capture sync.WaitGroup
 	captureCtx, cancelCapture := context.WithCancel(ctx)
-	defer func() {
-		cancelCapture()
-		capture.Wait()
-	}()
+	defer capture.Wait()
+	defer cancelCapture()
 
 	// setup microphone once call is connected and capture until cancelled
 	capture.Go(func() {
 		// todo: could do this in another goroutine and use its init chan
-		if err := audioState.InitCapture(); err != nil {
+		if err := audioState.Mic.Init(); err != nil {
 			abort <- err
 			return
 		}
-		defer audioState.UninitCapture()
+		defer audioState.Mic.Uninit()
 
 		select {
 		case <-captureCtx.Done():
@@ -101,8 +92,9 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 			// }
 			break
 		}
-		if err := audioState.StartCapture(captureCtx); err != nil {
-			abort <- fmt.Errorf("error with capture device: %w", err)
+
+		if err := audioState.Mic.Start(captureCtx); err != nil {
+			abort <- fmt.Errorf("error starting mic: %w", err)
 			return
 		}
 	})
@@ -144,15 +136,13 @@ func sendCallAndConnect(
 
 	var sendIce sync.WaitGroup
 	sendIceCtx, cancelSendIce := context.WithCancel(ctx)
-	defer func() {
-		cancelSendIce()
-		sendIce.Wait()
-	}()
+	defer closeAndWait(ws, &sendIce)
+	defer cancelSendIce()
 
 	// gather local ice candidates and write to websocket
 	sendIce.Go(func() {
 		defer cancelSendIce()
-		if err = sendCandidates(sendIceCtx, ws, candidates); err != nil {
+		if err := sendCandidates(sendIceCtx, ws, candidates); err != nil {
 			abort <- err // this will cause surrounding function to cancel
 		}
 	})
@@ -162,38 +152,46 @@ func sendCallAndConnect(
 	if err := wsock.ReceiveJSON(ctx, ws, &answer); err != nil {
 		return fmt.Errorf("error reading answer from ws: %v", err)
 	}
-	if err = pc.SetRemoteDescription(answer); err != nil {
+	if err := pc.SetRemoteDescription(answer); err != nil {
 		return fmt.Errorf("error while setting remote description: %w", err)
 	}
 	log.Println("received answer")
 
-	var (
-		readIce                   sync.WaitGroup
-		readIceCtx, cancelReadIce = context.WithCancel(ctx)
-		recipientCandidates       = make(chan webrtc.ICECandidateInit)
-	)
-	defer closeAndWait(ws, &readIce)
+	// recv recipient candidates
+	readIceCtx, cancelReadIce := context.WithCancel(ctx)
 	defer cancelReadIce()
-
-	// read recipient candidates from ws as they come in
-	readIce.Go(func() {
-		defer cancelReadIce()
-		err := readCandidates(readIceCtx, ws, recipientCandidates)
-		if err != nil {
-			abort <- fmt.Errorf("error during readICE: %w", err)
-		}
-	})
-	// todo: this could be done in readIce goroutine if you pass in the pc...
-	if err = addCandidates(ctx, pc, recipientCandidates); err != nil {
+	if err := recvCandidates(readIceCtx, ws, pc); err != nil {
 		return err
 	}
+
+	// don't return now b/c sendICE could still be running.
+	// wait for cancel from calling func on connected <-
+	<-ctx.Done()
 	return nil
+}
+
+// recvCandidates reads recipient candidates from ws and adds them to the pc.
+func recvCandidates(ctx context.Context, ws *websocket.Conn, pc *webrtc.PeerConnection) error {
+	var candidate webrtc.ICECandidateInit
+	for {
+		err := wsock.ReceiveJSON(ctx, ws, &candidate)
+		if err != nil {
+			return fmt.Errorf("error reading from ws: %w", err)
+		}
+		if candidate.Candidate == "" {
+			log.Println("ice recv completed")
+			return nil
+		}
+		log.Println("recv candidate")
+		if err := pc.AddICECandidate(candidate); err != nil {
+			log.Println("WARN: error adding ICE candidate: %w", err)
+		}
+	}
 }
 
 // sendCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.
 // It returns when there are no more candidates or the context is cancelled.
 func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.ICECandidateInit) error {
-	defer log.Println("ice gathering completed")
 	for {
 		select {
 		case <-ctx.Done():
@@ -202,31 +200,9 @@ func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.IC
 			if err := websocket.JSON.Send(ws, candidate); err != nil {
 				return fmt.Errorf("error sending ice candidate: %w", err)
 			}
-			// log.Println("sent candidate")
 			if !ok {
+				log.Println("ice send complete")
 				return nil
-			}
-		}
-	}
-}
-
-// addCandidates adds the recipient's ICE candidates from ch to the peer connection. This function will continue
-// until its context is cancelled even once all candidates are exhausted.
-// TODO: i think this could be done in the readIce goroutine.
-func addCandidates(ctx context.Context, pc *webrtc.PeerConnection, ch <-chan webrtc.ICECandidateInit) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case candidate, ok := <-ch: // from the websocket
-			if !ok {
-				log.Println("no more recipient candidates")
-				ch = nil
-				continue
-			}
-			log.Println("recv recipient candidate")
-			if err := pc.AddICECandidate(candidate); err != nil {
-				return fmt.Errorf("error receiving ICE candidate: %w", err)
 			}
 		}
 	}

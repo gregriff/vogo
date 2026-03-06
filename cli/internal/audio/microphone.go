@@ -23,26 +23,32 @@ type microphone struct {
 	track *webrtc.TrackLocalStaticSample
 
 	// this is where malgo writes microphone pcm data
-	pcm *callStream
+	pcm *stream
 
 	// initialized will be closed when the microphone device is initalized.
 	initialized chan struct{}
 }
 
-func newMicrophone(track *webrtc.TrackLocalStaticSample) *microphone {
-	return &microphone{
+func newMicrophone(track *webrtc.TrackLocalStaticSample) microphone {
+	return microphone{
 		ctx:         &malgo.AllocatedContext{},
 		device:      &malgo.Device{},
 		track:       track,
+		pcm:         &stream{},
 		initialized: make(chan struct{}),
 	}
 }
 
-func (m *microphone) init() error {
+func (m *microphone) Init() error {
+	start := time.Now()
+	defer func() {
+		log.Printf("mic initialized in %v", time.Since(start))
+	}()
+
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	m.ctx = ctx
 	if err != nil {
-		return fmt.Errorf("error initializing device context: %w", err)
+		return fmt.Errorf("error initializing mic context: %w", err)
 	}
 
 	deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
@@ -50,8 +56,6 @@ func (m *microphone) init() error {
 	deviceConfig.Capture.Channels = NumChannels
 	deviceConfig.SampleRate = SampleRate
 	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
-
-	m.pcm = &callStream{}
 
 	// read into capture buffer, to write to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
@@ -66,16 +70,13 @@ func (m *microphone) init() error {
 	})
 	m.device = device
 	if err != nil {
-		return fmt.Errorf("error creating capture device: %w", err)
+		return fmt.Errorf("error creating mic device: %w", err)
 	}
-	// if err = device.Start(); err != nil {
-	// 	return pcm, fmt.Errorf("error starting capture device: %w", err)
-	// }
 	close(m.initialized)
 	return nil
 }
 
-func (m *microphone) start(ctx context.Context) error {
+func (m *microphone) Start(ctx context.Context) error {
 	if err := m.device.Start(); err != nil {
 		return err
 	}
@@ -123,6 +124,8 @@ func (m *microphone) start(ctx context.Context) error {
 				Data:     opusBuffer[:bytesEncoded], // only the first N bytes are opus data.
 				Duration: frameDuration,
 			})
+
+			// TODO: send these on a chan?
 			if failedPeers != nil {
 				log.Println("WriteSample error, contains failed peers:", err)
 				continue
@@ -131,16 +134,21 @@ func (m *microphone) start(ctx context.Context) error {
 	}
 }
 
-func (m *microphone) uninit() error {
+func (m *microphone) Uninit() error {
 	if m.device != nil {
 		m.device.Uninit()
 	}
 	if err := m.ctx.Uninit(); err != nil {
-		return fmt.Errorf("error uninitializing capture device context: %w", err)
+		return fmt.Errorf("error uninitializing mic context: %w", err)
 	}
 	m.ctx.Free()
-	log.Println("uninit and freed capture device")
+	log.Println("uninit and freed mic")
 	return nil
+}
+
+// Track returns the webrtc Track where microphone audio is written.
+func (m *microphone) Track() *webrtc.TrackLocalStaticSample {
+	return m.track
 }
 
 // bytesToInt16 turns a byte slice of PCM audio into an int16 slice for the opus encoder to use.

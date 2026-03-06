@@ -84,6 +84,7 @@ func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICEC
 			log.Println("ice gather completed")
 			return nil
 		}
+
 		ch <- candidate
 	}
 }

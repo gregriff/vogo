@@ -36,11 +36,12 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 
 	// initialize speaker asynchronously
 	go func() {
+		start := time.Now()
 		if err := audioState.InitPlayback(); err != nil {
 			abort <- fmt.Errorf("error initializing playback system: %w", err)
 			return
 		}
-		log.Println("playback device created")
+		log.Printf("playback device created in %v", time.Since(start))
 	}()
 	defer audioState.UninitPlayback()
 
@@ -78,24 +79,23 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// setup microphone once call is connected and capture until cancelled
 	capture.Go(func() {
 		// todo: could do this in another goroutine and use its init chan
-		if err := audioState.InitCapture(); err != nil {
+		if err := audioState.Mic.Init(); err != nil {
 			abort <- err
 			return
 		}
-		defer audioState.UninitCapture()
+		defer audioState.Mic.Uninit()
 
 		select {
 		case <-captureCtx.Done():
 			return
-		case <-audioState.PlaybackInitialized():
-			if err := audioState.StartSpeaker(); err != nil {
+		case <-audioState.Speaker.Initialized():
+			if err := audioState.Speaker.Start(); err != nil {
 				abort <- err
 			}
 			break
 		}
-		if err := audioState.StartCapture(captureCtx); err != nil {
-			log.Println("error in startCapture")
-			abort <- fmt.Errorf("error with capture device: %w", err)
+		if err := audioState.Mic.Start(captureCtx); err != nil {
+			abort <- fmt.Errorf("error starting mic: %w", err)
 		}
 	})
 
@@ -148,7 +148,7 @@ func joinChannelAndConnect(
 	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username, iceCtx, &iceWg)
 	defer conns.CloseAll()
 	for id, name := range res.Users {
-		c := wrtc.NewConnection(id, creds.stunServer, audioState.CaptureTrack())
+		c := wrtc.NewConnection(id, creds.stunServer, audioState.Mic.Track())
 		conns.Update(name, c)
 	}
 	// todo: track, cleanup failed/expired connections
@@ -262,7 +262,7 @@ func handleOfferMessage(
 		}
 		log.Printf("recreating offer to %s", offer.From)
 	}
-	conn = wrtc.NewConnection(offer.FromId, conns.Server.StunServer, audioState.CaptureTrack())
+	conn = wrtc.NewConnection(offer.FromId, conns.Server.StunServer, audioState.Mic.Track())
 	conns.Update(offer.From, conn)
 	log.Printf("received offer from %s, created conn", offer.From)
 

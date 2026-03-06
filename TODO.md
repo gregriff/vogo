@@ -1,7 +1,6 @@
 # TODOs
 
 ### Next:
-- add capture funcs to channel/callstate. rename to just channel and call? add method for adding remote track ('addStream'?)
 - get lower MTU working:
 ```use pion's webrtc package in my go program for voice chats. I set the MTU to 3000 to avoid overruns. is this too high or could
 this cause trouble? If so, how cna I address the issue in a differeent way? I have full control over the opus enc/dec.
