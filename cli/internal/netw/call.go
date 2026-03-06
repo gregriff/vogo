@@ -40,19 +40,21 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 	}()
 
 	audioState := audio.NewCall(track)
+	audioState.AddPeer(pc)
 	// go func() {
-	// 	// TODO: mic capture needs to start after this is completed. add a noti chan.
-	// 	// also, find slowest part of speaker init with logging.
-	// 	// also, manually start mic once speaker is started. but let mic init async
-	// 	// also, manually start devices onPeerStateConnecting
 	// 	start := time.Now()
-	// 	if err := audioState.InitPlayback(pc); err != nil {
+	// 	if err := audioState.Speaker.Init(audioState.DataProc()); err != nil {
 	// 		abort <- fmt.Errorf("error initializing playback system: %w", err)
 	// 		return
 	// 	}
 	// 	log.Printf("playback device created in %v", time.Since(start))
 	// }()
-	// defer audioState.UninitPlayback(pc)
+	// defer func() {
+	// 	if err := pc.GracefulClose(); err != nil {
+	// 		log.Printf("error gracefully closing peer connection: %v\n", err)
+	// 	}
+	// 	audioState.Speaker.Uninit()
+	// }()
 
 	var call sync.WaitGroup
 	callCtx, cancelCall := context.WithCancel(ctx)

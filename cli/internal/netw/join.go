@@ -37,13 +37,13 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// initialize speaker asynchronously
 	go func() {
 		start := time.Now()
-		if err := audioState.InitPlayback(); err != nil {
+		if err := audioState.Speaker.Init(audioState.DataProc()); err != nil {
 			abort <- fmt.Errorf("error initializing playback system: %w", err)
 			return
 		}
 		log.Printf("playback device created in %v", time.Since(start))
 	}()
-	defer audioState.UninitPlayback()
+	defer audioState.Speaker.Uninit()
 
 	var join sync.WaitGroup
 	joinCtx, cancelJoin := context.WithCancel(ctx)
@@ -165,7 +165,7 @@ func joinChannelAndConnect(
 	// TODO: can combine these two snapshot loops
 	start = time.Now()
 	for _, c := range conns.Snapshot() {
-		c.Pc.OnTrack(audioState.OnRemoteTrack()) // set up audio mixing
+		audioState.AddPeer(c.Pc) // set up audio mixing
 	}
 	log.Printf("remote handlers took %v to call\n", time.Since(start))
 
@@ -267,7 +267,7 @@ func handleOfferMessage(
 	log.Printf("received offer from %s, created conn", offer.From)
 
 	// create and send answer
-	_, err := wrtc.CreateAnswer(conn.Pc, &offer.Sd)
+	err := wrtc.CreateAnswer(conn.Pc, &offer.Sd)
 	if err != nil { // should prob retry
 		log.Printf("error creating answer: %v", err)
 		if cErr := conn.Pc.GracefulClose(); cErr != nil {
@@ -297,7 +297,7 @@ func handleOfferMessage(
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
 	conn.SendCandidates(conns.IceCtx, conns.IceWg, conns.Server.Ws, conns.Server.Username, "ice-answer")
-	conn.Pc.OnTrack(audioState.OnRemoteTrack())
+	audioState.AddPeer(conn.Pc)
 }
 
 // handleAnswerMessage handles when the client receives an answer from a recipient
@@ -339,6 +339,7 @@ func handleIceMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 		log.Panicf("error: connection for user %s not found", data.Username)
 	}
 
+	// todo: ensure remote description has been set before this runs
 	if err := conn.Pc.AddICECandidate(data.Candidate); err != nil {
 		log.Printf("error adding ICE candidate: %v", err)
 	}

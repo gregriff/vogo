@@ -47,6 +47,7 @@ func init() {
 		if err != nil {
 			log.Fatalf("error resolving config file: %v", err)
 		}
+		// TODO: debug
 		log.Printf("using config file: %s", nativeFilepath)
 		configs.Init("vogo", nativeFilepath)
 
@@ -64,7 +65,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config", defaultConfigFilePath, "config file")
 
 	rootCmd.PersistentFlags().String("stun-server", "stun:stun.l.google.com:19302", "STUN server origin")
-	rootCmd.PersistentFlags().String("vogo-server", "", "vogo Server Address")
+	rootCmd.PersistentFlags().String("vogo-server", "", "vogo server address")
 	rootCmd.PersistentFlags().Bool("debug", false, "print debugging information")
 
 	// expose to application via viper

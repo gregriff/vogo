@@ -1,10 +1,13 @@
 # TODOs
 
 ### Next:
+- hook in onSignalling state change
+- slog client
 - get lower MTU working:
 ```use pion's webrtc package in my go program for voice chats. I set the MTU to 3000 to avoid overruns. is this too high or could
 this cause trouble? If so, how cna I address the issue in a differeent way? I have full control over the opus enc/dec.
 ```
+- check out track.ReadRTP()'s interceptor.attributes retval
 - use Connection struct for all calls. use chans for all pc events, incl connection status at all times. have room
 code listen for these to know when to destruct audiomixing and connmap
 - use ansi colors per profile to echo vogoenv

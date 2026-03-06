@@ -33,8 +33,16 @@ func newSpeaker() speaker {
 	}
 }
 
-// initSpeaker initializes and starts a speaker device for playback.
-func (s *speaker) init(onSendFrames malgo.DataProc) error {
+// Init initializes and starts a speaker device for playback.
+// It requires a callback that will run every [frameDurationMs], that is
+// responsible for writing audio PCM to the speaker's buffer.
+func (s *speaker) Init(onSendFrames malgo.DataProc) error {
+	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	s.ctx = ctx
+	if err != nil {
+		return fmt.Errorf("error initializing device context: %w", err)
+	}
+
 	config := malgo.DefaultDeviceConfig(malgo.Playback)
 	config.Playback.Format = AudioFormat
 	config.Playback.Channels = NumChannels
@@ -42,12 +50,13 @@ func (s *speaker) init(onSendFrames malgo.DataProc) error {
 	config.PeriodSizeInMilliseconds = frameDurationMs
 
 	device, err := malgo.InitDevice(s.ctx.Context, config, malgo.DeviceCallbacks{
-		Data: onSendFrames,
+		Data: onSendFrames, // note: could also include a stop callback
 	})
 	s.device = device
 	if err != nil {
 		return fmt.Errorf("error creating device: %w", err)
 	}
+	close(s.initialized)
 	return nil
 }
 
@@ -55,16 +64,17 @@ func (s *speaker) Start() error {
 	return s.device.Start()
 }
 
-// uninit uninitializes the malgo speaker device and frees all its resources. Ideally,
+// Uninit uninitializes the malgo speaker device and frees all its resources. Ideally,
 // nothing should be writing to the speaker device when this is called. This is ensured by
 // closing all PeerConnections beforehand, since their RemoteTrack handlers write to the device.
-func (s *speaker) uninit() error {
+func (s *speaker) Uninit() error {
 	if s.ctx == nil {
 		log.Panic("speaker ctx uninit before init")
 	}
 	if s.device != nil {
 		s.device.Uninit()
 	}
+	s.wg.Wait() // TODO: check if this is even nessicary.
 	if err := s.ctx.Uninit(); err != nil {
 		return fmt.Errorf("error uninitializing speaker context: %w", err)
 	}

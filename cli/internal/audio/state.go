@@ -4,7 +4,6 @@ package audio
 // in either a 1:1 voice call or 1:many voice chat format.
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -28,66 +27,18 @@ func NewChannel(track *webrtc.TrackLocalStaticSample) *Channel {
 	}
 }
 
-// InitPlayback inits, configures, and sets up the speaker playback device with malgo,
-// with the callback needed to use the speaker for multi-user voice chats (channels).
-func (c *Channel) InitPlayback() error {
-	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	c.Speaker.ctx = ctx
-	if err != nil {
-		return fmt.Errorf("error initializing device context: %w", err)
-	}
-	user := os.Getenv("VOGOENV")
-	streams := c.streams
-
-	// read into output sample buf, for output to speaker device. this fires every X milliseconds
-	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
-		samplesToRead := int(framecount) * NumChannels
-		streams.mu.Lock()
-		defer streams.mu.Unlock()
-
-		fullBufs, ok := streams.hasFullSample(samplesToRead)
-		// if there isn't yet a full sample in any of the pcm buffers sent from the network
-		if !ok {
-			return
-		}
-
-		mixed := streams.mix(fullBufs, samplesToRead)
-
-		// write a full mixed sample to the speaker buffer
-		if user != "two" { // temp for testing
-			copy(pOutputSample, int16ToBytes(mixed[:samplesToRead]))
-		}
-
-		// reslice all bufs that were just mixed, removing the mixed pcm from each
-		for _, p := range fullBufs {
-			*p = (*p)[samplesToRead:] // TODO: probably leaks
-		}
-	}
-
-	if err := c.Speaker.init(onSendFrames); err != nil {
-		return err
-	}
-	close(c.Speaker.initialized)
-	return nil
+// AddPeer sets an event handler on pc that writes incoming audio data to the speaker.
+func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
+	pc.OnTrack(c.onRemoteTrack())
 }
 
-// UninitPlayback waits for all PeerConnections to close, so that nothing
-// is writing to the speaker devices when they are uninitialized. This
-// assumes that all PeerConnections writing to the speaker will close.
-func (c *Channel) UninitPlayback() {
-	log.Println("waiting for PeerConnections to close before uninitializing speaker...")
-	c.Speaker.wg.Wait()
-	c.Speaker.uninit()
-}
-
-// OnRemoteTrack returns the function to be run for each (audio) webrtc.TrackRemote for each
-// of this client's PeerConnections. It handles decoding opus audio for each remote track. It
-// should be attached to each PeerConnection using pc.OnTrack(). For vogo, each PC should only have one
-// RemoteTrack. Decoded audio is written to pcmBufs, from which the speaker goroutine reads and mixes
-// with other PC's audio streams for playback.
+// onRemoteTrack returns the function to be run for each (audio) webrtc.TrackRemote for each
+// of this Channel's registered PeerConnections. It handles decoding opus audio for each remote track.
+// For vogo, each PC should only have one RemoteTrack. Decoded audio is written to c.streams,
+// from which the speaker goroutine reads and mixes with other PC's audio streams for playback.
 // NOTE: DecodeFEC and DecodePLC are available for later use
 // NOTE: if text remote tracks are added, this will have to not add those to audio stream struct.
-func (c *Channel) OnRemoteTrack() func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+func (c *Channel) onRemoteTrack() func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 	// Strategy to time mixing:
 	// - when playback goroutine pulls pcm from pcm buf and writes to speaker buf, it empties the pcm buf (in a lock),
 	//   therefore, each of the onTrack()'s below needs to have its own flag/counter, that is set when it writes to the pcm.
@@ -122,21 +73,14 @@ func (c *Channel) OnRemoteTrack() func(track *webrtc.TrackRemote, receiver *webr
 				if readErr == io.EOF {
 					return // Track closed, exit loop
 				}
-				log.Println("PACKET READ ERR: ", readErr)
+				log.Printf("PACKET READ ERR: %v", readErr)
 				continue // Temporary error, keep trying
 			}
-
-			// TODO: track.ID()
-			// - use track.id to store pcm in a buf for only this track
-			// - then mix PCM from each track before writing to speaker
-			// - each track's PCM needs a lock and so does the mixing PCM
-			// - just do naive mixing at first, dont do any fancy timing
-			// - itd be nice to extract some of this state out into a struct with funcs
 
 			// TODO: check for 0 samples decoded and call PLC?
 			samplesDecoded, decodeErr := decoder.Decode(packet.Payload, decodeBuf)
 			if decodeErr != nil {
-				log.Println("DECODE ERROR: ", decodeErr.Error())
+				log.Printf("DECODE ERROR: %v", decodeErr)
 				continue
 			}
 
@@ -146,6 +90,39 @@ func (c *Channel) OnRemoteTrack() func(track *webrtc.TrackRemote, receiver *webr
 			pcm = append(pcm, decodeBuf[:framesDecoded]...) // inefficient? reslice instead?
 			streams.mu.Unlock()
 		}
+	}
+}
+
+// DataProc mixes multiple user's audio and sends it to the speaker.
+func (c *Channel) DataProc() malgo.DataProc {
+	user := os.Getenv("VOGOENV")
+	streams := c.streams
+
+	// read into output sample buf, for output to speaker device.
+	// this fires every [frameDurationMs]
+	return func(pOutputSample, _ []byte, framecount uint32) {
+		samplesToRead := int(framecount) * NumChannels
+		streams.mu.Lock()
+
+		fullBufs, ok := streams.hasFullSample(samplesToRead)
+		// if there isn't yet a full sample in any of the pcm buffers sent from the network
+		if !ok {
+			streams.mu.Unlock()
+			return
+		}
+
+		mixed := streams.mix(fullBufs, samplesToRead)
+
+		// write a full mixed sample to the speaker buffer
+		if user != "two" { // temp for testing
+			copy(pOutputSample, int16ToBytes(mixed[:samplesToRead]))
+		}
+
+		// reslice all bufs that were just mixed, removing the mixed pcm from each
+		for _, p := range fullBufs {
+			*p = (*p)[samplesToRead:] // TODO: probably leaks
+		}
+		streams.mu.Unlock()
 	}
 }
 
@@ -163,19 +140,20 @@ func NewCall(track *webrtc.TrackLocalStaticSample) *Call {
 	}
 }
 
-// SetupPlayback initializes the playback device with malgo, and defines the callback that is run per remote-track, that
-// reads the audio from the network and places it in the buffer for the playback device to read from. This function
-// is used by voice calls (1:1)
-// TODO: should this return the pcm stuff so that onTrack can be called by other goroutines once PCs are created?
-func (c *Call) InitPlayback(pc *webrtc.PeerConnection) error {
-	if err := c.initSpeaker(); err != nil {
-		return fmt.Errorf("error initializing playback device: %w", err)
-	}
+// AddPeer sets an event handler on pc that writes incoming audio data to the speaker.
+func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
+	pc.OnTrack(c.onRemoteTrack())
+}
 
+// onRemoteTrack returns the function to be run for each (audio) webrtc.TrackRemote for the
+// Call's PeerConnection. It handles decoding opus audio for the remote track. The Call's PC
+// should only have one RemoteTrack. Decoded audio is written to c.stream,
+// from which the speaker goroutine reads for playback.
+func (c *Call) onRemoteTrack() func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 	// this func runs for every remote track connected to this peer connection
 	// this is where the decoder writes pcm from the network
 	// note: this callback should not panic
-	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	return func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		c.Speaker.wg.Add(1)
 		defer c.Speaker.wg.Done()
 
@@ -210,52 +188,27 @@ func (c *Call) InitPlayback(pc *webrtc.PeerConnection) error {
 			pcm.buf = append(pcm.buf, decodeBuf[:framesDecoded]...)
 			pcm.mu.Unlock()
 		}
-	})
-	close(c.Speaker.initialized)
-	return nil
+	}
 }
 
-// initSpeaker inits, configures, and sets up the callback needed to use the speaker for peer-to-peer (1:1) voice calls.
-func (c *Call) initSpeaker() error {
-	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	c.Speaker.ctx = ctx
-	if err != nil {
-		return fmt.Errorf("error initializing device context: %w", err)
-	}
-
+// DataProc sends audio data to the speaker.
+// https://github.com/gen2brain/malgo/blob/master/_examples/playback/playback.go
+func (c *Call) DataProc() malgo.DataProc {
 	pcm := c.stream
 
-	// read into output sample buf, for output to speaker device. this fires every X milliseconds
-	onSendFrames := func(pOutputSample, _ []byte, framecount uint32) {
+	return func(pOutputSample, _ []byte, framecount uint32) {
 		samplesToRead := int(framecount) * NumChannels
 		pcm.mu.Lock()
-		defer pcm.mu.Unlock()
 
 		// if there isn't yet a full sample in the pcmBuffer sent from the network
 		if len(pcm.buf) < samplesToRead {
+			pcm.mu.Unlock()
 			return
 		}
 
 		// write a full sample to the speaker buffer
 		copy(pOutputSample, int16ToBytes(pcm.buf[:samplesToRead]))
 		pcm.buf = pcm.buf[samplesToRead:] // TODO: probably leaks
+		pcm.mu.Unlock()
 	}
-
-	if err := c.Speaker.init(onSendFrames); err != nil {
-		return err
-	}
-	return nil
-}
-
-// UninitPlayback gracefully closes the PeerConnection, and once that's done
-// it uninitializes the playback device.
-func (c *Call) UninitPlayback(pc *webrtc.PeerConnection) {
-	// this forces the track.ReadRTP() in audio.SetupPlayback to unblock
-	if err := pc.GracefulClose(); err != nil {
-		log.Printf("error gracefully closing peer connection: %v\n", err)
-	} else {
-		c.Speaker.wg.Wait()
-	}
-
-	c.Speaker.uninit()
 }
