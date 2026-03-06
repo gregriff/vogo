@@ -533,7 +533,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		defer cancel() // if websocket closes, end all goroutines
 		if err := wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
 			if err == io.EOF { // todo: may need to handle this in startMessageLoop
-				logger.ROUTE.Error("ws closed during message loop", "err", err)
+				logger.ROUTE.Info("connection closed")
 			} else {
 				logger.ROUTE.Error("error during message loop", "err", err)
 			}

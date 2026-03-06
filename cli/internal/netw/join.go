@@ -17,95 +17,60 @@ import (
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
 	"golang.org/x/net/websocket"
+	"golang.org/x/sync/errgroup"
 )
 
 func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName string) error {
 	// TODO:
-	// - remote track automatically created once connection established? yes, per PC
 	// - note: later, requests.BulkConnection could be parallized, and the GUI could use recent status polling to
 	//         issue offers ahead of time, cancelling them if joinRoom returns that the user is no longer in the room
-	//
 	// pseudocode:
 	// - make sure to send connection successful sentinels
-
-	// sending an error on this channel will abort the call process
-	abort := make(chan error, 10)
 
 	track := wrtc.CreateAudioTrack(creds.username)
 	audioState := audio.NewChannel(track)
 
-	// initialize speaker asynchronously
-	go func() {
+	g, gCtx := errgroup.WithContext(ctx)
+	g.Go(func() error {
 		start := time.Now()
-		if err := audioState.Speaker.Init(audioState.DataProc()); err != nil {
-			abort <- fmt.Errorf("error initializing playback system: %w", err)
-			return
-		}
-		log.Printf("playback device created in %v", time.Since(start))
-	}()
-	defer audioState.Speaker.Uninit()
-
-	var join sync.WaitGroup
-	joinCtx, cancelJoin := context.WithCancel(ctx)
+		defer log.Printf("playback device created in %v", time.Since(start))
+		return audioState.Speaker.Init(audioState.DataProc())
+	})
 	defer func() {
-		cancelJoin()
-		join.Wait()
+		_ = audioState.Speaker.Uninit()
 	}()
 
-	join.Go(func() {
-		defer cancelJoin()
-
-		// note: could create and return conns in main thread, then merge connected channels to prevent mic
-		// init until ness.
-		err := joinChannelAndConnect(joinCtx, creds, ownerName, channelName, audioState, abort)
-		if err != nil {
-			abort <- err
-			return
-		}
+	g.Go(func() error {
+		return joinChannelAndConnect(gCtx, creds, ownerName, channelName, audioState)
 	})
 
-	// todo: block here until at least one PC (and track) have been created
-	// (with bulk message, no block needed). capture goroutine can then run,
-	// and will wait until at least 1 PC is in connected state
-
-	var capture sync.WaitGroup
-	captureCtx, cancelCapture := context.WithCancel(ctx)
-	defer func() {
-		cancelCapture()
-		capture.Wait()
-	}()
-
-	// NOTE: this cannot run until at least 1 PeerConnection (and therefore the Track) has been created.
-	// setup microphone once call is connected and capture until cancelled
-	capture.Go(func() {
+	// init microphone, and start it and the speaker once call is connected
+	g.Go(func() error {
 		// todo: could do this in another goroutine and use its init chan
 		if err := audioState.Mic.Init(); err != nil {
-			abort <- err
-			return
+			return err
 		}
-		defer audioState.Mic.Uninit()
+		defer func() {
+			_ = audioState.Mic.Uninit()
+		}()
 
 		select {
-		case <-captureCtx.Done():
-			return
+		case <-gCtx.Done():
+			return nil
 		case <-audioState.Speaker.Initialized():
 			if err := audioState.Speaker.Start(); err != nil {
-				abort <- err
+				return err
 			}
 			break
 		}
-		if err := audioState.Mic.Start(captureCtx); err != nil {
-			abort <- fmt.Errorf("error starting mic: %w", err)
+
+		if err := audioState.Mic.Start(gCtx); err != nil {
+			return fmt.Errorf("error starting mic: %w", err)
 		}
+		return nil
 	})
 
-	// block until sigint or error in goroutines above
-	select {
-	case err := <-abort:
-		return fmt.Errorf("call aborted: %w", err)
-	case <-ctx.Done():
-		return nil
-	}
+	return g.Wait()
 }
 
 func joinChannelAndConnect(
@@ -113,7 +78,6 @@ func joinChannelAndConnect(
 	creds *credentials,
 	ownerName, channelName string,
 	audioState *audio.Channel,
-	abort chan<- error,
 ) error {
 	ws, err := newWebsocket(ctx, creds, "/channel/join")
 	if err != nil {
@@ -139,16 +103,14 @@ func joinChannelAndConnect(
 
 	var iceWg sync.WaitGroup
 	iceCtx, cancelIce := context.WithCancel(ctx)
-	defer func() {
-		cancelIce()
-		iceWg.Wait()
-	}()
+	defer iceWg.Wait()
+	defer cancelIce()
 
 	// this holds the state of the room from this client's perspective
 	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username, iceCtx, &iceWg)
 	defer conns.CloseAll()
 	for id, name := range res.Users {
-		c := wrtc.NewConnection(id, creds.stunServer, audioState.Mic.Track())
+		c := wrtc.NewConnection(id, creds.stunServer, audioState.Mic.Track(), false)
 		conns.Update(name, c)
 	}
 	// todo: track, cleanup failed/expired connections
@@ -178,28 +140,19 @@ func joinChannelAndConnect(
 		c.SendCandidates(iceCtx, &iceWg, ws, creds.username, "ice-offer")
 	}
 
-	// TODO:
-	// all the below needs to happen per room user returned in the messages.BulkConnection,
-	// and in their own goroutines
+	g, gCtx := errgroup.WithContext(ctx)
+	// defer closeAndWait(ws, g)
 
-	var (
-		listen                  sync.WaitGroup
-		listenCtx, cancelListen = context.WithCancel(ctx)
-		msgs                    = make(chan wsock.Message)
-	)
-	defer func() {
-		cancelListen()
-		listen.Wait()
-	}()
-	listen.Go(func() {
+	msgs := make(chan wsock.Message)
+	g.Go(func() error {
 		var err error
-		if err = wsock.Listen(listenCtx, ws, msgs); err != nil {
+		if err = wsock.Listen(gCtx, ws, msgs); err != nil {
 			if err == io.EOF { // todo: may need to handle this in startMessageLoop
 				err = errors.New("closed by server")
 			}
 			_ = ws.WriteClose(1)
 		}
-		abort <- fmt.Errorf("message loop closed: %w", err)
+		return err
 	})
 
 	var handlerWg sync.WaitGroup
@@ -213,7 +166,7 @@ func joinChannelAndConnect(
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return g.Wait()
 		case msg := <-msgs:
 			handlerWg.Go(func() {
 				handleMessage(msg, conns, audioState)
@@ -262,12 +215,13 @@ func handleOfferMessage(
 		}
 		log.Printf("recreating offer to %s", offer.From)
 	}
-	conn = wrtc.NewConnection(offer.FromId, conns.Server.StunServer, audioState.Mic.Track())
+	conn = wrtc.NewConnection(offer.FromId, conns.Server.StunServer, audioState.Mic.Track(), false)
+	audioState.AddPeer(conn.Pc)
 	conns.Update(offer.From, conn)
 	log.Printf("received offer from %s, created conn", offer.From)
 
 	// create and send answer
-	err := wrtc.CreateAnswer(conn.Pc, &offer.Sd)
+	err := conn.CreateAnswer(&offer.Sd)
 	if err != nil { // should prob retry
 		log.Printf("error creating answer: %v", err)
 		if cErr := conn.Pc.GracefulClose(); cErr != nil {
@@ -297,7 +251,6 @@ func handleOfferMessage(
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
 	conn.SendCandidates(conns.IceCtx, conns.IceWg, conns.Server.Ws, conns.Server.Username, "ice-answer")
-	audioState.AddPeer(conn.Pc)
 }
 
 // handleAnswerMessage handles when the client receives an answer from a recipient
@@ -321,6 +274,7 @@ func handleAnswerMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 		}
 		return
 	}
+	conn.Once.Do(func() { close(conn.RemoteDescSet) })
 	log.Printf("received answer from %s", answer.From)
 	return
 }
@@ -338,6 +292,9 @@ func handleIceMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 	if conn, ok = conns.Get(data.Username); !ok {
 		log.Panicf("error: connection for user %s not found", data.Username)
 	}
+
+	// wait for remote description to be set
+	<-conn.RemoteDescSet
 
 	// todo: ensure remote description has been set before this runs
 	if err := conn.Pc.AddICECandidate(data.Candidate); err != nil {

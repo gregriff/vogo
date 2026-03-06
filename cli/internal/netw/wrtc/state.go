@@ -3,6 +3,7 @@ package wrtc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"maps"
 	"sync"
@@ -24,14 +25,14 @@ type Connection struct {
 	// webrtc PeerConnection
 	Pc *webrtc.PeerConnection
 
-	// track which audio is written to
-	// track *webrtc.TrackLocalStaticSample
-
 	// channel for sending ICE Candidates
 	Candidates chan webrtc.ICECandidateInit
 
-	// notification channel for connection status
-	Connected chan struct{}
+	// notification channels
+	Connected,
+	RemoteDescSet chan struct{}
+
+	Once sync.Once
 }
 
 // NewConnection creates a new peer connection with a vogo user given their uuid, and returns a *Connection
@@ -40,15 +41,16 @@ func NewConnection(
 	id uuid.UUID,
 	stunServer string,
 	track *webrtc.TrackLocalStaticSample,
+	exitOnClose bool,
 ) *Connection {
-	pc, candidates, connected := NewAudioPeerConnection(stunServer, track, false)
-	c := Connection{
-		Id:         id,
-		Pc:         pc,
-		Candidates: candidates,
-		Connected:  connected,
+	pc, candidates, connected := NewAudioPeerConnection(stunServer, track, exitOnClose)
+	return &Connection{
+		Id:            id,
+		Pc:            pc,
+		Candidates:    candidates,
+		Connected:     connected,
+		RemoteDescSet: make(chan struct{}),
 	}
-	return &c
 }
 
 type candidateType string
@@ -66,6 +68,28 @@ func (c *Connection) NewOfferRequest(caller, recipient string) requests.Connecti
 	req := requests.Connection{From: caller, To: recipient, Sd: offer}
 	log.Printf("%s will send offer to %s...\n", caller, recipient)
 	return req
+}
+
+// CreateAnswer sets the remote description of the caller given their offer,
+// creates an answer, sets the local description and starts ice gathering.
+// It returns the answer, but the up-to-date local description should probably
+// be accessed directly from the pc.
+func (c *Connection) CreateAnswer(offer *webrtc.SessionDescription) error {
+	if err := c.Pc.SetRemoteDescription(*offer); err != nil {
+		return fmt.Errorf("error setting remote description: %v", err)
+	}
+	c.Once.Do(func() { close(c.RemoteDescSet) })
+
+	answer, err := c.Pc.CreateAnswer(nil)
+	if err != nil {
+		return fmt.Errorf("error starting pc or generating local description: %v", err)
+	}
+
+	// starts ICE gathering and UDP listeners
+	if err := c.Pc.SetLocalDescription(answer); err != nil {
+		return fmt.Errorf("error setting local description: %v", err)
+	}
+	return nil
 }
 
 // SendCandidates gathers local ICE candidates created for the connection's recipient

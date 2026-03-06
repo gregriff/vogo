@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
+	"golang.org/x/sync/errgroup"
 )
 
 // credentials are for signaling and connecting.
@@ -89,14 +89,14 @@ func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICEC
 	}
 }
 
-// closeAndWait closes the websocket. wg should be the waitgroup
+// closeAndWait closes the websocket. g should be the errgroup
 // for the goroutine reading the websocket. If goroutines reading the
 // websocket are using recieveWithContext, they will unblock.
-func closeAndWait(ws *websocket.Conn, wg *sync.WaitGroup) {
+func closeAndWait(ws *websocket.Conn, g *errgroup.Group) {
 	if err := ws.Close(); err == nil { // errs if already closed
 		log.Println("ws closed by client")
 	}
-	if wg != nil {
-		wg.Wait()
+	if g != nil {
+		g.Wait()
 	}
 }

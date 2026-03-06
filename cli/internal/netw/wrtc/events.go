@@ -30,7 +30,7 @@ func onConnectionStateChange(state webrtc.PeerConnectionState, ch chan<- struct{
 	log.Printf("Peer Connection State has changed: %s\n", state.String())
 
 	if state == webrtc.PeerConnectionStateConnected {
-		ch <- struct{}{}
+		close(ch)
 	}
 
 	if !exitOnFail {

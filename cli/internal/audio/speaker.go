@@ -40,7 +40,7 @@ func (s *speaker) Init(onSendFrames malgo.DataProc) error {
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	s.ctx = ctx
 	if err != nil {
-		return fmt.Errorf("error initializing device context: %w", err)
+		return fmt.Errorf("error initializing speaker context: %w", err)
 	}
 
 	config := malgo.DefaultDeviceConfig(malgo.Playback)
@@ -54,7 +54,7 @@ func (s *speaker) Init(onSendFrames malgo.DataProc) error {
 	})
 	s.device = device
 	if err != nil {
-		return fmt.Errorf("error creating device: %w", err)
+		return fmt.Errorf("error creating speaker: %w", err)
 	}
 	close(s.initialized)
 	return nil

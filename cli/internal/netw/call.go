@@ -4,14 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
 
+	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
+	"golang.org/x/sync/errgroup"
 )
 
 // CallFriend creates a bidirectional voice call to the intended recipient.
@@ -20,94 +21,60 @@ import (
 // be cancelled with the provided context, and the first error encountered will be returned.
 func CallFriend(ctx context.Context, creds *credentials, recipient string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
-	pc, candidates, connected := wrtc.NewAudioPeerConnection(creds.stunServer, track, true)
-	defer func() {
-		if err := wrtc.ClosePC(pc, true); err != nil {
-			log.Println(err)
-		}
-	}()
-
-	// sending an error on this channel will abort the call process
-	abort := make(chan error, 10)
-	defer func() {
-		log.Println("ABORT ERRS:")
-		select {
-		case err := <-abort:
-			log.Println(err)
-		default:
-			return
-		}
-	}()
-
+	conn := wrtc.NewConnection(uuid.New(), creds.stunServer, track, true)
 	audioState := audio.NewCall(track)
-	audioState.AddPeer(pc)
-	// go func() {
+	audioState.AddPeer(conn.Pc)
+	defer func() {
+		if err := wrtc.ClosePC(conn.Pc, true); err != nil {
+			log.Println(err)
+		}
+	}()
+
+	// g.Go(func() error {
 	// 	start := time.Now()
-	// 	if err := audioState.Speaker.Init(audioState.DataProc()); err != nil {
-	// 		abort <- fmt.Errorf("error initializing playback system: %w", err)
-	// 		return
-	// 	}
-	// 	log.Printf("playback device created in %v", time.Since(start))
-	// }()
+	// 	defer log.Printf("playback device created in %v", time.Since(start))
+	// 	return audioState.Speaker.Init(audioState.DataProc())
+	// })
 	// defer func() {
-	// 	if err := pc.GracefulClose(); err != nil {
+	// 	if err := conn.Pc.GracefulClose(); err != nil {
 	// 		log.Printf("error gracefully closing peer connection: %v\n", err)
 	// 	}
-	// 	audioState.Speaker.Uninit()
+	// 	_ = audioState.Speaker.Uninit()
 	// }()
 
-	var call sync.WaitGroup
-	callCtx, cancelCall := context.WithCancel(ctx)
-	defer call.Wait()
-	defer cancelCall()
-
-	call.Go(func() {
-		defer cancelCall()
-		err := sendCallAndConnect(callCtx, pc, creds, recipient, candidates, abort)
-		if err != nil {
-			abort <- err
-			return
-		}
+	g, gCtx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		return sendCallAndConnect(gCtx, conn, audioState, creds, recipient)
 	})
 
-	var capture sync.WaitGroup
-	captureCtx, cancelCapture := context.WithCancel(ctx)
-	defer capture.Wait()
-	defer cancelCapture()
-
-	// setup microphone once call is connected and capture until cancelled
-	capture.Go(func() {
+	// init microphone, and start it and the speaker once call is connected
+	g.Go(func() error {
 		// todo: could do this in another goroutine and use its init chan
 		if err := audioState.Mic.Init(); err != nil {
-			abort <- err
-			return
+			return err
 		}
-		defer audioState.Mic.Uninit()
+		defer func() {
+			_ = audioState.Mic.Uninit()
+		}()
 
 		select {
-		case <-captureCtx.Done():
-			return
-		case <-connected:
-			cancelCall()
+		case <-gCtx.Done():
+			return nil
+		case <-conn.Connected:
+			// <-audioState.Speaker.Initialized()
 			// if err := audioState.StartSpeaker(); err != nil {
-			// 	abort <- err
+			// 	return err
 			// }
 			break
 		}
 
-		if err := audioState.Mic.Start(captureCtx); err != nil {
-			abort <- fmt.Errorf("error starting mic: %w", err)
-			return
+		if err := audioState.Mic.Start(gCtx); err != nil {
+			return fmt.Errorf("error starting mic: %w", err)
 		}
+		return nil
 	})
 
-	// block until sigint or error in goroutines above
-	select {
-	case err := <-abort:
-		return fmt.Errorf("call aborted: %w", err)
-	case <-ctx.Done():
-		return nil
-	}
+	return g.Wait()
 }
 
 // sendCallAndConnect creates and establishes a voice call with a friend client, if
@@ -116,11 +83,10 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 // a PeerConnection set up correctly for opus audio.
 func sendCallAndConnect(
 	ctx context.Context,
-	pc *webrtc.PeerConnection,
+	conn *wrtc.Connection,
+	audioState *audio.Call,
 	creds *credentials,
 	recipient string,
-	candidates <-chan webrtc.ICECandidateInit,
-	abort chan<- error,
 ) error {
 	ws, err := newWebsocket(ctx, creds, "/call")
 	if err != nil {
@@ -128,7 +94,7 @@ func sendCallAndConnect(
 	}
 	defer closeAndWait(ws, nil)
 
-	offer := wrtc.CreateOffer(pc)
+	offer := wrtc.CreateOffer(conn.Pc)
 
 	// send offer
 	req := requests.Connection{To: recipient, Sd: offer}
@@ -136,40 +102,32 @@ func sendCallAndConnect(
 		return fmt.Errorf("error sending offer: %w", err)
 	}
 
-	var sendIce sync.WaitGroup
-	sendIceCtx, cancelSendIce := context.WithCancel(ctx)
-	defer closeAndWait(ws, &sendIce)
-	defer cancelSendIce()
+	g, gCtx := errgroup.WithContext(ctx)
+	defer closeAndWait(ws, g)
 
 	// gather local ice candidates and write to websocket
-	sendIce.Go(func() {
-		defer cancelSendIce()
-		if err := sendCandidates(sendIceCtx, ws, candidates); err != nil {
-			abort <- err // this will cause surrounding function to cancel
-		}
+	g.Go(func() error {
+		return sendCandidates(gCtx, ws, conn.Candidates)
 	})
 
 	// wait to recv answer
 	var answer webrtc.SessionDescription
-	if err := wsock.ReceiveJSON(ctx, ws, &answer); err != nil {
+	if err := wsock.ReceiveJSON(gCtx, ws, &answer); err != nil {
 		return fmt.Errorf("error reading answer from ws: %v", err)
 	}
-	if err := pc.SetRemoteDescription(answer); err != nil {
+	if err := conn.Pc.SetRemoteDescription(answer); err != nil {
 		return fmt.Errorf("error while setting remote description: %w", err)
 	}
 	log.Println("received answer")
 
 	// recv recipient candidates
-	readIceCtx, cancelReadIce := context.WithCancel(ctx)
-	defer cancelReadIce()
-	if err := recvCandidates(readIceCtx, ws, pc); err != nil {
-		return err
-	}
+	g.Go(func() error {
+		return recvCandidates(gCtx, ws, conn.Pc)
+	})
 
-	// don't return now b/c sendICE could still be running.
-	// wait for cancel from calling func on connected <-
-	<-ctx.Done()
-	return nil
+	// TODO: if sendIce needs to continue to run after it recvs last candidate, add:
+	// <-conn.Connected
+	return g.Wait()
 }
 
 // recvCandidates reads recipient candidates from ws and adds them to the pc.
