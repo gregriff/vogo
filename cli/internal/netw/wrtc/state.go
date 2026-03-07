@@ -139,13 +139,16 @@ func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, cal
 	}
 }
 
-func (c *Connection) HandleStatusUpdates(ctx context.Context, peerName string) error {
+// HandleEvents will handle PeerConnection-related events such as status changes, manual retries
+// and failure to write audio packets to the network.
+func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case status := <-c.StatusUpdates:
 			log.Printf("Peer Connection State with %s has changed: %s\n", peerName, status.String())
+			// case failedPeer := <-c.audioState.Mic.FailedPeers():
 		}
 	}
 }

@@ -1,7 +1,6 @@
 package audio
 
 import (
-	"log"
 	"math"
 	"sync"
 )
@@ -19,6 +18,12 @@ type stream struct {
 	buf []int16
 }
 
+func newStream() stream {
+	return stream{
+		buf: make([]int16, 0, pcmBufferSize),
+	}
+}
+
 // streams is a shared set of PCM buffers that is written to from the network by each remoteTrack
 // and read by malgo for playback. It is used for channel calls, storing the incoming
 // audio data from the other users.
@@ -32,8 +37,8 @@ type streams struct {
 	bufs []*[]int16
 }
 
-func newStreams() *streams {
-	return &streams{
+func newStreams() streams {
+	return streams{
 		bufs: make([]*[]int16, 0, maxStreams),
 	}
 }
@@ -41,7 +46,6 @@ func newStreams() *streams {
 // add adds a newly-created empty pcm buffer to the list of buffers (bufs) being tracked. It takes its pointer,
 // so that the caller can continue modifying the original, and using this struct will always point to the same memory.
 func (s *streams) add(b *[]int16) {
-	log.Println("ADDING NEW STREAM!")
 	s.mu.Lock()
 	s.bufs = append(s.bufs, b)
 	s.mu.Unlock()
@@ -55,15 +59,13 @@ func (s *streams) add(b *[]int16) {
 // - may need to tweak this logic. hopefully this does not cause loss of audio data
 // - this may be unnessicary at a certain point, but it may also prime the cache with all the PCM before
 // the mixing happens, so profile to see.
-// ex: if 3 full buffers, returns {[ptr, ptr, ptr], (cap=len(ab.bufs)), true}
+// ex: if 3 full buffers, returns {[ptr, ptr, ptr] (cap=len(s.bufs)), true}
 func (s *streams) hasFullSample(amt int) (fullBufs []*[]int16, ok bool) {
-	// fullBufs = make([]*[]int16, len(ab.bufs))
 	fullBufs = make([]*[]int16, 0, len(s.bufs))
 	for i := range len(s.bufs) {
 		if len(*s.bufs[i]) >= amt {
 			ok = true
 			fullBufs = append(fullBufs, s.bufs[i])
-			// fullBufs[i] = ab.bufs[i]
 		}
 	}
 	return

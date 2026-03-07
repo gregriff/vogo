@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -58,6 +59,10 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 		case <-gCtx.Done():
 			return nil
 		case <-audioState.Speaker.Initialized():
+			// for testing, disable speaker for test user two
+			if user := os.Getenv("VOGOENV"); user == "two" {
+				break
+			}
 			if err := audioState.Speaker.Start(); err != nil {
 				return err
 			}
@@ -114,7 +119,7 @@ func joinChannelAndConnect(
 		c := wrtc.NewConnection(id, creds.stunServer, audioState.Mic.Track(), false)
 		conns.Update(name, c)
 		statusWg.Go(func() {
-			c.HandleStatusUpdates(ctx, name)
+			c.HandleEvents(ctx, name)
 		})
 	}
 	// todo: track, cleanup failed/expired connections

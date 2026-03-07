@@ -27,6 +27,9 @@ type microphone struct {
 
 	// initialized will be closed when the microphone device is initalized.
 	initialized chan struct{}
+
+	// mic will send failed PC Ids on this chan
+	failedPeers chan<- error
 }
 
 func newMicrophone(track *webrtc.TrackLocalStaticSample) microphone {
@@ -36,6 +39,7 @@ func newMicrophone(track *webrtc.TrackLocalStaticSample) microphone {
 		track:       track,
 		pcm:         &stream{},
 		initialized: make(chan struct{}),
+		failedPeers: make(chan error, 5), // maxstreams - 1
 	}
 }
 
@@ -120,14 +124,15 @@ func (m *microphone) Start(ctx context.Context) error {
 			}
 
 			// write to webrtc track
-			failedPeers := m.track.WriteSample(media.Sample{
+			failed := m.track.WriteSample(media.Sample{
 				Data:     opusBuffer[:bytesEncoded], // only the first N bytes are opus data.
 				Duration: frameDuration,
 			})
 
 			// TODO: send these on a chan?
-			if failedPeers != nil {
+			if failed != nil {
 				log.Println("WriteSample error, contains failed peers:", err)
+				m.failedPeers <- failed
 				continue
 			}
 		}
@@ -149,6 +154,12 @@ func (m *microphone) Uninit() error {
 // Track returns the webrtc Track where microphone audio is written.
 func (m *microphone) Track() *webrtc.TrackLocalStaticSample {
 	return m.track
+}
+
+// FailedPeers returns a channel will be sent errors containing information about
+// PeerConnections that failed to have audio packets written to them.
+func (m *microphone) FailedPeers() <-chan error {
+	return m.FailedPeers()
 }
 
 // bytesToInt16 turns a byte slice of PCM audio into an int16 slice for the opus encoder to use.

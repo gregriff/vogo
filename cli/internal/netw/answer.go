@@ -54,7 +54,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	})
 
 	g.Go(func() error {
-		return conn.HandleStatusUpdates(gCtx, caller)
+		return conn.HandleEvents(gCtx, caller)
 	})
 
 	// init microphone, and start it and the speaker once call is connected
