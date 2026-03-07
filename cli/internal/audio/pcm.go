@@ -71,7 +71,7 @@ func (s *streams) hasFullSample(amt int) (fullBufs []*[]int16, ok bool) {
 
 // mix returns a pcm slice containing mixed samples from pcm slices all containing at least
 // numSamples elements. This is enforced by the fullBufs param, which may only contain pointers
-// to such slices. fullBufs needs to be created by ab.hasFullSample, and both of these functions
+// to such slices. fullBufs needs to be created by s.hasFullSample, and both of these functions
 // must execute within the same mutex lock.
 func (s *streams) mix(fullBufs []*[]int16, numSamples int) []int16 {
 	if len(s.bufs) == 0 {

@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
-	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
@@ -45,6 +44,10 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return sendCallAndConnect(gCtx, conn, audioState, creds, recipient)
+	})
+
+	g.Go(func() error {
+		return conn.HandleStatusUpdates(gCtx, recipient)
 	})
 
 	// init microphone, and start it and the speaker once call is connected
@@ -94,11 +97,9 @@ func sendCallAndConnect(
 	}
 	defer closeAndWait(ws, nil)
 
-	offer := wrtc.CreateOffer(conn.Pc)
-
 	// send offer
-	req := requests.Connection{To: recipient, Sd: offer}
-	if err = websocket.JSON.Send(ws, req); err != nil {
+	offer := conn.NewOffer(creds.username, recipient)
+	if err = websocket.JSON.Send(ws, offer); err != nil {
 		return fmt.Errorf("error sending offer: %w", err)
 	}
 

@@ -45,7 +45,7 @@ func newWebsocket(
 	}
 	ws, err := cfg.DialContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error dialing ws: %w", err)
+		return nil, err
 	}
 	return ws, nil
 }

@@ -23,8 +23,9 @@ var opusCodec = webrtc.RTPCodecCapability{
 // TODO: create a struct for this retval.
 func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample, exitOnFail bool) (
 	*webrtc.PeerConnection,
-	chan webrtc.ICECandidateInit,
-	chan struct{},
+	<-chan webrtc.ICECandidateInit,
+	<-chan webrtc.PeerConnectionState,
+	<-chan struct{},
 ) {
 	pc := newPeerConnection(stunServer)
 	addAudioTrack(pc, track)
@@ -35,14 +36,17 @@ func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSam
 
 		// notification channel for when the peer connection becomes connected
 		connected = make(chan struct{})
+
+		// channel to pass along connection status updates
+		updates = make(chan webrtc.PeerConnectionState)
 	)
 	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
 		onICECandidate(c, candidates)
 	})
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		onConnectionStateChange(s, connected, exitOnFail)
+		onConnectionStateChange(s, updates, connected, exitOnFail)
 	})
-	return pc, candidates, connected
+	return pc, candidates, updates, connected
 }
 
 // newPeerConnection creates a PeerConnection configured with the Opus audio codec.
@@ -97,9 +101,7 @@ func newPeerConnection(stunServer string) *webrtc.PeerConnection {
 	)
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{stunServer},
-			},
+			{URLs: []string{stunServer}},
 		},
 	}
 	pc, err := api.NewPeerConnection(config)
@@ -115,7 +117,7 @@ func CreateAudioTrack(trackId string) *webrtc.TrackLocalStaticSample {
 	t, err := webrtc.NewTrackLocalStaticSample(
 		opusCodec,
 		"captureTrack",
-		"captureTrack"+trackId,
+		"captureTrack-"+trackId,
 	)
 	if err != nil {
 		log.Panicf("error initializing capture track: %v", err)

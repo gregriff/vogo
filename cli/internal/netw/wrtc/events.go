@@ -26,11 +26,16 @@ func onSignalingStateChange(state webrtc.SignalingState, from, to string) {
 	log.Printf("%s's connection with %s signaling state changed to %s", from, to, state.String())
 }
 
-func onConnectionStateChange(state webrtc.PeerConnectionState, ch chan<- struct{}, exitOnFail bool) {
-	log.Printf("Peer Connection State has changed: %s\n", state.String())
+func onConnectionStateChange(
+	state webrtc.PeerConnectionState,
+	ch chan<- webrtc.PeerConnectionState,
+	connected chan<- struct{},
+	exitOnFail bool,
+) {
+	ch <- state
 
 	if state == webrtc.PeerConnectionStateConnected {
-		close(ch)
+		close(connected)
 	}
 
 	if !exitOnFail {

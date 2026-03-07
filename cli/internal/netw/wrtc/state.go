@@ -26,11 +26,13 @@ type Connection struct {
 	Pc *webrtc.PeerConnection
 
 	// channel for sending ICE Candidates
-	Candidates chan webrtc.ICECandidateInit
+	Candidates <-chan webrtc.ICECandidateInit
+
+	StatusUpdates <-chan webrtc.PeerConnectionState
 
 	// notification channels
-	Connected,
-	RemoteDescSet chan struct{}
+	Connected <-chan struct{}
+	RemoteSet chan struct{}
 
 	Once sync.Once
 }
@@ -43,13 +45,14 @@ func NewConnection(
 	track *webrtc.TrackLocalStaticSample,
 	exitOnClose bool,
 ) *Connection {
-	pc, candidates, connected := NewAudioPeerConnection(stunServer, track, exitOnClose)
+	pc, candidates, updates, connected := NewAudioPeerConnection(stunServer, track, exitOnClose)
 	return &Connection{
 		Id:            id,
 		Pc:            pc,
 		Candidates:    candidates,
+		StatusUpdates: updates,
 		Connected:     connected,
-		RemoteDescSet: make(chan struct{}),
+		RemoteSet:     make(chan struct{}),
 	}
 }
 
@@ -60,11 +63,22 @@ var (
 	iceAnswer candidateType = "ice-answer"
 )
 
-func (c *Connection) NewOfferRequest(caller, recipient string) requests.Connection {
+// NewOffer creates a webrtc offer, sets the local description and starts ice gathering.
+func (c *Connection) NewOffer(caller, recipient string) requests.Connection {
 	if recipient == "" {
 		log.Panic("empty recipient in NewOfferRequest")
 	}
-	offer := CreateOffer(c.Pc)
+
+	offer, err := c.Pc.CreateOffer(nil)
+	if err != nil {
+		log.Panicf("error creating offer: %v", err)
+	}
+
+	// starts ICE gathering and UDP listeners
+	if err = c.Pc.SetLocalDescription(offer); err != nil {
+		log.Panicf("error setting local description: %v", err)
+	}
+
 	req := requests.Connection{From: caller, To: recipient, Sd: offer}
 	log.Printf("%s will send offer to %s...\n", caller, recipient)
 	return req
@@ -78,7 +92,7 @@ func (c *Connection) CreateAnswer(offer *webrtc.SessionDescription) error {
 	if err := c.Pc.SetRemoteDescription(*offer); err != nil {
 		return fmt.Errorf("error setting remote description: %v", err)
 	}
-	c.Once.Do(func() { close(c.RemoteDescSet) })
+	c.Once.Do(func() { close(c.RemoteSet) })
 
 	answer, err := c.Pc.CreateAnswer(nil)
 	if err != nil {
@@ -93,28 +107,9 @@ func (c *Connection) CreateAnswer(offer *webrtc.SessionDescription) error {
 }
 
 // SendCandidates gathers local ICE candidates created for the connection's recipient
-// and sends them to the server via the websocket in a new goroutine.
-func (c *Connection) SendCandidates(
-	ctx context.Context,
-	wg *sync.WaitGroup,
-	ws *websocket.Conn,
-	username string,
-	tag candidateType,
-) {
-	// gather local ice candidates for each peer and write to websocket
-	wg.Go(func() {
-		defer func() {
-			log.Printf("%s sending done", tag)
-		}()
-		log.Printf("sending %s's now", tag)
-		c.sendTaggedCandidates(ctx, ws, username, tag)
-	})
-}
-
-// sendTaggedCandidates sends the client's ICE candidates from ch to the websocket as they're gathered.
-// It sends the client's name along with the candidate. It returns when there are no more
-// candidates or the context is cancelled.
-func (c *Connection) sendTaggedCandidates(ctx context.Context, ws *websocket.Conn, callerName string, tag candidateType) {
+// and sends them to the server via the websocket in a new goroutine. It sends them with a
+// [candidateType] tag to let the server know if they're ICE offers or answers.
+func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, callerName string, tag candidateType) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -144,6 +139,17 @@ func (c *Connection) sendTaggedCandidates(ctx context.Context, ws *websocket.Con
 	}
 }
 
+func (c *Connection) HandleStatusUpdates(ctx context.Context, peerName string) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case status := <-c.StatusUpdates:
+			log.Printf("Peer Connection State with %s has changed: %s\n", peerName, status.String())
+		}
+	}
+}
+
 type serverConn struct {
 	Ws *websocket.Conn
 	StunServer,
@@ -159,16 +165,12 @@ type ConnectionMap struct {
 	Server serverConn
 
 	// all conns use this for sending ice candidates
-	IceCtx context.Context
-
-	// all conns use this for sending ice candidates
 	IceWg *sync.WaitGroup
 }
 
 func NewConnectionMap(
 	ws *websocket.Conn,
 	stunServer, username string,
-	iceCtx context.Context,
 	iceWg *sync.WaitGroup,
 ) *ConnectionMap {
 	return &ConnectionMap{
@@ -178,16 +180,15 @@ func NewConnectionMap(
 			StunServer: stunServer,
 			Username:   username,
 		},
-		IceCtx: iceCtx,
-		IceWg:  iceWg,
+		IceWg: iceWg,
 	}
 }
 
-func (cm *ConnectionMap) Get(username string) (*Connection, bool) {
+// Get returns a *Connection if key is in the ConnectionMap. Nil if not.
+func (cm *ConnectionMap) Get(key string) *Connection {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	c, ok := cm.data[username]
-	return c, ok
+	return cm.data[key]
 }
 
 func (cm *ConnectionMap) Update(key string, c *Connection) {

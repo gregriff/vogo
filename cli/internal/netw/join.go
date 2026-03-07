@@ -102,16 +102,20 @@ func joinChannelAndConnect(
 	}
 
 	var iceWg sync.WaitGroup
-	iceCtx, cancelIce := context.WithCancel(ctx)
 	defer iceWg.Wait()
-	defer cancelIce()
+
+	var statusWg sync.WaitGroup
+	defer statusWg.Wait()
 
 	// this holds the state of the room from this client's perspective
-	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username, iceCtx, &iceWg)
+	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username, &iceWg)
 	defer conns.CloseAll()
 	for id, name := range res.Users {
 		c := wrtc.NewConnection(id, creds.stunServer, audioState.Mic.Track(), false)
 		conns.Update(name, c)
+		statusWg.Go(func() {
+			c.HandleStatusUpdates(ctx, name)
+		})
 	}
 	// todo: track, cleanup failed/expired connections
 
@@ -119,7 +123,7 @@ func joinChannelAndConnect(
 	start := time.Now()
 	bulkReq := messages.BulkConnection{Data: make(map[uuid.UUID]requests.Connection, 6)}
 	for recipient, c := range conns.Snapshot() {
-		req := c.NewOfferRequest(creds.username, recipient)
+		req := c.NewOffer(creds.username, recipient)
 		bulkReq.Data[c.Id] = req
 	}
 	log.Printf("offers took %v to generate\n", time.Since(start))
@@ -137,11 +141,16 @@ func joinChannelAndConnect(
 
 	// send ice candidates to each user in the room
 	for _, c := range conns.Snapshot() {
-		c.SendCandidates(iceCtx, &iceWg, ws, creds.username, "ice-offer")
+		iceWg.Go(func() {
+			defer log.Println("ice-offer sending done")
+			log.Println("sending ice-offers now")
+			c.SendCandidates(ctx, ws, creds.username, "ice-offer")
+		})
+
 	}
 
 	g, gCtx := errgroup.WithContext(ctx)
-	// defer closeAndWait(ws, g)
+	defer closeAndWait(ws, g)
 
 	msgs := make(chan wsock.Message)
 	g.Go(func() error {
@@ -169,7 +178,7 @@ func joinChannelAndConnect(
 			return g.Wait()
 		case msg := <-msgs:
 			handlerWg.Go(func() {
-				handleMessage(msg, conns, audioState)
+				handleMessage(ctx, msg, conns, audioState)
 			})
 		}
 	}
@@ -178,6 +187,7 @@ func joinChannelAndConnect(
 // handleMessage dispatches handlers for each incoming message. It should be run in its
 // own goroutine to prevent blocking the unbuffered message loop.
 func handleMessage(
+	ctx context.Context,
 	msg wsock.Message,
 	conns *wrtc.ConnectionMap,
 	audioState *audio.Channel,
@@ -188,7 +198,7 @@ func handleMessage(
 	case "answer":
 		handleAnswerMessage(msg, conns)
 	case "offer":
-		handleOfferMessage(msg, conns, audioState)
+		handleOfferMessage(ctx, msg, conns, audioState)
 	default:
 		log.Printf("WARN: unknown message: %v", msg)
 	}
@@ -197,19 +207,18 @@ func handleMessage(
 // handleOfferMessage happens when the client is already in the room and a new user joins,
 // sending the client their offer
 func handleOfferMessage(
+	ctx context.Context,
 	msg wsock.Message,
 	conns *wrtc.ConnectionMap,
 	audioState *audio.Channel,
 ) {
-	var (
-		offer requests.ConnectionWithId
-		conn  *wrtc.Connection
-		ok    bool
-	)
+	var offer requests.ConnectionWithId
 	if err := json.Unmarshal(msg.Data, &offer); err != nil {
 		log.Panicf("error unmarshaling offer: %v", err)
 	}
-	if conn, ok = conns.Get(offer.From); ok {
+
+	var conn *wrtc.Connection
+	if conn = conns.Get(offer.From); conn != nil {
 		if err := conn.Pc.Close(); err != nil {
 			log.Printf("error closing existing pc for %s: %v", offer.From, err)
 		}
@@ -220,7 +229,7 @@ func handleOfferMessage(
 	conns.Update(offer.From, conn)
 	log.Printf("received offer from %s, created conn", offer.From)
 
-	// create and send answer
+	// create and send answer. TODO: are retries automatic?
 	err := conn.CreateAnswer(&offer.Sd)
 	if err != nil { // should prob retry
 		log.Printf("error creating answer: %v", err)
@@ -250,21 +259,23 @@ func handleOfferMessage(
 	}
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
-	conn.SendCandidates(conns.IceCtx, conns.IceWg, conns.Server.Ws, conns.Server.Username, "ice-answer")
+	conns.IceWg.Go(func() {
+		defer log.Println("ice-answer sending done")
+		log.Println("sending ice-answers now")
+		conn.SendCandidates(ctx, conns.Server.Ws, conns.Server.Username, "ice-answer")
+	})
 }
 
 // handleAnswerMessage handles when the client receives an answer from a recipient
 func handleAnswerMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
-	var (
-		answer requests.Connection
-		conn   *wrtc.Connection
-		ok     bool
-	)
+	var answer requests.Connection
 	if err := json.Unmarshal(msg.Data, &answer); err != nil {
 		log.Panicf("error unmarshaling answer: %v", err)
 	}
 	log.Printf("received answer from ws: from:%s to: %s\n", answer.From, answer.To)
-	if conn, ok = conns.Get(answer.To); !ok {
+
+	var conn *wrtc.Connection
+	if conn = conns.Get(answer.To); conn == nil {
 		log.Panicf("error: connection for user %s not found", answer.From)
 	}
 	if err := conn.Pc.SetRemoteDescription(answer.Sd); err != nil {
@@ -274,7 +285,7 @@ func handleAnswerMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 		}
 		return
 	}
-	conn.Once.Do(func() { close(conn.RemoteDescSet) })
+	conn.Once.Do(func() { close(conn.RemoteSet) })
 	log.Printf("received answer from %s", answer.From)
 	return
 }
@@ -285,16 +296,13 @@ func handleIceMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 		log.Panicf("error unmarshaling %s candidate: %v", msg.Type, err)
 	}
 
-	var (
-		conn *wrtc.Connection
-		ok   bool
-	)
-	if conn, ok = conns.Get(data.Username); !ok {
+	var conn *wrtc.Connection
+	if conn = conns.Get(data.Username); conn == nil {
 		log.Panicf("error: connection for user %s not found", data.Username)
 	}
 
 	// wait for remote description to be set
-	<-conn.RemoteDescSet
+	<-conn.RemoteSet
 
 	// todo: ensure remote description has been set before this runs
 	if err := conn.Pc.AddICECandidate(data.Candidate); err != nil {

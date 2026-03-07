@@ -1,15 +1,14 @@
 # TODOs
 
 ### Next:
-- hook in onSignalling state change
 - slog client
+- add pcm.remove, and test file for pcm.go
 - get lower MTU working:
 ```use pion's webrtc package in my go program for voice chats. I set the MTU to 3000 to avoid overruns. is this too high or could
 this cause trouble? If so, how cna I address the issue in a differeent way? I have full control over the opus enc/dec.
 ```
 - check out track.ReadRTP()'s interceptor.attributes retval
-- use Connection struct for all calls. use chans for all pc events, incl connection status at all times. have room
-code listen for these to know when to destruct audiomixing and connmap
+- have room code listen for pc statuses to know when to destruct audiomixing and connmap
 - use ansi colors per profile to echo vogoenv
 
 ##### CI:
@@ -20,17 +19,15 @@ code listen for these to know when to destruct audiomixing and connmap
 - test out ASAN/MSAN
 
 ##### Client:
-- client: put room structs in wrtc package, req structs in netw (requests.go?) or crud?
 - client: add friend should 409 when friend already exists
 - client: user disconnect needs to call destructor on pc and importantly the channelStream struct so that there are
   never more than 5 audio streams. and exit on PC disconnect
-- client: ensure mtu=3000 is ok.
 - client-side ICE sending should not fail the entire join thread and should instead retry per PC
 - parallelize client sending offers when joining a room: this requires ws multiplexer on server-side
 - add poll to status
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
+- add an 'init' command to walk through registering
 - add query/status functionality to get outgoing friend requests
-- remove/fix xdg config in client to match server
 - impl PLC?
 - ensure DTLS is working correctly and encrypting
 - look here https://github.com/pion/webrtc/blob/master/examples/README.md#media-api to see info about rtcp media stats
@@ -39,6 +36,9 @@ code listen for these to know when to destruct audiomixing and connmap
 - client/server: gracefully fail when channel not found (sentinel?)
 - disallow user in room to join twice
 - return 409 for duplicate add friend
+- enfore one-word usernames
+- for tui, status, call, answer and join should all be accessible under one ws endpoint. all client
+  funcs should use this one endpoint
 - handle EOF: this always means the ws is closed. if it happens during normal operation this is bad... this should also not signal a successful call, instead use a sentinel
 - server should listen for a client-sent ACK of successful connection, to delete the pendingConnection entry
 - pull out msgHandler switch and eventHandler switch into funcs. 

@@ -23,7 +23,7 @@ import (
 
 // Answer establishes a bidirectional voice call with a caller if a call is pending.
 // Signaling, speaker init, connecting and microphone init are all run concurrently,
-// organized with waitgroups and synchronized with channels. The entire process can
+// organized with errgroups and synchronized with channels. The entire process can
 // be cancelled with the provided context, and the first error encountered will be returned.
 func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
@@ -51,6 +51,10 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 
 	g.Go(func() error {
 		return answerAndConnect(gCtx, conn, audioState, creds, caller)
+	})
+
+	g.Go(func() error {
+		return conn.HandleStatusUpdates(gCtx, caller)
 	})
 
 	// init microphone, and start it and the speaker once call is connected
