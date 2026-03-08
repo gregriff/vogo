@@ -64,8 +64,5 @@ type RouteHandler struct {
 
 // NewRouteHandler creates the receiver for all endpoint handling functions.
 func NewRouteHandler(db *sql.DB, logOpts logging.Opts) *RouteHandler {
-	return &RouteHandler{
-		db:      db,
-		loggers: newRouteLoggers(logOpts),
-	}
+	return &RouteHandler{db, newRouteLoggers(logOpts)}
 }

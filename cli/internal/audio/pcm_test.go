@@ -2,10 +2,10 @@ package audio
 
 import "testing"
 
-func TestStreamsHasFullSample(t *testing.T) {
+func TestStreamsFullBufs(t *testing.T) {
 	t.Run("empty streams returns false", func(t *testing.T) {
 		s := newStreams()
-		fullBufs, ok := s.hasFullSample(5)
+		fullBufs, ok := s.fullBufs(5)
 		if ok {
 			t.Error("expected ok=false for empty streams")
 		}
@@ -19,7 +19,7 @@ func TestStreamsHasFullSample(t *testing.T) {
 		buf := []int16{1, 2, 3}
 		s.add("a", &buf)
 
-		fullBufs, ok := s.hasFullSample(5)
+		fullBufs, ok := s.fullBufs(5)
 		if ok {
 			t.Error("expected ok=false when no buffer has enough samples")
 		}
@@ -33,7 +33,7 @@ func TestStreamsHasFullSample(t *testing.T) {
 		buf := []int16{1, 2, 3, 4, 5}
 		s.add("a", &buf)
 
-		fullBufs, ok := s.hasFullSample(5)
+		fullBufs, ok := s.fullBufs(5)
 		if !ok {
 			t.Error("expected ok=true when buffer has exactly amt samples")
 		}
@@ -47,7 +47,7 @@ func TestStreamsHasFullSample(t *testing.T) {
 		buf := []int16{1, 2, 3, 4, 5, 6, 7}
 		s.add("a", &buf)
 
-		_, ok := s.hasFullSample(5)
+		_, ok := s.fullBufs(5)
 		if !ok {
 			t.Error("expected ok=true when buffer has more than amt samples")
 		}
@@ -60,7 +60,7 @@ func TestStreamsHasFullSample(t *testing.T) {
 		s.add("full", &full)
 		s.add("partial", &partial)
 
-		fullBufs, ok := s.hasFullSample(5)
+		fullBufs, ok := s.fullBufs(5)
 		if !ok {
 			t.Error("expected ok=true when at least one buffer is full")
 		}
@@ -81,7 +81,7 @@ func TestStreamsHasFullSample(t *testing.T) {
 		s.add("b", &b)
 		s.add("c", &c)
 
-		fullBufs, ok := s.hasFullSample(5)
+		fullBufs, ok := s.fullBufs(5)
 		if !ok {
 			t.Error("expected ok=true when all buffers are full")
 		}
@@ -95,7 +95,7 @@ func TestStreamsHasFullSample(t *testing.T) {
 		buf := []int16{10, 20, 30}
 		s.add("a", &buf)
 
-		fullBufs, _ := s.hasFullSample(3)
+		fullBufs, _ := s.fullBufs(3)
 		if fullBufs[0] != &buf {
 			t.Error("expected fullBufs[0] to be the same pointer as the original buffer")
 		}
@@ -121,7 +121,7 @@ func TestStreamsMix(t *testing.T) {
 		buf := []int16{10, 20, 30, 40, 50}
 		s.add("a", &buf)
 
-		fullBufs, ok := s.hasFullSample(5)
+		fullBufs, ok := s.fullBufs(5)
 		if !ok {
 			t.Fatal("expected full sample")
 		}
@@ -141,7 +141,7 @@ func TestStreamsMix(t *testing.T) {
 		s.add("a", &a)
 		s.add("b", &b)
 
-		fullBufs, ok := s.hasFullSample(1)
+		fullBufs, ok := s.fullBufs(1)
 		if !ok {
 			t.Fatal("expected full sample")
 		}
@@ -162,7 +162,7 @@ func TestStreamsMix(t *testing.T) {
 		s.add("a", &a)
 		s.add("b", &b)
 
-		fullBufs, _ := s.hasFullSample(2)
+		fullBufs, _ := s.fullBufs(2)
 		mixed := s.mix(fullBufs, 2)
 
 		// sum = 65534, avg = 32767 — no clamp needed here since we divide before clamping
@@ -181,7 +181,7 @@ func TestStreamsMix(t *testing.T) {
 		s.add("a", &a)
 		s.add("b", &b)
 
-		fullBufs, _ := s.hasFullSample(2)
+		fullBufs, _ := s.fullBufs(2)
 		mixed := s.mix(fullBufs, 2)
 
 		for i, v := range mixed {
@@ -198,7 +198,7 @@ func TestStreamsMix(t *testing.T) {
 		s.add("a", &a)
 		s.add("b", &b)
 
-		fullBufs, _ := s.hasFullSample(1)
+		fullBufs, _ := s.fullBufs(1)
 		s.mix(fullBufs, 1)
 
 		if a[0] != 10 {
@@ -215,7 +215,7 @@ func TestStreamsMix(t *testing.T) {
 		s.add("a", &a)
 		s.add("b", &b)
 
-		fullBufs, _ := s.hasFullSample(3)
+		fullBufs, _ := s.fullBufs(3)
 		mixed := s.mix(fullBufs, 3)
 
 		for i, v := range mixed {
@@ -233,7 +233,7 @@ func TestStreamsAddRemove(t *testing.T) {
 		s.add("a", &buf)
 		s.remove("a")
 
-		fullBufs, ok := s.hasFullSample(3)
+		fullBufs, ok := s.fullBufs(3)
 		if ok {
 			t.Error("expected ok=false after removing the only buffer")
 		}

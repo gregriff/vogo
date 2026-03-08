@@ -53,7 +53,7 @@ func newWebsocket(
 // newWebsocketConfig creates a new websocket.Config for the vogo server for a specific endpoint, with basic auth.
 func newWebsocketConfig(c *credentials, endpoint string) (*websocket.Config, error) {
 	loc := strings.Replace(c.baseURL, "http", "ws", 1) + endpoint
-	log.Println("ws url: ", loc)
+	log.Printf("ws url: %s", loc)
 
 	cfg, err := websocket.NewConfig(loc, "app://vogo") // no real origin b/c we're not a browser
 	if err != nil {

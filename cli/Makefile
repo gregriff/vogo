@@ -3,6 +3,14 @@ OUT_DIR=../bin
 build:
 	go build -tags nolibopusfile -o $(OUT_DIR)/vogo main.go
 
+format:
+	gofmt -d -e .
+	# golangci-lint fmt
+
+lint:
+	go vet ./...
+	golangci-lint run -c ./../golangci.yml --fix
+
 # testing:
 # ==============================================================================
 # each shell executing vogo-client commands for testing should override
@@ -49,7 +57,7 @@ friends: build
 channel: build
 	$(OUT_DIR)/vogo channel create $(CHANNEL_NAME) --config=$(USER_ONE_CONFIG)
 
-# invite the user_two to the user_one client's channel. assumes `make channel` has been run.
+# invite users to user_one's channel. assumes `make channel` has been run.
 invite: build
 	@echo "inviting $(USER_TWO) and $(USER_THREE) to $(USER_ONE)'s $(CHANNEL_NAME) channel..."
 	$(OUT_DIR)/vogo channel invite $(USER_TWO) $(CHANNEL_NAME) --config=$(USER_ONE_CONFIG)
@@ -70,9 +78,4 @@ join: announce build
 	@echo "joining $(USER_ONE)/$(CHANNEL_NAME)..."
 	$(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH)
 
-format:
-	golangci-lint fmt
-
-lint:
-	go vet ./...
-	golangci-lint run -c ./../golangci.yml --fix
+.PHONY: format lint build answer join call invite friends channel status register

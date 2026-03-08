@@ -19,25 +19,15 @@ type Channel struct {
 }
 
 func NewChannel(track *webrtc.TrackLocalStaticSample) *Channel {
-	return &Channel{
-		Mic:     newMicrophone(track),
-		Speaker: newSpeaker(),
-		streams: newStreams(),
-	}
+	return &Channel{newMicrophone(track), newSpeaker(), newStreams()}
 }
 
 // AddPeer sets an event handler on pc that writes incoming audio data to the speaker.
-func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
-	pc.OnTrack(c.onRemoteTrack())
-}
-
-// onRemoteTrack returns the function to be run for each (audio) webrtc.TrackRemote for each
-// of this Channel's registered PeerConnections. It handles decoding opus audio for each remote track.
-// For vogo, each PC should only have one RemoteTrack. Decoded audio is written to c.streams,
-// from which the speaker goroutine reads and mixes with other PC's audio streams for playback.
+// Decoded audio is written to c.streams, from which the speaker goroutine reads and
+// mixes with other PC's audio streams for playback.
 // NOTE: DecodeFEC and DecodePLC are available for later use
 // NOTE: if text remote tracks are added, this will have to not add those to audio stream struct.
-func (c *Channel) onRemoteTrack() func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 	// Strategy to time mixing:
 	// - when playback goroutine pulls pcm from pcm buf and writes to speaker buf, it empties the pcm buf (in a lock),
 	//   therefore, each of the onTrack()'s below needs to have its own flag/counter, that is set when it writes to the pcm.
@@ -49,7 +39,7 @@ func (c *Channel) onRemoteTrack() func(track *webrtc.TrackRemote, receiver *webr
 	// 		   and the bitfield len is maxTracks (6)
 
 	// note: this callback should not panic
-	return func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		c.Speaker.wg.Add(1)
 		defer c.Speaker.wg.Done()
 
@@ -89,7 +79,7 @@ func (c *Channel) onRemoteTrack() func(track *webrtc.TrackRemote, receiver *webr
 			pcm = append(pcm, decodeBuf[:framesDecoded]...) // inefficient? reslice instead?
 			c.streams.mu.Unlock()
 		}
-	}
+	})
 }
 
 // DataProc returns a callback that mixes multiple user's audio and sends it to the speaker.
@@ -100,20 +90,19 @@ func (c *Channel) DataProc() malgo.DataProc {
 		samplesToRead := int(framecount) * NumChannels
 		c.streams.mu.Lock()
 
-		fullBufs, ok := c.streams.hasFullSample(samplesToRead)
-		// if there isn't yet a full sample in any of the pcm buffers sent from the network
+		// disregard if there isn't yet a full sample in any of the pcm buffers
+		full, ok := c.streams.fullBufs(samplesToRead)
 		if !ok {
 			c.streams.mu.Unlock()
 			return
 		}
 
-		mixed := c.streams.mix(fullBufs, samplesToRead)
-
 		// write a full mixed sample to the speaker buffer
+		mixed := c.streams.mix(full, samplesToRead)
 		copy(pOutputSample, int16ToBytes(mixed[:samplesToRead]))
 
-		// reslice all bufs that were just mixed, removing the mixed pcm from each
-		for _, p := range fullBufs {
+		// reslice all bufs that were just mixed, removing the now-mixed pcm from each
+		for _, p := range full {
 			*p = (*p)[samplesToRead:] // TODO: probably leaks
 		}
 		c.streams.mu.Unlock()
@@ -127,27 +116,15 @@ type Call struct {
 }
 
 func NewCall(track *webrtc.TrackLocalStaticSample) *Call {
-	return &Call{
-		Mic:     newMicrophone(track),
-		Speaker: newSpeaker(),
-		stream:  newStream(),
-	}
+	return &Call{newMicrophone(track), newSpeaker(), newStream()}
 }
 
 // AddPeer sets an event handler on pc that writes incoming audio data to the speaker.
-func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
-	pc.OnTrack(c.onRemoteTrack())
-}
-
-// onRemoteTrack returns the function to be run for each (audio) webrtc.TrackRemote for the
-// Call's PeerConnection. It handles decoding opus audio for the remote track. The Call's PC
+// It handles decoding opus audio for the remote track. The Call's PC
 // should only have one RemoteTrack. Decoded audio is written to c.stream,
 // from which the speaker goroutine reads for playback.
-func (c *Call) onRemoteTrack() func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-	// this func runs for every remote track connected to this peer connection
-	// this is where the decoder writes pcm from the network
-	// note: this callback should not panic
-	return func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
+	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		c.Speaker.wg.Add(1)
 		defer c.Speaker.wg.Done()
 
@@ -181,7 +158,7 @@ func (c *Call) onRemoteTrack() func(track *webrtc.TrackRemote, receiver *webrtc.
 			c.stream.buf = append(c.stream.buf, decodeBuf[:framesDecoded]...)
 			c.stream.mu.Unlock()
 		}
-	}
+	})
 }
 
 // DataProc returns a callback that sends audio data to the speaker.

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
@@ -177,7 +178,7 @@ func NewConnectionMap(
 	iceWg *sync.WaitGroup,
 ) *ConnectionMap {
 	return &ConnectionMap{
-		data: make(map[string]*Connection, 6),
+		data: make(map[string]*Connection, shared.ChannelCapacity),
 		Server: serverConn{
 			Ws:         ws,
 			StunServer: stunServer,

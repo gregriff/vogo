@@ -11,6 +11,7 @@ import (
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/server/internal/middleware"
 	"github.com/gregriff/vogo/server/internal/validation"
+	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/responses"
 )
@@ -103,7 +104,7 @@ func (h *RouteHandler) CreateChannel(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if channel.Capacity < 2 {
-		channel.Capacity = 6
+		channel.Capacity = shared.ChannelCapacity
 	}
 
 	dbChannel, err := dal.CreateChannel(h.db, user.Id, channel)

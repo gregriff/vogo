@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
+	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
@@ -116,6 +117,7 @@ func joinChannelAndConnect(
 	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username, &iceWg)
 	defer conns.CloseAll()
 	for id, name := range res.Users {
+		log.Printf("creating new connection with %s", name)
 		c := wrtc.NewConnection(id, creds.stunServer, audioState.Mic.Track(), false)
 		conns.Update(name, c)
 		statusWg.Go(func() {
@@ -126,19 +128,13 @@ func joinChannelAndConnect(
 
 	// create all offers and send in bulk to server
 	start := time.Now()
-	bulkReq := messages.BulkConnection{Data: make(map[uuid.UUID]requests.Connection, 6)}
+	bulkReq := messages.BulkConnection{Data: make(map[uuid.UUID]requests.Connection, shared.ChannelCapacity-1)}
 	for recipient, c := range conns.Snapshot() {
 		req := c.NewOffer(creds.username, recipient)
 		bulkReq.Data[c.Id] = req
-	}
-	log.Printf("offers took %v to generate\n", time.Since(start))
-
-	// TODO: can combine these two snapshot loops
-	start = time.Now()
-	for _, c := range conns.Snapshot() {
 		audioState.AddPeer(c.Pc) // set up audio mixing
 	}
-	log.Printf("remote handlers took %v to call\n", time.Since(start))
+	log.Printf("offers took %v to generate\n", time.Since(start))
 
 	if err = websocket.JSON.Send(ws, bulkReq); err != nil {
 		return fmt.Errorf("error sending bulk offers: %w", err)
@@ -151,7 +147,6 @@ func joinChannelAndConnect(
 			log.Println("sending ice-offers now")
 			c.SendCandidates(ctx, ws, creds.username, "ice-offer")
 		})
-
 	}
 
 	g, gCtx := errgroup.WithContext(ctx)
@@ -170,10 +165,7 @@ func joinChannelAndConnect(
 	})
 
 	var handlerWg sync.WaitGroup
-	defer func() {
-		log.Println("waiting for handlers to finish")
-		handlerWg.Wait()
-	}()
+	defer handlerWg.Wait()
 
 	// this should run until the client leaves the room. it needs to handle
 	// completing pending connections and also future connections when new users join the room.

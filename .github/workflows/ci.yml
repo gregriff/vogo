@@ -19,12 +19,10 @@ jobs:
       - uses: ./.github/actions/go-base
 
       - name: install-dependencies
-        run: brew install opus opusfile
+        run: brew install opus
 
       - name: vet
-        run: go vet ./...
-        with:
-          working-directory: ./cli
+        run: go vet -tags nolibopusfile ./cli/...
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -38,12 +36,21 @@ jobs:
       - uses: ./.github/actions/go-base
 
       - name: vet
-        run: go vet ./...
-        with:
-          working-directory: ./server
+        run: go vet ./server/...
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           working-directory: ./server
+  test-cli-darwin:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-base
+
+      - name: install-dependencies
+        run: brew install opus
+
+      - name: run-tests
+        run: go test -tags nolibopusfile -v -race ./cli/...

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gen2brain/malgo"
+	"github.com/gregriff/vogo/shared"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 	"gopkg.in/hraban/opus.v2"
@@ -19,11 +20,11 @@ type microphone struct {
 	ctx    *malgo.AllocatedContext
 	device *malgo.Device
 
+	// this is where malgo writes microphone pcm data
+	pcm stream
+
 	// the webrtc track that we use write opus to
 	track *webrtc.TrackLocalStaticSample
-
-	// this is where malgo writes microphone pcm data
-	pcm *stream
 
 	// initialized will be closed when the microphone device is initalized.
 	initialized chan struct{}
@@ -37,9 +38,9 @@ func newMicrophone(track *webrtc.TrackLocalStaticSample) microphone {
 		ctx:         &malgo.AllocatedContext{},
 		device:      &malgo.Device{},
 		track:       track,
-		pcm:         &stream{},
+		pcm:         newStream(),
 		initialized: make(chan struct{}),
-		failedPeers: make(chan error, 5), // maxstreams - 1
+		failedPeers: make(chan error, shared.ChannelCapacity-1),
 	}
 }
 

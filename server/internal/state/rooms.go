@@ -10,10 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/server/internal/dal"
+	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
 )
-
-const MaxRoomUsers = 6
 
 // RoomUser represents a user that is actively participating in a Room.
 type RoomUser struct {
@@ -30,11 +29,12 @@ type RoomUser struct {
 
 // NewRoomUser creates a user struct for sending and receiving data to and from the room and its users.
 func NewRoomUser(u *dal.User) *RoomUser {
+	const maxConns = shared.ChannelCapacity - 1
 	return &RoomUser{
 		Id:                 u.Id,
 		Name:               u.Name,
-		PendingConnections: &connMap{conns: make(map[uuid.UUID]*connection, MaxRoomUsers-1)},
-		Offers:             make(chan requests.ConnectionWithId, MaxRoomUsers-1),
+		PendingConnections: &connMap{conns: make(map[uuid.UUID]*connection, maxConns)},
+		Offers:             make(chan requests.ConnectionWithId, maxConns),
 	}
 }
 
@@ -53,7 +53,7 @@ type room struct {
 // should only be run inside of the lock of roomMap. A parent logger
 // is used to create a child logger to report events in the room.
 func newRoom(c *dal.Channel, user *RoomUser, logger *slog.Logger) *room {
-	users := make(map[uuid.UUID]*RoomUser, MaxRoomUsers)
+	users := make(map[uuid.UUID]*RoomUser, shared.ChannelCapacity)
 	user.joinedAt = time.Now()
 	users[user.Id] = user
 	return &room{
@@ -73,7 +73,7 @@ func (r *room) GetUser(id uuid.UUID) *RoomUser {
 // Note that if the caller wants to use this retval at a much later time, it will not be up-to-date with
 // any new room users.
 func (r *room) Users(omitId uuid.UUID) map[uuid.UUID]*RoomUser {
-	users := make(map[uuid.UUID]*RoomUser, MaxRoomUsers)
+	users := make(map[uuid.UUID]*RoomUser, shared.ChannelCapacity)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

@@ -14,6 +14,7 @@ import (
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/server/internal/middleware"
 	"github.com/gregriff/vogo/server/internal/state"
+	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
@@ -397,7 +398,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	users := room.Users(roomUser.Id)
 	// own func
 	newConns := requests.BulkConnection{
-		Users: make(map[uuid.UUID]string, state.MaxRoomUsers-1),
+		Users: make(map[uuid.UUID]string, shared.ChannelCapacity-1),
 	}
 	for id, user := range users {
 		newConns.Users[id] = user.Name

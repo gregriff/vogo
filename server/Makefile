@@ -5,6 +5,14 @@ build:
 run:
 	go run . run
 
+format:
+	# golangci-lint fmt
+	gofmt -d -e .
+
+lint:
+	go vet ./...
+	golangci-lint run -c ./../golangci.yml --fix
+
 serve:
 	go run . run --config=./configs/vogo-server.toml
 
@@ -19,12 +27,4 @@ drop-db:
 create-db:
 	createdb $(PGDATABASE)
 
-format:
-	golangci-lint fmt
-
-lint:
-	go vet ./...
-	gofmt -d -e .
-	golangci-lint run -c ./../golangci.yml --fix
-
-.PHONY: invite run build lint format
+.PHONY: build run serve invite format lint create-db drop-db
