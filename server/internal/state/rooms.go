@@ -3,7 +3,6 @@ package state
 import (
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"sync"
 	"time"
@@ -91,7 +90,7 @@ func (r *room) Users(omitId uuid.UUID) map[uuid.UUID]*RoomUser {
 func (r *room) addUser(user *RoomUser) error {
 	if userCount := len(r.users); userCount >= r.Capacity {
 		if userCount > r.Capacity {
-			log.Printf("ERROR!! room %v is above capacity: %d", r, userCount)
+			r.logger.Error("room is above capacity: %d", "roomName", r.Name, "userCount", userCount)
 		}
 		return fmt.Errorf("room is at capacity")
 	}

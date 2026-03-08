@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/gregriff/vogo/server/internal/crypto"
@@ -17,12 +16,13 @@ import (
 )
 
 func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
+	logger := h.loggers.forRequest(req)
 	data := requests.NewUser{}
 	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("new user parsed: %#v", data)
+	logger.ROUTE.Info("new user", "name", data.Name, "inviteCode", data.InviteCode)
 
 	statusCode, err := validation.CheckRegistrationCredentials(h.db, data.InviteCode, data.Name, data.Password)
 	if err != nil {
@@ -32,7 +32,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 
 	hashedPassword, err := crypto.HashPassword(data.Password)
 	if err != nil {
-		log.Println(err.Error())
+		logger.ROUTE.Error("hashing password", "err", err)
 		err = errors.New("password error")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -40,7 +40,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 
 	username, err := dal.CreateUser(h.db, data.Name, hashedPassword, data.InviteCode)
 	if err != nil {
-		log.Println(err.Error())
+		logger.ROUTE.Error("creating new user", "err", err)
 		err = errors.New("error creating new user")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
