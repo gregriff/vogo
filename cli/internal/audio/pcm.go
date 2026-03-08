@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"log"
 	"math"
 	"sync"
 )
@@ -34,20 +35,32 @@ func newStream() stream {
 // each copy of decoded PCM.
 type streams struct {
 	mu   sync.Mutex
-	bufs []*[]int16
+	bufs map[string]*[]int16
 }
 
 func newStreams() streams {
 	return streams{
-		bufs: make([]*[]int16, 0, maxStreams),
+		bufs: make(map[string]*[]int16, maxStreams),
 	}
 }
 
 // add adds a newly-created empty pcm buffer to the list of buffers (bufs) being tracked. It takes its pointer,
 // so that the caller can continue modifying the original, and using this struct will always point to the same memory.
-func (s *streams) add(b *[]int16) {
+func (s *streams) add(id string, b *[]int16) {
 	s.mu.Lock()
-	s.bufs = append(s.bufs, b)
+	if _, ok := s.bufs[id]; ok {
+		log.Printf("WARN stream with id: %s has already been added", id)
+	}
+	if len(s.bufs) == maxStreams {
+		log.Printf("WARN there are %d streams", maxStreams)
+	}
+	s.bufs[id] = b
+	s.mu.Unlock()
+}
+
+func (s *streams) remove(id string) {
+	s.mu.Lock()
+	delete(s.bufs, id)
 	s.mu.Unlock()
 }
 
@@ -62,10 +75,10 @@ func (s *streams) add(b *[]int16) {
 // ex: if 3 full buffers, returns {[ptr, ptr, ptr] (cap=len(s.bufs)), true}
 func (s *streams) hasFullSample(amt int) (fullBufs []*[]int16, ok bool) {
 	fullBufs = make([]*[]int16, 0, len(s.bufs))
-	for i := range len(s.bufs) {
-		if len(*s.bufs[i]) >= amt {
+	for key := range s.bufs {
+		if len(*s.bufs[key]) >= amt {
 			ok = true
-			fullBufs = append(fullBufs, s.bufs[i])
+			fullBufs = append(fullBufs, s.bufs[key])
 		}
 	}
 	return
@@ -99,7 +112,6 @@ func (s *streams) mix(fullBufs []*[]int16, numSamples int) []int16 {
 	return mixed
 }
 
-// note: hopefully these untyped consts cast to both types they're compared to...
 func clampInt16(val int32) int16 {
 	const (
 		min = math.MinInt16

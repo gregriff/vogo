@@ -114,11 +114,7 @@ func newPeerConnection(stunServer string) *webrtc.PeerConnection {
 
 // CreateAudioTrack creates the opus audio track.
 func CreateAudioTrack(trackId string) *webrtc.TrackLocalStaticSample {
-	t, err := webrtc.NewTrackLocalStaticSample(
-		opusCodec,
-		"captureTrack",
-		"captureTrack-"+trackId,
-	)
+	t, err := webrtc.NewTrackLocalStaticSample(opusCodec, "captureTrack", trackId)
 	if err != nil {
 		log.Panicf("error initializing capture track: %v", err)
 	}

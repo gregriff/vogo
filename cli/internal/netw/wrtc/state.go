@@ -223,7 +223,7 @@ func (cm *ConnectionMap) CloseAll() {
 	for key, c := range cm.data {
 		wg.Go(func() {
 			if err := c.Pc.GracefulClose(); err != nil {
-				log.Printf("error while trying to close %s's pc: %v", err)
+				log.Printf("error while trying to close %s's pc: %v", key, err)
 			}
 			log.Printf("%s's pc closed", key)
 		})

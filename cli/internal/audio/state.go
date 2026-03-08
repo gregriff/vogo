@@ -62,13 +62,14 @@ func (c *Channel) onRemoteTrack() func(track *webrtc.TrackRemote, receiver *webr
 		log.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
 		decodeBuf := make([]int16, pcmBufferSize)
 		pcm := make([]int16, 0, pcmBufferSize)
-		c.streams.add(&pcm)
+		c.streams.add(track.StreamID(), &pcm)
 
 		for {
 			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
 			packet, _, readErr := track.ReadRTP()
 			if readErr != nil {
 				if readErr == io.EOF {
+					c.streams.remove(track.StreamID())
 					return // Track closed, exit loop
 				}
 				log.Printf("PACKET READ ERR: %v", readErr)
@@ -152,7 +153,7 @@ func (c *Call) onRemoteTrack() func(track *webrtc.TrackRemote, receiver *webrtc.
 
 		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
 		if err != nil {
-			log.Panicf("decoder init error: %w", err)
+			log.Panicf("decoder init error: %v", err)
 		}
 
 		decodeBuf := make([]int16, pcmBufferSize)
