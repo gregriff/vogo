@@ -22,7 +22,8 @@ jobs:
         run: brew install opus
 
       - name: vet
-        run: go vet -tags nolibopusfile ./cli/...
+        run: go vet -tags nolibopusfile ./...
+        working-directory: ./cli
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -36,7 +37,8 @@ jobs:
       - uses: ./.github/actions/go-base
 
       - name: vet
-        run: go vet ./server/...
+        run: go vet ./...
+        working-directory: ./server
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
