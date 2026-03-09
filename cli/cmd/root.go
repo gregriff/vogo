@@ -4,6 +4,7 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -11,18 +12,26 @@ import (
 	"github.com/gregriff/vogo/cli/configs"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	_ "net/http/pprof"
 )
 
 var ConfigFile string
+var pprofAddr string
 
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
 	Use:   "vogo",
 	Short: "Client for cross-platform P2P voice chat via WebRTC",
 	Long:  ``,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if pprofAddr != "" && viper.GetString("user.name") == "greg" {
+			log.Printf("starting pprof server at %s", pprofAddr)
+			go func() {
+				log.Println(http.ListenAndServe(pprofAddr, nil))
+			}()
+		}
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -66,9 +75,12 @@ func init() {
 
 	rootCmd.PersistentFlags().String("stun-server", "stun:stun.l.google.com:19302", "STUN server origin")
 	rootCmd.PersistentFlags().String("vogo-server", "", "vogo server address")
-	rootCmd.PersistentFlags().Bool("debug", false, "print debugging information")
 
 	// expose to application via viper
-	_ = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
 	_ = viper.BindPFlag("servers.stun-origin", rootCmd.PersistentFlags().Lookup("stun-server"))
+
+	rootCmd.PersistentFlags().StringVar(&pprofAddr, "pprof", "", "enable pprof on addr (e.g. localhost:6060)")
+
+	// runtime.SetCPUProfileRate(200)
+	// go func() { log.Println(http.ListenAndServe("localhost:6060", nil)) }()
 }

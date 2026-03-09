@@ -1,10 +1,10 @@
 package audio
 
 import (
-	"encoding/binary"
 	"fmt"
 	"log"
 	"sync"
+	"unsafe"
 
 	"github.com/gen2brain/malgo"
 )
@@ -90,12 +90,10 @@ func (s *speaker) Initialized() <-chan struct{} {
 	return s.initialized
 }
 
-// int16ToBytes converts an int16 slice to a byte slice of PCM audio. TODO: can be reimpl with unsafe.
+// int16ToBytes reinterprets an int16 slice to a byte slice of PCM audio.
 func int16ToBytes(s []int16) []byte {
-	result := make([]byte, len(s)*2)
-	for i := range len(s) {
-		binary.LittleEndian.PutUint16(result[i*2:], uint16(s[i]))
+	if len(s) == 0 {
+		return nil
 	}
-	return result
-	// return unsafe.Slice((*byte)(unsafe.Pointer(&b[0])), len(b)/2)
+	return unsafe.Slice((*byte)(unsafe.Pointer(&s[0])), len(s)*2)
 }

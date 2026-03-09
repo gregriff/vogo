@@ -2,10 +2,10 @@ package audio
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log"
 	"time"
+	"unsafe"
 
 	"github.com/gen2brain/malgo"
 	"github.com/gregriff/vogo/shared"
@@ -163,13 +163,10 @@ func (m *microphone) FailedPeers() chan<- error {
 	return m.failedPeers
 }
 
-// bytesToInt16 turns a byte slice of PCM audio into an int16 slice for the opus encoder to use.
-// TODO: can replace this with an unsafe alternative that reinterprets the memory.
+// bytesToInt16 reinterprets a byte slice of PCM audio into an int16 slice for the opus encoder to use.
 func bytesToInt16(b []byte) []int16 {
-	result := make([]int16, len(b)/2)
-	for i := range len(result) {
-		result[i] = int16(binary.LittleEndian.Uint16(b[i*2:]))
+	if len(b) == 0 {
+		return nil
 	}
-	return result
-	// return unsafe.Slice((*int16)(unsafe.Pointer(&b[0])), len(b)/2)
+	return unsafe.Slice((*int16)(unsafe.Pointer(&b[0])), len(b)/2)
 }

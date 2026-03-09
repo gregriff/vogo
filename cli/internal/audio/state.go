@@ -22,9 +22,9 @@ func NewChannel(track *webrtc.TrackLocalStaticSample) *Channel {
 	return &Channel{newMicrophone(track), newSpeaker(), newStreams()}
 }
 
-// AddPeer sets an event handler on pc that writes incoming audio data to the speaker.
-// Decoded audio is written to c.streams, from which the speaker goroutine reads and
-// mixes with other PC's audio streams for playback.
+// AddPeer sets an event handler on pc that decodes incoming audio.
+// Decoded audio is then written to c.streams, from which the speaker goroutine
+// reads and mixes with other PC's audio streams for playback.
 // NOTE: DecodeFEC and DecodePLC are available for later use
 // NOTE: if text remote tracks are added, this will have to not add those to audio stream struct.
 func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
@@ -91,15 +91,11 @@ func (c *Channel) DataProc() malgo.DataProc {
 		c.streams.mu.Lock()
 
 		// disregard if there isn't yet a full sample in any of the pcm buffers
-		full, ok := c.streams.fullBufs(samplesToRead)
-		if !ok {
-			c.streams.mu.Unlock()
-			return
-		}
+		full := c.streams.fullBufs(samplesToRead)
 
 		// write a full mixed sample to the speaker buffer
-		mixed := c.streams.mix(full, samplesToRead)
-		copy(pOutputSample, int16ToBytes(mixed[:samplesToRead]))
+		c.streams.mix(full, samplesToRead)
+		copy(pOutputSample, int16ToBytes(c.streams.mixed[:samplesToRead]))
 
 		// reslice all bufs that were just mixed, removing the now-mixed pcm from each
 		for _, p := range full {

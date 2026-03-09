@@ -34,8 +34,8 @@ func init() {
 	rootCmd.AddCommand(registerCmd)
 
 	flagName := "code"
-	registerCmd.PersistentFlags().String(flagName, "", "invite code for a vogo server")
-	_ = viper.BindPFlag(flagName, registerCmd.PersistentFlags().Lookup(flagName))
+	registerCmd.Flags().String(flagName, "", "invite code for a vogo server")
+	_ = viper.BindPFlag(flagName, registerCmd.Flags().Lookup(flagName))
 }
 
 func registerUser(_ *cobra.Command, _ []string) {

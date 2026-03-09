@@ -11,6 +11,9 @@ lint:
 	go vet ./...
 	golangci-lint run -c ./../golangci.yml --fix
 
+test:
+	go test -tags nolibopusfile -v ./...
+
 # testing:
 # ==============================================================================
 # each shell executing vogo-client commands for testing should override
@@ -76,6 +79,24 @@ answer: build
 # using VOGOENV, join the channel created by `make channel`.
 join: announce build
 	@echo "joining $(USER_ONE)/$(CHANNEL_NAME)..."
-	$(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH)
+	GOMAXPROCS=2 $(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH) --pprof=localhost:6060
 
-.PHONY: format lint build answer join call invite friends channel status register
+PPROF_DIR = ../.pprof/vogo
+PROFILE_DIR ?= ${PPROF_DIR}/$(shell date +"%m-%d_%H:%M")
+PPROF_SECONDS ?= 10
+PPROF_PORT ?= 8085
+
+pprof-cpu:
+	mkdir -p $(PROFILE_DIR)
+	go tool pprof -proto http://localhost:6060/debug/pprof/profile\?seconds\=$(PPROF_SECONDS) > $(PROFILE_DIR)/cpu.prof
+
+pprof-heap:
+	go tool pprof -proto http://localhost:6060/debug/pprof/heap > $(PROFILE_DIR)/heap.prof
+
+# Opens an existing pprof file in the web browser
+pprof-view:
+	@echo "Viewing \$PPROF_FILE: $${PPROF_FILE:?PPROF_FILE is not set}"
+	go tool pprof -http=:$(PPROF_PORT) $${PPROF_FILE}
+
+
+.PHONY: format lint build answer join call invite friends channel status register test
