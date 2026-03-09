@@ -62,6 +62,10 @@ func (m *microphone) Init() error {
 	deviceConfig.SampleRate = SampleRate
 	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
 
+	// this controls quality?
+	// deviceConfig.Resampling.Linear.LpfOrder = ?
+	// deviceConfig.Resampling.Algorithm = malgo.ResampleAlgorithmSpeex
+
 	// read into capture buffer, to write to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, _ uint32) { // uint32 is framecount
 		m.pcm.mu.Lock()

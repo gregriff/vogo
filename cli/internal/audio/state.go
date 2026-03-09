@@ -90,17 +90,13 @@ func (c *Channel) DataProc() malgo.DataProc {
 		samplesToRead := int(framecount) * NumChannels
 		c.streams.mu.Lock()
 
-		// disregard if there isn't yet a full sample in any of the pcm buffers
-		full := c.streams.fullBufs(samplesToRead)
+		if samplesToRead > len(c.streams.mixed) {
+			log.Panicf("samplesToRead >= cap(mixed")
+		}
 
 		// write a full mixed sample to the speaker buffer
-		c.streams.mix(full, samplesToRead)
+		c.streams.mix(samplesToRead)
 		copy(pOutputSample, int16ToBytes(c.streams.mixed[:samplesToRead]))
-
-		// reslice all bufs that were just mixed, removing the now-mixed pcm from each
-		for _, p := range full {
-			*p = (*p)[samplesToRead:] // TODO: probably leaks
-		}
 		c.streams.mu.Unlock()
 	}
 }
@@ -172,7 +168,7 @@ func (c *Call) DataProc() malgo.DataProc {
 
 		// write a full sample to the speaker buffer
 		copy(pOutputSample, int16ToBytes(c.stream.buf[:samplesToRead]))
-		c.stream.buf = c.stream.buf[samplesToRead:] // TODO: probably leaks
+		c.stream.buf = c.stream.buf[samplesToRead:]
 		c.stream.mu.Unlock()
 	}
 }

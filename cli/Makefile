@@ -83,14 +83,15 @@ join: announce build
 
 PPROF_DIR = ../.pprof/vogo
 PROFILE_DIR ?= ${PPROF_DIR}/$(shell date +"%m-%d_%H:%M")
-PPROF_SECONDS ?= 10
-PPROF_PORT ?= 8085
+PPROF_SECONDS ?= 60
+PPROF_PORT ?= 6061
 
 pprof-cpu:
 	mkdir -p $(PROFILE_DIR)
 	go tool pprof -proto http://localhost:6060/debug/pprof/profile\?seconds\=$(PPROF_SECONDS) > $(PROFILE_DIR)/cpu.prof
 
 pprof-heap:
+	mkdir -p $(PROFILE_DIR)
 	go tool pprof -proto http://localhost:6060/debug/pprof/heap > $(PROFILE_DIR)/heap.prof
 
 # Opens an existing pprof file in the web browser

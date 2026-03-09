@@ -80,7 +80,4 @@ func init() {
 	_ = viper.BindPFlag("servers.stun-origin", rootCmd.PersistentFlags().Lookup("stun-server"))
 
 	rootCmd.PersistentFlags().StringVar(&pprofAddr, "pprof", "", "enable pprof on addr (e.g. localhost:6060)")
-
-	// runtime.SetCPUProfileRate(200)
-	// go func() { log.Println(http.ListenAndServe("localhost:6060", nil)) }()
 }

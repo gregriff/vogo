@@ -31,15 +31,17 @@ func newStream() stream {
 // and read by malgo for playback. It is used for channel calls, storing the incoming
 // audio data from the other users.
 type streams struct {
-	mu    sync.Mutex
-	bufs  map[string]*[]int16
-	mixed []int16
+	mu   sync.Mutex
+	bufs map[string]*[]int16
+	// mixed []int16
+	mixed [pcmBufferSize]int16
 }
 
 func newStreams() streams {
 	return streams{
-		bufs:  make(map[string]*[]int16, maxStreams),
-		mixed: make([]int16, pcmBufferSize),
+		bufs: make(map[string]*[]int16, maxStreams),
+		// mixed: make([]int16, pcmBufferSizee),
+		mixed: [pcmBufferSize]int16{},
 	}
 }
 
@@ -54,6 +56,9 @@ func (s *streams) add(id string, b *[]int16) {
 		log.Printf("WARN there are %d streams", maxStreams)
 	}
 	s.bufs[id] = b
+	if len(s.bufs) > maxStreams {
+		log.Panicf("len(streams.bufs): %d, > maxStreams", len(s.bufs))
+	}
 	s.mu.Unlock()
 }
 
@@ -64,50 +69,76 @@ func (s *streams) remove(id string) {
 	log.Printf("INFO: removed %s's stream", id)
 }
 
-// fullBufs iterates through all the audio buffers, and if any have at least [amt] samples (elements),
-// returns a slice of pointers to those buffers.
-// ex: if 3 full buffers, returns []*int16{ptr, ptr, ptr} (cap=len(s.bufs))
-func (s *streams) fullBufs(amt int) []*[]int16 {
-	full := make([]*[]int16, 0, len(s.bufs))
-	for key := range s.bufs {
-		if len(*s.bufs[key]) >= amt {
-			full = append(full, s.bufs[key])
+// mix takes all [s.bufs] that have at least [numSamples] samples and mixes their pcm data, writing the result to
+// [s.mixed]. It must be run within a mutex lock. If [full] is empty due to network conditions,
+// or [s.bufs] is empty due to none being added, the caller can still write [s.mixed]
+// to the speaker because it is zeroed, and the speaker will play silence.
+// Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams
+func (s *streams) mix(numSamples int) {
+	// get pointers to bufs with at least [numSamples] samples
+	full, numFull := [maxStreams]*[]int16{}, int32(0)
+	for _, buf := range s.bufs {
+		if len(*buf) >= numSamples {
+			full[numFull] = buf
+			numFull += 1
 		}
 	}
-	return full
-}
 
-// mix takes pointers to a slice of pcm buffers, each with at least [numSamples] samples
-// and mixes their audio data, writing the result to s.mixed. [bufs] is created using s.fullBufs,
-// and both s.fullBufs and s.mix must execute within the same mutex lock. If [full] is empty due to
-// network conditions, or [s.bufs] is empty due to none being added, the caller can still write [s.mixed]
-// to the speaker because it is zeroed, and the speaker will play silence.
-// NOTE: this assumes that numSamples <= cap(s.mixed).
-func (s *streams) mix(full []*[]int16, numSamples int) {
-	clear(s.mixed)
-
-	var numFull = int32(len(full))
-	if len(s.bufs) == 0 || numFull == 0 {
+	// ensure previous mixed pcm is erased
+	for i := range len(s.mixed) {
+		s.mixed[i] = 0
+	}
+	// clear(s.mixed)
+	if numFull == 0 || len(s.bufs) == 0 {
 		return
 	}
 
-	// TODO: write slow path func that runs if numSamples > cap(s.mixed), using append()
+	// if one other person in the room don't mix just write their pcm
+	// if numFull == 1 {
+	// 	// copy(s.mixed, (*full[0])[:numSamples])
+	// 	src := *full[0]
+	// 	for i := range numSamples {
+	// 		s.mixed[i] = src[i]
+	// 	}
+	// 	// remove samples from stream that was just mixed.
+	// 	src = src[numSamples:]
+	// 	return
+	// }
 
-	// note: if you impl the overrun slices, you'd check for that here
-	// and exec a slow path if any stream has one
+	// avoid bounds checks
+	_ = full[numFull-1]
+	_ = s.mixed[numSamples-1]
 
+	// mix full pcm bufs and write to s.mixed
 	const zero = int32(0)
 	var sum int32
 	for i := range numSamples {
 		sum = zero
-		for _, p := range full { // TODO: use SIMD in Go 1.26
-			sum += int32((*p)[i])
+		for j := range numFull {
+			sum += int32((*full[j])[i]) // TODO: use SIMD in Go 1.26
 		}
-		s.mixed[i] = clampInt16(sum / numFull)
+		// s.mixed[i] = clampInt16(sum / numFull)
+		s.mixed[i] = softSaturate(sum, math.MaxInt16)
+	}
+
+	// remove samples from streams that were just mixed.
+	for i := range numFull {
+		(*full[i]) = (*full[i])[numSamples:]
 	}
 }
 
-func clampInt16(val int32) int16 {
+// softSaturate takes a summed int32 value and a threshold,
+// returns a soft-saturated int16 using tanh.
+func softSaturate(sum int32, threshold float64) int16 {
+	saturated := math.Tanh(float64(sum)/threshold) * threshold
+	return clampInt16(saturated)
+}
+
+type MixedPCMSample interface {
+	int32 | float64
+}
+
+func clampInt16[S MixedPCMSample](val S) int16 {
 	const (
 		Min = math.MinInt16
 		Max = math.MaxInt16

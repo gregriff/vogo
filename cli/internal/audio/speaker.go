@@ -47,6 +47,8 @@ func (s *speaker) Init(onSendFrames malgo.DataProc) error {
 	config.Playback.Format = AudioFormat
 	config.Playback.Channels = NumChannels
 	config.SampleRate = SampleRate
+	config.NoClip = 1
+	config.NoPreSilencedOutputBuffer = 1
 	config.PeriodSizeInMilliseconds = frameDurationMs
 
 	device, err := malgo.InitDevice(s.ctx.Context, config, malgo.DeviceCallbacks{
