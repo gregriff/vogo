@@ -39,7 +39,7 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 	// 		   and the bitfield len is maxTracks (6)
 
 	// note: this callback should not panic
-	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		c.Speaker.wg.Add(1)
 		defer c.Speaker.wg.Done()
 
@@ -124,7 +124,7 @@ func NewCall(track *webrtc.TrackLocalStaticSample) *Call {
 // should only have one RemoteTrack. Decoded audio is written to c.stream,
 // from which the speaker goroutine reads for playback.
 func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
-	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		c.Speaker.wg.Add(1)
 		defer c.Speaker.wg.Done()
 

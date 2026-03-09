@@ -1,8 +1,12 @@
 package channel
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
@@ -46,8 +50,12 @@ func inviteFriend(_ *cobra.Command, _ []string) {
 		viper.GetString("friendName"),
 		viper.GetString("servers.vogo-origin")
 
+	ctx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	vogoClient := crud.NewClient(vogoServer, username, password)
-	friend, err := crud.InviteFriend(vogoClient, channelName, friendName)
+	friend, err := crud.InviteFriend(ctx, vogoClient, channelName, friendName)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error inviting friend: %w", err).Error())
 	}

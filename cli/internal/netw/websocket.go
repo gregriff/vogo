@@ -3,12 +3,9 @@ package netw
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"log"
 	"strings"
 
-	"github.com/gregriff/vogo/shared/wsock"
-	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 	"golang.org/x/sync/errgroup"
 )
@@ -68,35 +65,15 @@ func newWebsocketConfig(c *credentials, endpoint string) (*websocket.Config, err
 	return cfg, nil
 }
 
-// readCandidates reads from ws in a loop, sending candidates read to the channel ch.
-// When an empty candidate is read, the channel is closed, signaling that ICE gather on this
-// websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
-func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICECandidateInit) error {
-	var candidate webrtc.ICECandidateInit
-	for {
-		err := wsock.ReceiveJSON(ctx, ws, &candidate)
-		if err != nil {
-			return fmt.Errorf("error reading from ws: %w", err)
-		}
-
-		if candidate.Candidate == "" {
-			close(ch)
-			log.Println("ice gather completed")
-			return nil
-		}
-
-		ch <- candidate
-	}
-}
-
 // closeAndWait closes the websocket. g should be the errgroup
 // for the goroutine reading the websocket. If goroutines reading the
 // websocket are using recieveWithContext, they will unblock.
-func closeAndWait(ws *websocket.Conn, g *errgroup.Group) {
+func closeAndWait(ws *websocket.Conn, g *errgroup.Group) error {
 	if err := ws.Close(); err == nil { // errs if already closed
 		log.Println("ws closed by client")
 	}
 	if g != nil {
-		g.Wait()
+		return g.Wait()
 	}
+	return nil
 }

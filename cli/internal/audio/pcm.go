@@ -115,14 +115,14 @@ func (s *streams) mix(bufs []*[]int16, numSamples int) []int16 {
 
 func clampInt16(val int32) int16 {
 	const (
-		min = math.MinInt16
-		max = math.MaxInt16
+		Min = math.MinInt16
+		Max = math.MaxInt16
 	)
-	if val < min {
-		return min
+	if val < Min {
+		return Min
 	}
-	if val > max {
-		return max
+	if val > Max {
+		return Max
 	}
 	return int16(val)
 }

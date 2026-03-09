@@ -20,7 +20,7 @@ type speaker struct {
 	// writing to the speaker so uninit is clean.
 	wg *sync.WaitGroup
 
-	// initialized will be closed when the speaker device is initalized.
+	// initialized will be closed when the speaker device is initialized.
 	initialized chan struct{}
 }
 
@@ -93,8 +93,9 @@ func (s *speaker) Initialized() <-chan struct{} {
 // int16ToBytes converts an int16 slice to a byte slice of PCM audio. TODO: can be reimpl with unsafe.
 func int16ToBytes(s []int16) []byte {
 	result := make([]byte, len(s)*2)
-	for i, v := range s {
-		binary.LittleEndian.PutUint16(result[i*2:], uint16(v))
+	for i := range len(s) {
+		binary.LittleEndian.PutUint16(result[i*2:], uint16(s[i]))
 	}
 	return result
+	// return unsafe.Slice((*byte)(unsafe.Pointer(&b[0])), len(b)/2)
 }

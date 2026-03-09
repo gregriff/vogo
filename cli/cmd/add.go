@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
@@ -43,8 +47,12 @@ func addFriend(_ *cobra.Command, _ []string) {
 		viper.GetString("friendName"),
 		viper.GetString("servers.vogo-origin")
 
+	ctx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	vogoClient := crud.NewClient(vogoServer, username, password)
-	friend, err := crud.AddFriend(vogoClient, friendName)
+	friend, err := crud.AddFriend(ctx, vogoClient, friendName)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error adding friend: %w", err).Error())
 	}

@@ -18,7 +18,7 @@ import (
 )
 
 // Connection encapsulates a bidirectional audio webrtc connection.
-// TODO: this could be directly created by NewAudioPeerConnection
+// TODO: this could be directly created by NewAudioPeerConnection.
 type Connection struct {
 	// the uuid of the recipient user.
 	Id uuid.UUID
@@ -60,8 +60,8 @@ func NewConnection(
 type candidateType string
 
 var (
-	iceOffer  candidateType = "ice-offer"
-	iceAnswer candidateType = "ice-answer"
+	_ candidateType = "ice-offer"
+	_ candidateType = "ice-answer"
 )
 
 // NewOffer creates a webrtc offer, sets the local description and starts ice gathering.

@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
@@ -16,7 +20,7 @@ var registerCmd = &cobra.Command{
 	Use:   "register",
 	Short: "Register this client with a new user",
 	Args:  cobra.NoArgs,
-	PreRunE: func(_ *cobra.Command, args []string) error {
+	PreRunE: func(_ *cobra.Command, _ []string) error {
 		inviteCode := viper.GetString("code")
 		if inviteCode == "" {
 			return fmt.Errorf("must specify an invite code to register")
@@ -50,8 +54,12 @@ func registerUser(_ *cobra.Command, _ []string) {
 		log.Fatal(msg.Error())
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	vogoClient := crud.NewClient(vogoServer, "", "")
-	username, err := crud.Register(vogoClient, username, password, inviteCode)
+	username, err := crud.Register(ctx, vogoClient, username, password, inviteCode)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error during registration: %w", err).Error())
 	}

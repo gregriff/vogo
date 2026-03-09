@@ -1,3 +1,4 @@
+// package channel contains cli commands to invoke actions on channels.
 package channel
 
 import (

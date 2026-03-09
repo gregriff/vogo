@@ -1,8 +1,12 @@
 package channel
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
@@ -38,8 +42,12 @@ func createChannel(_ *cobra.Command, _ []string) {
 		viper.GetString("channelName"),
 		viper.GetString("servers.vogo-origin")
 
+	ctx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	vogoClient := crud.NewClient(vogoServer, username, password)
-	friend, err := crud.CreateChannel(vogoClient, channelName, "", 0)
+	friend, err := crud.CreateChannel(ctx, vogoClient, channelName, "", 0)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error creating channel: %w", err).Error())
 	}

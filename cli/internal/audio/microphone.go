@@ -26,7 +26,7 @@ type microphone struct {
 	// the webrtc track that we use write opus to
 	track *webrtc.TrackLocalStaticSample
 
-	// initialized will be closed when the microphone device is initalized.
+	// initialized will be closed when the microphone device is initialized.
 	initialized chan struct{}
 
 	// mic will send failed PC Ids on this chan
@@ -63,7 +63,7 @@ func (m *microphone) Init() error {
 	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
 
 	// read into capture buffer, to write to network. this fires every X milliseconds
-	onRecvFrames := func(_, pInputSample []byte, framecount uint32) {
+	onRecvFrames := func(_, pInputSample []byte, _ uint32) { // uint32 is framecount
 		m.pcm.mu.Lock()
 		m.pcm.buf = append(m.pcm.buf, bytesToInt16(pInputSample)...)
 		m.pcm.mu.Unlock()
@@ -159,16 +159,17 @@ func (m *microphone) Track() *webrtc.TrackLocalStaticSample {
 
 // FailedPeers returns a channel will be sent errors containing information about
 // PeerConnections that failed to have audio packets written to them.
-func (m *microphone) FailedPeers() <-chan error {
-	return m.FailedPeers()
+func (m *microphone) FailedPeers() chan<- error {
+	return m.failedPeers
 }
 
 // bytesToInt16 turns a byte slice of PCM audio into an int16 slice for the opus encoder to use.
 // TODO: can replace this with an unsafe alternative that reinterprets the memory.
 func bytesToInt16(b []byte) []int16 {
 	result := make([]int16, len(b)/2)
-	for i := range result {
+	for i := range len(result) {
 		result[i] = int16(binary.LittleEndian.Uint16(b[i*2:]))
 	}
 	return result
+	// return unsafe.Slice((*int16)(unsafe.Pointer(&b[0])), len(b)/2)
 }

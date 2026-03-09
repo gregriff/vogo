@@ -1,3 +1,5 @@
+// package audio contains abstractions over microphone and speaker hardware, PCM buffer manipulation routines,
+// and higher-level, voice-call and voice-channel structs for controlling audio in those configurations.
 package audio
 
 import (

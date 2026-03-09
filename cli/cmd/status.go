@@ -3,9 +3,13 @@ package cmd
 // TODO: status should authenticate and issue a JWT
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
@@ -33,8 +37,12 @@ func getStatus(_ *cobra.Command, _ []string) {
 		viper.GetString("user.password"),
 		viper.GetString("servers.vogo-origin")
 
+	ctx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	vogoClient := crud.NewClient(vogoServer, username, password)
-	status, err := crud.Status(vogoClient)
+	status, err := crud.Status(ctx, vogoClient)
 	if err != nil {
 		log.Printf("error fetching status: %v", err)
 		return

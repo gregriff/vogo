@@ -106,7 +106,7 @@ func newPeerConnection(stunServer string) *webrtc.PeerConnection {
 	}
 	pc, err := api.NewPeerConnection(config)
 	if err != nil {
-		ClosePC(pc, true)
+		_ = ClosePC(pc, true)
 		log.Panicf("error creating PeerConnection: %v", err)
 	}
 	return pc
@@ -130,11 +130,11 @@ func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSamp
 		},
 	)
 	if err != nil {
-		ClosePC(pc, true)
+		_ = ClosePC(pc, true)
 		log.Panicf("error adding transceiver: %v", err)
 	}
 	if err = audioTrsv.Sender().ReplaceTrack(track); err != nil {
-		ClosePC(pc, true)
+		_ = ClosePC(pc, true)
 		log.Panicf("error replacing track: %v", err)
 	}
 }

@@ -23,6 +23,9 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 	conn := wrtc.NewConnection(uuid.New(), creds.stunServer, track, true)
 	audioState := audio.NewCall(track)
 	audioState.AddPeer(conn.Pc)
+	conn.Pc.OnSignalingStateChange(func(s webrtc.SignalingState) {
+		wrtc.OnSignalingStateChange(s, creds.username, recipient)
+	})
 	defer func() {
 		if err := wrtc.ClosePC(conn.Pc, true); err != nil {
 			log.Println(err)
@@ -43,7 +46,7 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return sendCallAndConnect(gCtx, conn, audioState, creds, recipient)
+		return sendCallAndConnect(gCtx, conn, creds, recipient)
 	})
 
 	g.Go(func() error {
@@ -87,7 +90,6 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 func sendCallAndConnect(
 	ctx context.Context,
 	conn *wrtc.Connection,
-	audioState *audio.Call,
 	creds *credentials,
 	recipient string,
 ) error {
@@ -95,7 +97,9 @@ func sendCallAndConnect(
 	if err != nil {
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
-	defer closeAndWait(ws, nil)
+	defer func() {
+		_ = closeAndWait(ws, nil)
+	}()
 
 	// send offer
 	offer := conn.NewOffer(creds.username, recipient)
@@ -104,7 +108,11 @@ func sendCallAndConnect(
 	}
 
 	g, gCtx := errgroup.WithContext(ctx)
-	defer closeAndWait(ws, g)
+	defer func() {
+		if err := closeAndWait(ws, g); err != nil {
+			log.Printf("error: %v", err)
+		}
+	}()
 
 	// gather local ice candidates and write to websocket
 	g.Go(func() error {

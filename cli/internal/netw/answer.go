@@ -39,7 +39,9 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		start := time.Now()
-		defer log.Printf("playback device created in %v", time.Since(start))
+		defer func() {
+			log.Printf("playback device created in %v", time.Since(start))
+		}()
 		return audioState.Speaker.Init(audioState.DataProc())
 	})
 	defer func() {
@@ -50,7 +52,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	}()
 
 	g.Go(func() error {
-		return answerAndConnect(gCtx, conn, audioState, creds, caller)
+		return answerAndConnect(gCtx, conn, creds, caller)
 	})
 
 	g.Go(func() error {
@@ -94,7 +96,6 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 func answerAndConnect(
 	ctx context.Context,
 	conn *wrtc.Connection,
-	audioState *audio.Call,
 	credentials *credentials,
 	caller string,
 ) error {
@@ -103,7 +104,9 @@ func answerAndConnect(
 	if err != nil {
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
-	defer closeAndWait(ws, nil)
+	defer func() {
+		_ = closeAndWait(ws, nil)
+	}()
 
 	offer, err := recvOffer(ctx, ws)
 	if err != nil {

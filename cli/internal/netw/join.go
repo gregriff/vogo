@@ -35,7 +35,9 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		start := time.Now()
-		defer log.Printf("playback device created in %v", time.Since(start))
+		defer func() {
+			log.Printf("playback device created in %v", time.Since(start))
+		}()
 		return audioState.Speaker.Init(audioState.DataProc())
 	})
 	defer func() {
@@ -89,7 +91,9 @@ func joinChannelAndConnect(
 	if err != nil {
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
-	defer closeAndWait(ws, nil)
+	defer func() {
+		_ = closeAndWait(ws, nil)
+	}()
 
 	req := requests.JoinChannel{RoomName: channelName, OwnerName: ownerName}
 	if err = websocket.JSON.Send(ws, req); err != nil {
@@ -121,7 +125,7 @@ func joinChannelAndConnect(
 		c := wrtc.NewConnection(id, creds.stunServer, audioState.Mic.Track(), false)
 		conns.Update(name, c)
 		statusWg.Go(func() {
-			c.HandleEvents(ctx, name)
+			_ = c.HandleEvents(ctx, name)
 		})
 	}
 	// todo: track, cleanup failed/expired connections
@@ -150,7 +154,11 @@ func joinChannelAndConnect(
 	}
 
 	g, gCtx := errgroup.WithContext(ctx)
-	defer closeAndWait(ws, g)
+	defer func() {
+		if err := closeAndWait(ws, g); err != nil {
+			log.Printf("error: %v", err)
+		}
+	}()
 
 	msgs := make(chan wsock.Message)
 	g.Go(func() error {
@@ -202,7 +210,7 @@ func handleMessage(
 }
 
 // handleOfferMessage happens when the client is already in the room and a new user joins,
-// sending the client their offer
+// sending the client their offer.
 func handleOfferMessage(
 	ctx context.Context,
 	msg wsock.Message,
@@ -263,7 +271,7 @@ func handleOfferMessage(
 	})
 }
 
-// handleAnswerMessage handles when the client receives an answer from a recipient
+// handleAnswerMessage handles when the client receives an answer from a recipient.
 func handleAnswerMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 	var answer requests.Connection
 	if err := json.Unmarshal(msg.Data, &answer); err != nil {
@@ -284,7 +292,6 @@ func handleAnswerMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 	}
 	conn.Once.Do(func() { close(conn.RemoteSet) })
 	log.Printf("received answer from %s", answer.From)
-	return
 }
 
 func handleIceMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {

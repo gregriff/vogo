@@ -22,7 +22,7 @@ func onICECandidate(candidate *webrtc.ICECandidate, ch chan<- webrtc.ICECandidat
 	ch <- candidate.ToJSON()
 }
 
-func onSignalingStateChange(state webrtc.SignalingState, from, to string) {
+func OnSignalingStateChange(state webrtc.SignalingState, from, to string) {
 	log.Printf("%s's connection with %s signaling state changed to %s", from, to, state.String())
 }
 
