@@ -316,8 +316,8 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 // When an empty candidate is read, the channel is closed, signaling that ICE gather on this
 // websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
 func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICECandidateInit) error {
-	var candidate webrtc.ICECandidateInit
 	for {
+		var candidate webrtc.ICECandidateInit
 		if err := wsock.ReceiveJSON(ctx, ws, &candidate); err != nil {
 			if err == io.EOF {
 				return err // ws closed, propagate up

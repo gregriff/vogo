@@ -33,7 +33,7 @@ func (m *connMap) Add(id uuid.UUID, call *connection) {
 func (m *connMap) Get(id uuid.UUID) (*connection, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if c, exists := m.conns[id]; exists {
+	if c, ok := m.conns[id]; ok {
 		return c, nil
 	}
 	return &connection{}, errors.New("connection not found")
