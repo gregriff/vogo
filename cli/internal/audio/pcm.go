@@ -2,7 +2,6 @@ package audio
 
 import (
 	"log"
-	"maps"
 	"math"
 	"sync"
 	"unsafe"
@@ -33,7 +32,9 @@ func newStream() stream {
 // and read by malgo for playback. It is used for channel calls, storing the incoming
 // audio data from the other users.
 type streams struct {
-	mu    sync.Mutex
+	mu sync.Mutex
+
+	// TODO: should use ringbuffer for this to avoid reslicing every tick?
 	bufs  map[string]*[]int16
 	mixed [pcmBufferSize]int16
 }
@@ -77,8 +78,7 @@ func (s *streams) remove(id string) {
 func (s *streams) mix(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
 	full, numFull := [maxStreams]*[]int16{}, int32(0)
-	bufs := maps.Clone(s.bufs)
-	for _, buf := range bufs {
+	for _, buf := range s.bufs {
 		if len(*buf) >= numSamples {
 			full[numFull] = buf
 			numFull++
@@ -94,20 +94,20 @@ func (s *streams) mix(numSamples int) {
 	}
 
 	// if only one other person in the room, don't mix, just write their pcm
-	// if numFull == 1 {
-	// 	src := (*full[0])
+	if numFull == 1 {
+		src := (*full[0])
 
-	// 	// avoid bounds checks
-	// 	_ = s.mixed[numSamples-1]
-	// 	_ = src[numSamples-1]
+		// avoid bounds checks
+		_ = s.mixed[numSamples-1]
+		_ = src[numSamples-1]
 
-	// 	for i := range numSamples {
-	// 		s.mixed[i] = src[i]
-	// 	}
-	// 	// remove samples from stream that was written.
-	// 	(*full[0]) = src[numSamples:]
-	// 	return
-	// }
+		for i := range numSamples {
+			s.mixed[i] = src[i]
+		}
+		// remove samples from stream that was written.
+		(*full[0]) = src[numSamples:]
+		return
+	}
 
 	// avoid bounds checks
 	_ = s.mixed[numSamples-1]
@@ -132,18 +132,10 @@ func (s *streams) mix(numSamples int) {
 		// s.mixed[i] = clampInt16(sum / numFull)
 		s.mixed[i] = softSaturate(sum, math.MaxInt16)
 	}
-	// ptr = nil
 
 	// remove samples from streams that were just mixed.
-	// for i := range numFull {
-	// 	(*full[i]) = (*full[i])[numSamples:]
-	// }
 	for i := range numFull {
-		src := *full[i]
-		remaining := src[numSamples:]
-		copy(src, remaining)
-		*full[i] = src[:len(remaining)]
-		// full[i] = nil
+		(*full[i]) = (*full[i])[numSamples:]
 	}
 }
 
