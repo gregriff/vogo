@@ -4,6 +4,7 @@ import (
 	"log"
 	"math"
 	"sync"
+	"unsafe"
 
 	"github.com/gregriff/vogo/shared"
 )
@@ -31,16 +32,14 @@ func newStream() stream {
 // and read by malgo for playback. It is used for channel calls, storing the incoming
 // audio data from the other users.
 type streams struct {
-	mu   sync.Mutex
-	bufs map[string]*[]int16
-	// mixed []int16
+	mu    sync.Mutex
+	bufs  map[string]*[]int16
 	mixed [pcmBufferSize]int16
 }
 
 func newStreams() streams {
 	return streams{
-		bufs: make(map[string]*[]int16, maxStreams),
-		// mixed: make([]int16, pcmBufferSizee),
+		bufs:  make(map[string]*[]int16, maxStreams),
 		mixed: [pcmBufferSize]int16{},
 	}
 }
@@ -76,46 +75,51 @@ func (s *streams) remove(id string) {
 // Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams
 func (s *streams) mix(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [maxStreams]*[]int16{}, int32(0)
+	full, numFull := [maxStreams]unsafe.Pointer{}, int32(0)
 	for _, buf := range s.bufs {
 		if len(*buf) >= numSamples {
-			full[numFull] = buf
-			numFull += 1
+			full[numFull] = unsafe.Pointer(&(*buf))
+			numFull++
 		}
 	}
 
 	// ensure previous mixed pcm is erased
-	for i := range len(s.mixed) {
+	for i := range s.mixed {
 		s.mixed[i] = 0
 	}
-	// clear(s.mixed)
 	if numFull == 0 || len(s.bufs) == 0 {
 		return
 	}
 
-	// if one other person in the room don't mix just write their pcm
-	// if numFull == 1 {
-	// 	// copy(s.mixed, (*full[0])[:numSamples])
-	// 	src := *full[0]
-	// 	for i := range numSamples {
-	// 		s.mixed[i] = src[i]
-	// 	}
-	// 	// remove samples from stream that was just mixed.
-	// 	src = src[numSamples:]
-	// 	return
-	// }
+	// if only one other person in the room, don't mix, just write their pcm
+	if numFull == 1 {
+		src := *(*[]int16)(full[0])
+		// avoid bounds checks
+		_ = s.mixed[numSamples-1]
+		_ = src[numSamples-1]
+
+		for i := range numSamples {
+			s.mixed[i] = src[i]
+		}
+		// remove samples from stream that was written.
+		*(*[]int16)(full[0]) = src[numSamples:]
+		return
+	}
 
 	// avoid bounds checks
-	_ = full[numFull-1]
 	_ = s.mixed[numSamples-1]
+	_ = full[numFull-1]
 
 	// mix full pcm bufs and write to s.mixed
+	// NOTE: for SIMD, it's prob better to create an array of all the sums,
+	// then do the mixing on those sums after arr is full.
 	const zero = int32(0)
 	var sum int32
 	for i := range numSamples {
 		sum = zero
-		for j := range numFull {
-			sum += int32((*full[j])[i]) // TODO: use SIMD in Go 1.26
+		for j := range numFull { // TODO: use SIMD
+			// use unsafe ptr arithmetic for no bounds checks, preparing for SIMD.
+			sum += int32(*((*int16)(unsafe.Add(full[j], uintptr(i)*unsafe.Sizeof(int16(0))))))
 		}
 		// s.mixed[i] = clampInt16(sum / numFull)
 		s.mixed[i] = softSaturate(sum, math.MaxInt16)
@@ -123,7 +127,7 @@ func (s *streams) mix(numSamples int) {
 
 	// remove samples from streams that were just mixed.
 	for i := range numFull {
-		(*full[i]) = (*full[i])[numSamples:]
+		*(*[]int16)(full[i]) = (*(*[]int16)(full[i]))[numSamples:]
 	}
 }
 
