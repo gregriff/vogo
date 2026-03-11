@@ -2,6 +2,7 @@ package audio
 
 import (
 	"log"
+	"maps"
 	"math"
 	"sync"
 	"unsafe"
@@ -75,10 +76,11 @@ func (s *streams) remove(id string) {
 // Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams
 func (s *streams) mix(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [maxStreams]unsafe.Pointer{}, int32(0)
-	for _, buf := range s.bufs {
+	full, numFull := [maxStreams]*[]int16{}, int32(0)
+	bufs := maps.Clone(s.bufs)
+	for _, buf := range bufs {
 		if len(*buf) >= numSamples {
-			full[numFull] = unsafe.Pointer(&(*buf))
+			full[numFull] = buf
 			numFull++
 		}
 	}
@@ -92,19 +94,20 @@ func (s *streams) mix(numSamples int) {
 	}
 
 	// if only one other person in the room, don't mix, just write their pcm
-	if numFull == 1 {
-		src := *(*[]int16)(full[0])
-		// avoid bounds checks
-		_ = s.mixed[numSamples-1]
-		_ = src[numSamples-1]
+	// if numFull == 1 {
+	// 	src := (*full[0])
 
-		for i := range numSamples {
-			s.mixed[i] = src[i]
-		}
-		// remove samples from stream that was written.
-		*(*[]int16)(full[0]) = src[numSamples:]
-		return
-	}
+	// 	// avoid bounds checks
+	// 	_ = s.mixed[numSamples-1]
+	// 	_ = src[numSamples-1]
+
+	// 	for i := range numSamples {
+	// 		s.mixed[i] = src[i]
+	// 	}
+	// 	// remove samples from stream that was written.
+	// 	(*full[0]) = src[numSamples:]
+	// 	return
+	// }
 
 	// avoid bounds checks
 	_ = s.mixed[numSamples-1]
@@ -114,20 +117,33 @@ func (s *streams) mix(numSamples int) {
 	// NOTE: for SIMD, it's prob better to create an array of all the sums,
 	// then do the mixing on those sums after arr is full.
 	const zero = int32(0)
+	const int16Size = unsafe.Sizeof(int16(0))
 	var sum int32
+	var offset uintptr
+	var ptr unsafe.Pointer
 	for i := range numSamples {
 		sum = zero
+		offset = uintptr(i) * int16Size
 		for j := range numFull { // TODO: use SIMD
 			// use unsafe ptr arithmetic for no bounds checks, preparing for SIMD.
-			sum += int32(*((*int16)(unsafe.Add(full[j], uintptr(i)*unsafe.Sizeof(int16(0))))))
+			ptr = unsafe.Pointer(&(*full[j])[0])
+			sum += int32(*((*int16)(unsafe.Add(ptr, offset))))
 		}
 		// s.mixed[i] = clampInt16(sum / numFull)
 		s.mixed[i] = softSaturate(sum, math.MaxInt16)
 	}
+	// ptr = nil
 
 	// remove samples from streams that were just mixed.
+	// for i := range numFull {
+	// 	(*full[i]) = (*full[i])[numSamples:]
+	// }
 	for i := range numFull {
-		*(*[]int16)(full[i]) = (*(*[]int16)(full[i]))[numSamples:]
+		src := *full[i]
+		remaining := src[numSamples:]
+		copy(src, remaining)
+		*full[i] = src[:len(remaining)]
+		// full[i] = nil
 	}
 }
 

@@ -6,3 +6,5 @@ bin/
 logs/
 
 .pprof/
+
+escape.out

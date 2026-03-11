@@ -14,6 +14,9 @@ lint:
 test:
 	go test -tags nolibopusfile -v ./...
 
+escape:
+	go build -gcflags="-m -m" ./... > escape.out 2>&1
+
 # testing:
 # ==============================================================================
 # each shell executing vogo-client commands for testing should override
@@ -100,4 +103,4 @@ pprof-view:
 	go tool pprof -http=:$(PPROF_PORT) $${PPROF_FILE}
 
 
-.PHONY: format lint build answer join call invite friends channel status register test
+.PHONY: format lint build answer join call invite friends channel status register test escape
