@@ -70,6 +70,19 @@ func (s *streams) remove(id string) {
 	log.Printf("INFO: removed %s's stream", id)
 }
 
+// bufView allows for unsafe access to an *[]int16 pcm buffer. [ptr] points to
+// the first element in the backing array to allow for pointer arithmetic. [buf]
+// is a pointer to the slice struct to allow for reslicing, visible to other goroutines
+// (RemoteTrack callback) holding a reference to the slice.
+type bufView struct {
+	ptr unsafe.Pointer
+	buf *[]int16
+}
+
+func newBufView(b *[]int16) bufView {
+	return bufView{ptr: unsafe.Pointer(&(*b)[0]), buf: b}
+}
+
 // mix takes all [s.bufs] that have at least [numSamples] samples and mixes their pcm data, writing the result to
 // [s.mixed]. It must be run within a mutex lock. If [full] is empty due to network conditions,
 // or [s.bufs] is empty due to none being added, the caller can still write [s.mixed]
@@ -77,10 +90,10 @@ func (s *streams) remove(id string) {
 // Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams
 func (s *streams) mix(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [maxStreams]*[]int16{}, int32(0)
+	full, numFull := [maxStreams]bufView{}, int32(0)
 	for _, buf := range s.bufs {
 		if len(*buf) >= numSamples {
-			full[numFull] = buf
+			full[numFull] = newBufView(buf)
 			numFull++
 		}
 	}
@@ -95,7 +108,7 @@ func (s *streams) mix(numSamples int) {
 
 	// if only one other person in the room, don't mix, just write their pcm
 	if numFull == 1 {
-		src := (*full[0])
+		src := *full[0].buf
 
 		// avoid bounds checks
 		_ = s.mixed[numSamples-1]
@@ -105,7 +118,7 @@ func (s *streams) mix(numSamples int) {
 			s.mixed[i] = src[i]
 		}
 		// remove samples from stream that was written.
-		(*full[0]) = src[numSamples:]
+		*full[0].buf = src[numSamples:]
 		return
 	}
 
@@ -120,14 +133,12 @@ func (s *streams) mix(numSamples int) {
 	const int16Size = unsafe.Sizeof(int16(0))
 	var sum int32
 	var offset uintptr
-	var ptr unsafe.Pointer
 	for i := range numSamples {
 		sum = zero
 		offset = uintptr(i) * int16Size
 		for j := range numFull { // TODO: use SIMD
-			// use unsafe ptr arithmetic for no bounds checks, preparing for SIMD.
-			ptr = unsafe.Pointer(&(*full[j])[0])
-			sum += int32(*((*int16)(unsafe.Add(ptr, offset))))
+			// use ptr arithmetic for no bounds checks for branchless SIMD.
+			sum += int32(*((*int16)(unsafe.Add(full[j].ptr, offset))))
 		}
 		// s.mixed[i] = clampInt16(sum / numFull)
 		s.mixed[i] = softSaturate(sum, math.MaxInt16)
@@ -135,7 +146,7 @@ func (s *streams) mix(numSamples int) {
 
 	// remove samples from streams that were just mixed.
 	for i := range numFull {
-		(*full[i]) = (*full[i])[numSamples:]
+		*full[i].buf = (*full[i].buf)[numSamples:]
 	}
 }
 
@@ -146,11 +157,11 @@ func softSaturate(sum int32, threshold float64) int16 {
 	return clampInt16(saturated)
 }
 
-type MixedPCMSample interface {
+type mixedPCMSample interface {
 	int32 | float64
 }
 
-func clampInt16[S MixedPCMSample](val S) int16 {
+func clampInt16[S mixedPCMSample](val S) int16 {
 	const (
 		Min = math.MinInt16
 		Max = math.MaxInt16
