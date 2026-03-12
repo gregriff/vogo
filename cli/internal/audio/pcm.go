@@ -6,6 +6,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 	"github.com/gregriff/vogo/shared"
 )
 
@@ -14,17 +15,20 @@ import (
 // Note: this would have to be doubled if you want to allow users to send text also.
 const maxStreams = shared.ChannelCapacity - 1
 
+// allocating more size to rb decreases dropped samples due to network conditions
+const ringBufferSize = pcmBufferSize * 8 // 15360 — ~320ms at 48kHz
+
 // stream stores PCM audio data. The microphone writes PCM to its stream, where
 // it is then encoded into Opus and written to a webrtc Track, and in a 1:1 voice call
 // the speaker writes decoded Opus to its stream, where it is then written to the malgo device.
 type stream struct {
-	mu  sync.Mutex
-	buf []int16
+	mu sync.Mutex
+	rb ringbuffer.RingBuffer
 }
 
 func newStream() stream {
-	return stream{
-		buf: make([]int16, 0, pcmBufferSize),
+	return stream{ 
+		rb: ringbuffer.New(ringBufferSize),
 	}
 }
 
@@ -34,39 +38,45 @@ func newStream() stream {
 type streams struct {
 	mu sync.Mutex
 
-	// TODO: should use ringbuffer for this to avoid reslicing every tick?
-	bufs  map[string]*[]int16
+	// data stores references to the ringbuffers that each TrackRemote writes data to from the network.
+	data map[string]*ringbuffer.RingBuffer
+
+	// this is where mixed pcm is written.
 	mixed [pcmBufferSize]int16
+
+	// these are used during mixing to allow for easier vectorized iteration of pcm to mix.
+	writeBufs [maxStreams][pcmBufferSize]int16
 }
 
 func newStreams() streams {
 	return streams{
-		bufs:  make(map[string]*[]int16, maxStreams),
-		mixed: [pcmBufferSize]int16{},
+		data:      make(map[string]*ringbuffer.RingBuffer, maxStreams),
+		writeBufs: [maxStreams][pcmBufferSize]int16{},
+		mixed:     [pcmBufferSize]int16{},
 	}
 }
 
 // add adds a newly-created empty pcm buffer to the list of buffers (bufs) being tracked. It takes its pointer,
 // so that the caller can continue modifying the original, and using this struct will always point to the same memory.
-func (s *streams) add(id string, b *[]int16) {
+func (s *streams) add(id string, rb *ringbuffer.RingBuffer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.bufs[id]; ok {
+	if _, ok := s.data[id]; ok {
 		log.Printf("WARN stream with id: %s has already been added", id)
 	}
-	if len(s.bufs) == maxStreams {
+	if len(s.data) == maxStreams {
 		log.Printf("WARN there are %d streams", maxStreams)
 	}
-	s.bufs[id] = b
-	if len(s.bufs) > maxStreams {
-		log.Panicf("len(streams.bufs): %d, > maxStreams", len(s.bufs))
+	s.data[id] = rb
+	if len(s.data) > maxStreams {
+		log.Panicf("len(streams.bufs): %d, > maxStreams", len(s.data))
 	}
 }
 
 func (s *streams) remove(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.bufs, id)
+	delete(s.data, id)
 	log.Printf("INFO: removed %s's stream", id)
 }
 
@@ -76,10 +86,10 @@ func (s *streams) remove(id string) {
 // (RemoteTrack callback) holding a reference to the slice.
 type bufView struct {
 	ptr unsafe.Pointer
-	buf *[]int16
+	buf *[pcmBufferSize]int16
 }
 
-func newBufView(b *[]int16) bufView {
+func newBufView(b *[pcmBufferSize]int16) bufView {
 	return bufView{ptr: unsafe.Pointer(&(*b)[0]), buf: b}
 }
 
@@ -91,35 +101,26 @@ func newBufView(b *[]int16) bufView {
 func (s *streams) mix(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
 	full, numFull := [maxStreams]bufView{}, int32(0)
-	for _, buf := range s.bufs {
-		if len(*buf) >= numSamples {
-			// since we're in the lock and ensured length, we can use unsafe access
-			full[numFull] = newBufView(buf)
+	for _, rb := range s.data {
+		if rb.Len() >= numSamples {
+			// copy the full pcm buf so we can vectorize access easily.
+			_ = rb.Read(s.writeBufs[numFull][:])
+
+			// since we're in the lock and ensured length, we can use unsafe access.
+			full[numFull] = newBufView(&s.writeBufs[numFull])
 			numFull++
 		}
 	}
 
 	// ensure previous mixed pcm is erased
-	for i := range s.mixed {
-		s.mixed[i] = 0
-	}
-	if numFull == 0 || len(s.bufs) == 0 {
+	clear(s.mixed[:])
+	if numFull == 0 || len(s.data) == 0 {
 		return
 	}
 
 	// if only one other person in the room, don't mix, just write their pcm
 	if numFull == 1 {
-		src := *full[0].buf
-
-		// avoid bounds checks
-		_ = s.mixed[numSamples-1]
-		_ = src[numSamples-1]
-
-		for i := range numSamples {
-			s.mixed[i] = src[i]
-		}
-		// remove samples from stream that was written.
-		*full[0].buf = src[numSamples:]
+		copy(s.mixed[:], full[0].buf[:numSamples])
 		full[0].buf = nil
 		full[0].ptr = nil
 		return
@@ -147,11 +148,8 @@ func (s *streams) mix(numSamples int) {
 		s.mixed[i] = softSaturate(sum, math.MaxInt16)
 	}
 
-	// remove samples from streams that were just mixed.
+	// ensure these are cleaned up
 	for i := range numFull {
-		*full[i].buf = (*full[i].buf)[numSamples:]
-
-		// ensure these are cleaned up
 		full[i].buf = nil
 		full[i].ptr = nil
 	}

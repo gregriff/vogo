@@ -8,6 +8,7 @@ import (
 	"log"
 
 	"github.com/gen2brain/malgo"
+	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 	"github.com/pion/webrtc/v4"
 	"gopkg.in/hraban/opus.v2"
 )
@@ -51,7 +52,8 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 
 		log.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
 		decodeBuf := make([]int16, pcmBufferSize)
-		pcm := make([]int16, 0, pcmBufferSize)
+		// pcm := make([]int16, 0, pcmBufferSize)
+		pcm := ringbuffer.New(pcmBufferSize * 8)
 		c.streams.add(track.StreamID(), &pcm)
 
 		for {
@@ -76,8 +78,11 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 			framesDecoded := samplesDecoded * NumChannels
 			// Write decoded PCM to playback buffer, which malgo will pull from for playback
 			c.streams.mu.Lock()
-			pcm = append(pcm, decodeBuf[:framesDecoded]...) // inefficient? reslice instead?
+			pcm.Write(decodeBuf[:framesDecoded])
 			c.streams.mu.Unlock()
+
+			// TODO: ensure capacity doesnt continue to grow??
+			// decodeBuf = decodeBuf[framesDecoded:]
 		}
 	})
 }
@@ -147,8 +152,12 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 			framesDecoded := samplesDecoded * NumChannels
 			// Write decoded PCM to playback buffer, which malgo will pull from for playback
 			c.stream.mu.Lock()
-			c.stream.buf = append(c.stream.buf, decodeBuf[:framesDecoded]...)
+			// c.stream.rb = append(c.stream.rb, decodeBuf[:framesDecoded]...)
+			c.stream.rb.Write(decodeBuf[:framesDecoded])
 			c.stream.mu.Unlock()
+
+			// TODO: ensure capacity doesnt continue to grow??
+			// decodeBuf = decodeBuf[framesDecoded:]
 		}
 	})
 }
@@ -156,18 +165,23 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 // DataProc returns a callback that sends audio data to the speaker.
 // https://github.com/gen2brain/malgo/blob/master/_examples/playback/playback.go
 func (c *Call) DataProc() malgo.DataProc {
+	writeBuffer := make([]int16, pcmBufferSize)
 	return func(pOutputSample, _ []byte, framecount uint32) {
 		samplesToRead := int(framecount) * NumChannels
 		c.stream.mu.Lock()
 		defer c.stream.mu.Unlock()
 
 		// if there isn't yet a full sample in the pcmBuffer sent from the network
-		if len(c.stream.buf) < samplesToRead {
+		if c.stream.rb.Len() < samplesToRead {
 			return
 		}
 
 		// write a full sample to the speaker buffer
-		copy(pOutputSample, int16ToBytes(c.stream.buf[:samplesToRead]))
-		c.stream.buf = c.stream.buf[samplesToRead:]
+		// copy(pOutputSample, int16ToBytes(c.stream.rb[:samplesToRead]))
+		// c.stream.rb = c.stream.rb[samplesToRead:]
+
+		_ = c.stream.rb.Read(writeBuffer)
+		copy(pOutputSample, int16ToBytes(writeBuffer))
+		clear(writeBuffer)
 	}
 }

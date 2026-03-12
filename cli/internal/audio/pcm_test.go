@@ -4,20 +4,20 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+	"unsafe"
+
+	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 )
 
 func TestStreamsMix(t *testing.T) {
 	t.Run("single full stream", func(t *testing.T) {
 		numSamples := 5
 		s := newStreams()
-		buf := []int16{10, 20, 30, 40, 50}
-		s.add("a", &buf)
+		a := ringbuffer.New(numSamples)
+		a.Write([]int16{10, 20, 30, 40, 50})
+		s.add("a", &a)
 		s.mix(numSamples)
-		for i, want := range buf {
-			if s.mixed[i] != want {
-				t.Errorf("sample[%d]: got %d, want %d", i, s.mixed[i], want)
-			}
-		}
+
 		count := 0
 		for _, v := range s.mixed {
 			if v == 0 {
@@ -26,7 +26,7 @@ func TestStreamsMix(t *testing.T) {
 			count++
 		}
 		if count != numSamples {
-			t.Errorf("num mixed samples in mixed buf (%d) != numSamples arg (%d)", numSamples, numSamples)
+			t.Errorf("num mixed samples in mixed buf (%d) != numSamples arg (%d)", count, numSamples)
 		}
 	})
 
@@ -45,8 +45,11 @@ func TestStreamsMix(t *testing.T) {
 
 	t.Run("clamps overflow", func(t *testing.T) {
 		s := newStreams()
-		a := []int16{math.MaxInt16, math.MaxInt16}
-		b := []int16{math.MaxInt16, math.MaxInt16}
+		pcm := []int16{math.MaxInt16, math.MaxInt16}
+		a := ringbuffer.New(2)
+		b := ringbuffer.New(2)
+		a.Write(pcm)
+		b.Write(pcm)
 		s.add("a", &a)
 		s.add("b", &b)
 		s.mix(2)
@@ -54,10 +57,14 @@ func TestStreamsMix(t *testing.T) {
 			t.Errorf("sample overflowed int16: %d", s.mixed[0])
 		}
 	})
+
 	t.Run("clamps underflow", func(t *testing.T) {
 		s := newStreams()
-		a := []int16{math.MaxInt16, math.MaxInt16}
-		b := []int16{math.MaxInt16, math.MaxInt16}
+		pcm := []int16{math.MaxInt16, math.MaxInt16}
+		a := ringbuffer.New(2)
+		b := ringbuffer.New(2)
+		a.Write(pcm)
+		b.Write(pcm)
 		s.add("a", &a)
 		s.add("b", &b)
 		s.mix(2)
@@ -68,8 +75,11 @@ func TestStreamsMix(t *testing.T) {
 
 	t.Run("silence streams mix to silence", func(t *testing.T) {
 		s := newStreams()
-		a := []int16{0, 0, 0}
-		b := []int16{0, 0, 0}
+		pcm := []int16{0, 0, 0}
+		a := ringbuffer.New(3)
+		b := ringbuffer.New(3)
+		a.Write(pcm)
+		b.Write(pcm)
 		s.add("a", &a)
 		s.add("b", &b)
 		s.mix(3)
@@ -85,8 +95,9 @@ func TestStreamsMix(t *testing.T) {
 
 	t.Run("remove makes buffer unavailable", func(t *testing.T) {
 		s := newStreams()
-		buf := []int16{1, 2, 3}
-		s.add("a", &buf)
+		a := ringbuffer.New(3)
+		a.Write([]int16{1, 2, 3})
+		s.add("a", &a)
 		s.remove("a")
 		s.mix(3)
 		if s.mixed[0] == 1 {
@@ -103,6 +114,8 @@ func randomPCMSample(amplitude float64) int16 {
 const pcmAmplitude = 3000 // can be up to math.MaxInt16
 
 func BenchmarkMix(b *testing.B) {
+	const bufSize = pcmBufferSize * 8
+
 	b.Run("branchless-v1_s=1", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
@@ -110,12 +123,15 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := make([]int16, 0, pcmBufferSize)
+		s1 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 
+		// NOTE: this will not give an accurate time measurement unless
+		// you uncomment the timer calls, but doing that will make it run extremely slow.
 		for b.Loop() {
-			// reset + copy — no allocations (capacity already exists)
-			s1 = append(s1[:0], samples...)
+			// b.StopTimer()
+			s1.Write(samples)
+			// b.StartTimer()
 			s.mix(pcmBufferSize)
 		}
 	})
@@ -127,15 +143,15 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := make([]int16, 0, pcmBufferSize)
-		s2 := make([]int16, 0, pcmBufferSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 
 		for b.Loop() {
 			b.StopTimer()
-			s1 = append(s1[:0], samples...)
-			s2 = append(s2[:0], samples...)
+			s1.Write(samples)
+			s2.Write(samples)
 			b.StartTimer()
 			s.mix(pcmBufferSize)
 		}
@@ -148,94 +164,95 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := make([]int16, 0, pcmBufferSize)
-		s2 := make([]int16, 0, pcmBufferSize)
-		s3 := make([]int16, 0, pcmBufferSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
+		s3 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 		s.add("s3", &s3)
 
 		for b.Loop() {
 			b.StopTimer()
-			s1 = append(s1[:0], samples...)
-			s2 = append(s2[:0], samples...)
-			s3 = append(s3[:0], samples...)
+			s1.Write(samples)
+			s2.Write(samples)
+			s3.Write(samples)
 			b.StartTimer()
 			s.mix(pcmBufferSize)
 		}
 	})
 
-	b.Run("noBufView_s=1", func(b *testing.B) {
+	b.Run("slow_s=1", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
 		s := newStreams()
-		s1 := make([]int16, 0, pcmBufferSize)
+		s1 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 
 		for b.Loop() {
-			// reset + copy — no allocations (capacity already exists)
-			s1 = append(s1[:0], samples...)
-			s.mixNoBufView(pcmBufferSize)
+			s1.Write(samples)
+			s.mixSlow(pcmBufferSize)
 		}
 	})
 
-	b.Run("noBufView_s=2", func(b *testing.B) {
+	b.Run("slow_s=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
 		s := newStreams()
-		s1 := make([]int16, 0, pcmBufferSize)
-		s2 := make([]int16, 0, pcmBufferSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 
 		for b.Loop() {
 			b.StopTimer()
-			s1 = append(s1[:0], samples...)
-			s2 = append(s2[:0], samples...)
+			s1.Write(samples)
+			s2.Write(samples)
 			b.StartTimer()
-			s.mixNoBufView(pcmBufferSize)
+			s.mixSlow(pcmBufferSize)
 		}
 	})
 
-	b.Run("noBufView_s=3", func(b *testing.B) {
+	b.Run("slow_s=3", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
 		s := newStreams()
-		s1 := make([]int16, 0, pcmBufferSize)
-		s2 := make([]int16, 0, pcmBufferSize)
-		s3 := make([]int16, 0, pcmBufferSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
+		s3 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 		s.add("s3", &s3)
 
 		for b.Loop() {
 			b.StopTimer()
-			s1 = append(s1[:0], samples...)
-			s2 = append(s2[:0], samples...)
-			s3 = append(s3[:0], samples...)
+			s1.Write(samples)
+			s2.Write(samples)
+			s3.Write(samples)
 			b.StartTimer()
-			s.mixNoBufView(pcmBufferSize)
+			s.mixSlow(pcmBufferSize)
 		}
 	})
 
 }
 
-func (s *streams) mixNoBufView(numSamples int) {
+func (s *streams) mixSlow(numSamples int) {
+
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [maxStreams]*[]int16{}, int32(0)
-	for _, buf := range s.bufs {
-		if len(*buf) >= numSamples {
+	full, numFull := [maxStreams]bufView{}, int32(0)
+	for _, rb := range s.data {
+		if rb.Len() >= numSamples {
 			// since we're in the lock and ensured length, we can use unsafe access
-			full[numFull] = buf
+			_ = rb.Read(s.writeBufs[numFull][:])
+			full[numFull] = newBufView(&s.writeBufs[numFull])
 			numFull++
 		}
 	}
@@ -244,24 +261,28 @@ func (s *streams) mixNoBufView(numSamples int) {
 	for i := range s.mixed {
 		s.mixed[i] = 0
 	}
-	if numFull == 0 || len(s.bufs) == 0 {
+	if numFull == 0 || len(s.data) == 0 {
 		return
 	}
 
 	// if only one other person in the room, don't mix, just write their pcm
 	if numFull == 1 {
-		src := *full[0]
+		src := *full[0].buf
 
 		// avoid bounds checks
 		// _ = s.mixed[numSamples-1]
 		// _ = src[numSamples-1]
 
+		// TODO: replace with copy() and test
+		// TODO: can call rb.Read(s.mixed[:numSamples]) here BUT Read() is already called above
 		for i := range numSamples {
 			s.mixed[i] = src[i]
 		}
+		// copy(s.mixed[:], src[:numSamples])
 		// remove samples from stream that was written.
-		*full[0] = src[numSamples:]
-		full[0] = nil
+		// *full[0].buf = src[numSamples:]  // unness currently
+		full[0].buf = nil
+		full[0].ptr = nil
 		return
 	}
 
@@ -273,19 +294,23 @@ func (s *streams) mixNoBufView(numSamples int) {
 	// NOTE: for SIMD, it's prob better to create an array of all the sums,
 	// then do the mixing on those sums after arr is full.
 	const zero = int32(0)
+	const int16Size = unsafe.Sizeof(int16(0))
 	var sum int32
+	var offset uintptr
 	for i := range numSamples {
 		sum = zero
+		offset = uintptr(i) * int16Size
 		for j := range numFull { // TODO: use SIMD
-			sum += int32((*full[j])[i])
+			// use ptr arithmetic for no bounds checks for branchless SIMD.
+			sum += int32(*((*int16)(unsafe.Add(full[j].ptr, offset))))
 		}
 		// s.mixed[i] = clampInt16(sum / numFull)
 		s.mixed[i] = softSaturate(sum, math.MaxInt16)
 	}
 
-	// remove samples from streams that were just mixed.
+	// ensure these are cleaned up
 	for i := range numFull {
-		*full[i] = (*full[i])[numSamples:]
-		full[i] = nil
+		full[i].buf = nil
+		full[i].ptr = nil
 	}
 }

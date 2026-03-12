@@ -69,7 +69,7 @@ func (m *microphone) Init() error {
 	// read into capture buffer, to write to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, _ uint32) { // uint32 is framecount
 		m.pcm.mu.Lock()
-		m.pcm.buf = append(m.pcm.buf, bytesToInt16(pInputSample)...)
+		m.pcm.rb.Write(bytesToInt16(pInputSample))
 		m.pcm.mu.Unlock()
 	}
 
@@ -90,6 +90,7 @@ func (m *microphone) Start(ctx context.Context) error {
 		return err
 	}
 
+	frameBuffer := make([]int16, frameSize)
 	opusBuffer := make([]byte, opusBufferSize)
 	encoder, err := opus.NewEncoder(SampleRate, NumChannels, opus.AppVoIP)
 	if err != nil {
@@ -111,18 +112,21 @@ func (m *microphone) Start(ctx context.Context) error {
 			m.pcm.mu.Lock()
 
 			// Need at least one frame worth of data
-			if len(m.pcm.buf) < frameSize {
+			if m.pcm.rb.Len() < frameSize {
 				m.pcm.mu.Unlock()
 				continue // wait for more data
 			}
 
 			// Extract one frame and remove it from the buffer
-			frameData := m.pcm.buf[:frameSize]
-			m.pcm.buf = m.pcm.buf[frameSize:] // TODO: this may leak
+			// frameData := m.pcm.rb[:frameSize]
+			// m.pcm.rb = m.pcm.rb[frameSize:] // TODO: this may leak
+
+			_ = m.pcm.rb.Read(frameBuffer) // overwrites whatever's in there
 			m.pcm.mu.Unlock()
 
 			// encode to opus
-			bytesEncoded, err := encoder.Encode(frameData, opusBuffer)
+			bytesEncoded, err := encoder.Encode(frameBuffer, opusBuffer)
+			// clear(frameBuffer)
 			if err != nil {
 				log.Println("OPUS ENCODE ERROR:", err)
 				continue

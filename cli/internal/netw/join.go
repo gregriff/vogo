@@ -65,7 +65,7 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 			// NOTE: if two speakers are playing on the same machine, audio will sound bad
 			// NOTE: if Speaker.Start() is not called, memory leaks occur.
 			// if user := os.Getenv("VOGOENV"); user == "two" {
-			// break
+			// 	break
 			// }
 			if err := audioState.Speaker.Start(); err != nil {
 				return err
