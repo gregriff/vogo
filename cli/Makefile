@@ -14,6 +14,9 @@ lint:
 test:
 	go test -tags nolibopusfile -v ./...
 
+bench:
+	go test -v -bench=. -benchmem -cpu=1 -tags nolibopusfile -v ./internal/audio
+
 escape:
 	go build -gcflags="-m -m" ./... > escape.out 2>&1
 

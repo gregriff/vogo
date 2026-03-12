@@ -159,16 +159,15 @@ func (c *Call) DataProc() malgo.DataProc {
 	return func(pOutputSample, _ []byte, framecount uint32) {
 		samplesToRead := int(framecount) * NumChannels
 		c.stream.mu.Lock()
+		defer c.stream.mu.Unlock()
 
 		// if there isn't yet a full sample in the pcmBuffer sent from the network
 		if len(c.stream.buf) < samplesToRead {
-			c.stream.mu.Unlock()
 			return
 		}
 
 		// write a full sample to the speaker buffer
 		copy(pOutputSample, int16ToBytes(c.stream.buf[:samplesToRead]))
 		c.stream.buf = c.stream.buf[samplesToRead:]
-		c.stream.mu.Unlock()
 	}
 }

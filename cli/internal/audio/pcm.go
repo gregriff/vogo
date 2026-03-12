@@ -50,6 +50,7 @@ func newStreams() streams {
 // so that the caller can continue modifying the original, and using this struct will always point to the same memory.
 func (s *streams) add(id string, b *[]int16) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if _, ok := s.bufs[id]; ok {
 		log.Printf("WARN stream with id: %s has already been added", id)
 	}
@@ -60,13 +61,12 @@ func (s *streams) add(id string, b *[]int16) {
 	if len(s.bufs) > maxStreams {
 		log.Panicf("len(streams.bufs): %d, > maxStreams", len(s.bufs))
 	}
-	s.mu.Unlock()
 }
 
 func (s *streams) remove(id string) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.bufs, id)
-	s.mu.Unlock()
 	log.Printf("INFO: removed %s's stream", id)
 }
 
@@ -93,6 +93,7 @@ func (s *streams) mix(numSamples int) {
 	full, numFull := [maxStreams]bufView{}, int32(0)
 	for _, buf := range s.bufs {
 		if len(*buf) >= numSamples {
+			// since we're in the lock and ensured length, we can use unsafe access
 			full[numFull] = newBufView(buf)
 			numFull++
 		}
@@ -119,6 +120,8 @@ func (s *streams) mix(numSamples int) {
 		}
 		// remove samples from stream that was written.
 		*full[0].buf = src[numSamples:]
+		full[0].buf = nil
+		full[0].ptr = nil
 		return
 	}
 
@@ -147,6 +150,10 @@ func (s *streams) mix(numSamples int) {
 	// remove samples from streams that were just mixed.
 	for i := range numFull {
 		*full[i].buf = (*full[i].buf)[numSamples:]
+
+		// ensure these are cleaned up
+		full[i].buf = nil
+		full[i].ptr = nil
 	}
 }
 
