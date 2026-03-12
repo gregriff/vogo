@@ -41,11 +41,11 @@ type streams struct {
 	// data stores references to the ringbuffers that each TrackRemote writes data to from the network.
 	data map[string]*ringbuffer.RingBuffer
 
-	// this is where mixed pcm is written.
-	mixed [pcmBufferSize]int16
-
 	// these are used during mixing to allow for easier vectorized iteration of pcm to mix.
 	writeBufs [maxStreams][pcmBufferSize]int16
+
+	// this is where mixed pcm is written.
+	mixed [pcmBufferSize]int16
 }
 
 func newStreams() streams {
@@ -126,13 +126,14 @@ func (s *streams) mix(numSamples int) {
 		return
 	}
 
-	// avoid bounds checks
-	_ = s.mixed[numSamples-1]
-	_ = full[numFull-1]
+	summed := [pcmBufferSize]int32{}
 
-	// mix full pcm bufs and write to s.mixed
-	// NOTE: for SIMD, it's prob better to create an array of all the sums,
-	// then do the mixing on those sums after arr is full.
+	// avoid bounds checks
+	_ = full[numFull-1]
+	_ = summed[numSamples-1]
+
+	// sum samples for each buffer
+	// TODO: SIMD
 	const zero = int32(0)
 	const int16Size = unsafe.Sizeof(int16(0))
 	var sum int32
@@ -140,12 +141,19 @@ func (s *streams) mix(numSamples int) {
 	for i := range numSamples {
 		sum = zero
 		offset = uintptr(i) * int16Size
-		for j := range numFull { // TODO: use SIMD
+		for j := range numFull {
 			// use ptr arithmetic for no bounds checks for branchless SIMD.
 			sum += int32(*((*int16)(unsafe.Add(full[j].ptr, offset))))
 		}
+		summed[i] = sum
+	}
+
+	// actual mixing
+	_ = s.mixed[numSamples-1]
+	_ = summed[numSamples-1]
+	for i := range numSamples {
 		// s.mixed[i] = clampInt16(sum / numFull)
-		s.mixed[i] = softSaturate(sum, math.MaxInt16)
+		s.mixed[i] = softSaturate(summed[i], math.MaxInt16)
 	}
 
 	// ensure these are cleaned up
@@ -167,15 +175,5 @@ type mixedPCMSample interface {
 }
 
 func clampInt16[S mixedPCMSample](val S) int16 {
-	const (
-		Min = math.MinInt16
-		Max = math.MaxInt16
-	)
-	if val < Min {
-		return Min
-	}
-	if val > Max {
-		return Max
-	}
-	return int16(val)
+	return int16(min(max(val, math.MinInt16), math.MaxInt16))
 }
