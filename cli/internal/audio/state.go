@@ -52,8 +52,7 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 
 		log.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
 		decodeBuf := make([]int16, pcmBufferSize)
-		// pcm := make([]int16, 0, pcmBufferSize)
-		pcm := ringbuffer.New(pcmBufferSize * 8)
+		pcm := ringbuffer.New(ringBufferSize)
 		c.streams.add(track.StreamID(), &pcm)
 
 		for {
@@ -152,7 +151,6 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 			framesDecoded := samplesDecoded * NumChannels
 			// Write decoded PCM to playback buffer, which malgo will pull from for playback
 			c.stream.mu.Lock()
-			// c.stream.rb = append(c.stream.rb, decodeBuf[:framesDecoded]...)
 			c.stream.rb.Write(decodeBuf[:framesDecoded])
 			c.stream.mu.Unlock()
 
@@ -177,11 +175,7 @@ func (c *Call) DataProc() malgo.DataProc {
 		}
 
 		// write a full sample to the speaker buffer
-		// copy(pOutputSample, int16ToBytes(c.stream.rb[:samplesToRead]))
-		// c.stream.rb = c.stream.rb[samplesToRead:]
-
 		_ = c.stream.rb.Read(writeBuffer)
 		copy(pOutputSample, int16ToBytes(writeBuffer))
-		clear(writeBuffer)
 	}
 }

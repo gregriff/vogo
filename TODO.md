@@ -1,7 +1,7 @@
 # TODOs
 
 ### Next:
-- try splitting summing and tanh
+- replace track.ReadRTP with manual read, err handling and prealloc []byte to hold it.
 - slog client
 - get lower MTU working:
 ```use pion's webrtc package in my go program for voice chats. I set the MTU to 3000 to avoid overruns. is this too high or could

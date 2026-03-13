@@ -43,36 +43,6 @@ func TestStreamsMix(t *testing.T) {
 	// 	}
 	// })
 
-	t.Run("clamps overflow", func(t *testing.T) {
-		s := newStreams()
-		pcm := []int16{math.MaxInt16, math.MaxInt16}
-		a := ringbuffer.New(2)
-		b := ringbuffer.New(2)
-		a.Write(pcm)
-		b.Write(pcm)
-		s.add("a", &a)
-		s.add("b", &b)
-		s.mix(2)
-		if s.mixed[0] > math.MaxInt16 {
-			t.Errorf("sample overflowed int16: %d", s.mixed[0])
-		}
-	})
-
-	t.Run("clamps underflow", func(t *testing.T) {
-		s := newStreams()
-		pcm := []int16{math.MaxInt16, math.MaxInt16}
-		a := ringbuffer.New(2)
-		b := ringbuffer.New(2)
-		a.Write(pcm)
-		b.Write(pcm)
-		s.add("a", &a)
-		s.add("b", &b)
-		s.mix(2)
-		if s.mixed[0] < math.MinInt16 {
-			t.Errorf("sample underflow int16: %d", s.mixed[0])
-		}
-	})
-
 	t.Run("silence streams mix to silence", func(t *testing.T) {
 		s := newStreams()
 		pcm := []int16{0, 0, 0}
@@ -116,7 +86,7 @@ const pcmAmplitude = 3000 // can be up to math.MaxInt16
 func BenchmarkMix(b *testing.B) {
 	const bufSize = pcmBufferSize * 8
 
-	b.Run("branchless-v1_s=1", func(b *testing.B) {
+	b.Run("branchless-v1_n=1", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -136,7 +106,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("branchless-v1_s=2", func(b *testing.B) {
+	b.Run("branchless-v1_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -157,7 +127,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("branchless-v1_s=3", func(b *testing.B) {
+	b.Run("branchless-v1_n=3", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -181,7 +151,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("slow_s=1", func(b *testing.B) {
+	b.Run("slow_n=1", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -197,7 +167,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("slow_s=2", func(b *testing.B) {
+	b.Run("slow_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -218,7 +188,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("slow_s=3", func(b *testing.B) {
+	b.Run("slow_n=3", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -245,44 +215,28 @@ func BenchmarkMix(b *testing.B) {
 }
 
 func (s *streams) mixSlow(numSamples int) {
-
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [maxStreams]bufView{}, int32(0)
+	full, numFull := [maxStreams]unsafe.Pointer{}, int32(0)
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
 			// since we're in the lock and ensured length, we can use unsafe access
 			_ = rb.Read(s.writeBufs[numFull][:])
-			full[numFull] = newBufView(&s.writeBufs[numFull])
+			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
 			numFull++
 		}
 	}
 
 	// ensure previous mixed pcm is erased
-	for i := range s.mixed {
-		s.mixed[i] = 0
-	}
+	clear(s.mixed[:])
 	if numFull == 0 || len(s.data) == 0 {
 		return
 	}
 
 	// if only one other person in the room, don't mix, just write their pcm
 	if numFull == 1 {
-		src := *full[0].buf
-
-		// avoid bounds checks
-		// _ = s.mixed[numSamples-1]
-		// _ = src[numSamples-1]
-
-		// TODO: replace with copy() and test
-		// TODO: can call rb.Read(s.mixed[:numSamples]) here BUT Read() is already called above
-		for i := range numSamples {
-			s.mixed[i] = src[i]
-		}
-		// copy(s.mixed[:], src[:numSamples])
+		copy(s.mixed[:], s.writeBufs[0][:numSamples])
 		// remove samples from stream that was written.
-		// *full[0].buf = src[numSamples:]  // unness currently
-		full[0].buf = nil
-		full[0].ptr = nil
+		full[0] = nil
 		return
 	}
 
@@ -302,7 +256,7 @@ func (s *streams) mixSlow(numSamples int) {
 		offset = uintptr(i) * int16Size
 		for j := range numFull { // TODO: use SIMD
 			// use ptr arithmetic for no bounds checks for branchless SIMD.
-			sum += int32(*((*int16)(unsafe.Add(full[j].ptr, offset))))
+			sum += int32(*((*int16)(unsafe.Add(full[j], offset))))
 		}
 		// s.mixed[i] = clampInt16(sum / numFull)
 		s.mixed[i] = softSaturate(sum, math.MaxInt16)
@@ -310,7 +264,6 @@ func (s *streams) mixSlow(numSamples int) {
 
 	// ensure these are cleaned up
 	for i := range numFull {
-		full[i].buf = nil
-		full[i].ptr = nil
+		full[i] = nil
 	}
 }

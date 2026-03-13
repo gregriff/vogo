@@ -85,7 +85,7 @@ answer: build
 # using VOGOENV, join the channel created by `make channel`.
 join: announce build
 	@echo "joining $(USER_ONE)/$(CHANNEL_NAME)..."
-	GOMAXPROCS=2 $(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH) --pprof=localhost:6060
+	$(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH) --pprof=localhost:6060
 
 PPROF_DIR = ../.pprof/vogo
 PROFILE_DIR ?= ${PPROF_DIR}/$(shell date +"%m-%d_%H:%M")

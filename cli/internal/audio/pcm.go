@@ -27,7 +27,7 @@ type stream struct {
 }
 
 func newStream() stream {
-	return stream{ 
+	return stream{
 		rb: ringbuffer.New(ringBufferSize),
 	}
 }
@@ -41,7 +41,7 @@ type streams struct {
 	// data stores references to the ringbuffers that each TrackRemote writes data to from the network.
 	data map[string]*ringbuffer.RingBuffer
 
-	// these are used during mixing to allow for easier vectorized iteration of pcm to mix.
+	// these are used during mixing to allow for easier vectorized iteration of pcm.
 	writeBufs [maxStreams][pcmBufferSize]int16
 
 	// this is where mixed pcm is written.
@@ -80,19 +80,6 @@ func (s *streams) remove(id string) {
 	log.Printf("INFO: removed %s's stream", id)
 }
 
-// bufView allows for unsafe access to an *[]int16 pcm buffer. [ptr] points to
-// the first element in the backing array to allow for pointer arithmetic. [buf]
-// is a pointer to the slice struct to allow for reslicing, visible to other goroutines
-// (RemoteTrack callback) holding a reference to the slice.
-type bufView struct {
-	ptr unsafe.Pointer
-	buf *[pcmBufferSize]int16
-}
-
-func newBufView(b *[pcmBufferSize]int16) bufView {
-	return bufView{ptr: unsafe.Pointer(&(*b)[0]), buf: b}
-}
-
 // mix takes all [s.bufs] that have at least [numSamples] samples and mixes their pcm data, writing the result to
 // [s.mixed]. It must be run within a mutex lock. If [full] is empty due to network conditions,
 // or [s.bufs] is empty due to none being added, the caller can still write [s.mixed]
@@ -100,14 +87,15 @@ func newBufView(b *[pcmBufferSize]int16) bufView {
 // Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams
 func (s *streams) mix(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [maxStreams]bufView{}, int32(0)
+	full, numFull := [maxStreams]unsafe.Pointer{}, int32(0)
+
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
 			// copy the full pcm buf so we can vectorize access easily.
 			_ = rb.Read(s.writeBufs[numFull][:])
 
 			// since we're in the lock and ensured length, we can use unsafe access.
-			full[numFull] = newBufView(&s.writeBufs[numFull])
+			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
 			numFull++
 		}
 	}
@@ -120,9 +108,8 @@ func (s *streams) mix(numSamples int) {
 
 	// if only one other person in the room, don't mix, just write their pcm
 	if numFull == 1 {
-		copy(s.mixed[:], full[0].buf[:numSamples])
-		full[0].buf = nil
-		full[0].ptr = nil
+		copy(s.mixed[:], s.writeBufs[0][:numSamples])
+		full[0] = nil
 		return
 	}
 
@@ -143,7 +130,7 @@ func (s *streams) mix(numSamples int) {
 		offset = uintptr(i) * int16Size
 		for j := range numFull {
 			// use ptr arithmetic for no bounds checks for branchless SIMD.
-			sum += int32(*((*int16)(unsafe.Add(full[j].ptr, offset))))
+			sum += int32(*((*int16)(unsafe.Add(full[j], offset))))
 		}
 		summed[i] = sum
 	}
@@ -158,8 +145,7 @@ func (s *streams) mix(numSamples int) {
 
 	// ensure these are cleaned up
 	for i := range numFull {
-		full[i].buf = nil
-		full[i].ptr = nil
+		full[i] = nil
 	}
 }
 
@@ -170,10 +156,10 @@ func softSaturate(sum int32, threshold float64) int16 {
 	return clampInt16(saturated)
 }
 
-type mixedPCMSample interface {
+type summedPCMSample interface {
 	int32 | float64
 }
 
-func clampInt16[S mixedPCMSample](val S) int16 {
+func clampInt16[S summedPCMSample](val S) int16 {
 	return int16(min(max(val, math.MinInt16), math.MaxInt16))
 }
