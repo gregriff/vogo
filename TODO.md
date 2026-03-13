@@ -1,7 +1,7 @@
 # TODOs
 
 ### Next:
-- replace track.ReadRTP with manual read, err handling and prealloc []byte to hold it.
+- replace track.ReadRTP with manual read, err handling and prealloc []byte to hold it. (use bytesBuffer with new .Peek()?)
 - slog client
 - get lower MTU working:
 ```use pion's webrtc package in my go program for voice chats. I set the MTU to 3000 to avoid overruns. is this too high or could

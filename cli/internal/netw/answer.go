@@ -28,7 +28,7 @@ import (
 func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
 	conn := wrtc.NewConnection(uuid.New(), creds.stunServer, track, true)
-	audioState := audio.NewCall(track)
+	audioState := audio.NewCall(track, wrtc.RecvMTU)
 	audioState.AddPeer(conn.Pc)
 	defer func() {
 		if err := wrtc.ClosePC(conn.Pc, true); err != nil {

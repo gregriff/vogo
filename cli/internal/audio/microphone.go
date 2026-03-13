@@ -118,15 +118,11 @@ func (m *microphone) Start(ctx context.Context) error {
 			}
 
 			// Extract one frame and remove it from the buffer
-			// frameData := m.pcm.rb[:frameSize]
-			// m.pcm.rb = m.pcm.rb[frameSize:] // TODO: this may leak
-
 			_ = m.pcm.rb.Read(frameBuffer) // overwrites whatever's in there
 			m.pcm.mu.Unlock()
 
 			// encode to opus
 			bytesEncoded, err := encoder.Encode(frameBuffer, opusBuffer)
-			// clear(frameBuffer)
 			if err != nil {
 				log.Println("OPUS ENCODE ERROR:", err)
 				continue
@@ -138,7 +134,6 @@ func (m *microphone) Start(ctx context.Context) error {
 				Duration: frameDuration,
 			})
 
-			// TODO: send these on a chan?
 			if failed != nil {
 				log.Println("WriteSample error, contains failed peers:", err)
 				m.failedPeers <- failed

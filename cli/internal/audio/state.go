@@ -9,6 +9,8 @@ import (
 
 	"github.com/gen2brain/malgo"
 	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
+	"github.com/pion/interceptor"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 	"gopkg.in/hraban/opus.v2"
 )
@@ -17,10 +19,11 @@ type Channel struct {
 	Mic     microphone
 	Speaker speaker
 	streams streams
+	recvMTU int
 }
 
-func NewChannel(track *webrtc.TrackLocalStaticSample) *Channel {
-	return &Channel{newMicrophone(track), newSpeaker(), newStreams()}
+func NewChannel(track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
+	return &Channel{newMicrophone(track), newSpeaker(), newStreams(), recvMTU}
 }
 
 // AddPeer sets an event handler on pc that decodes incoming audio.
@@ -50,25 +53,27 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 			log.Panicf("decoder init error: %v", err)
 		}
 
-		log.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
+		packetBuf := make([]byte, c.recvMTU)
 		decodeBuf := make([]int16, pcmBufferSize)
 		pcm := ringbuffer.New(ringBufferSize)
 		c.streams.add(track.StreamID(), &pcm)
+		log.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
 
 		for {
+			r := &rtp.Packet{}
+
 			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
-			packet, _, readErr := track.ReadRTP()
-			if readErr != nil {
-				if readErr == io.EOF {
+			_, err := ReadRTP(r, packetBuf, track, c.recvMTU)
+			if err != nil {
+				if err == io.EOF {
 					c.streams.remove(track.StreamID())
 					return // Track closed, exit loop
 				}
-				log.Printf("PACKET READ ERR: %v", readErr)
 				continue // Temporary error, keep trying
 			}
 
 			// TODO: check for 0 samples decoded and call PLC?
-			samplesDecoded, decodeErr := decoder.Decode(packet.Payload, decodeBuf)
+			samplesDecoded, decodeErr := decoder.Decode(r.Payload, decodeBuf)
 			if decodeErr != nil {
 				log.Printf("DECODE ERROR: %v", decodeErr)
 				continue
@@ -109,10 +114,12 @@ type Call struct {
 	Mic     microphone
 	Speaker speaker
 	stream  stream
+
+	recvMTU int
 }
 
-func NewCall(track *webrtc.TrackLocalStaticSample) *Call {
-	return &Call{newMicrophone(track), newSpeaker(), newStream()}
+func NewCall(track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
+	return &Call{newMicrophone(track), newSpeaker(), newStream(), recvMTU}
 }
 
 // AddPeer sets an event handler on pc that writes incoming audio data to the speaker.
@@ -129,20 +136,22 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 			log.Panicf("decoder init error: %v", err)
 		}
 
+		packetBuf := make([]byte, c.recvMTU)
 		decodeBuf := make([]int16, pcmBufferSize)
 		for {
+			r := &rtp.Packet{}
+
 			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
-			packet, _, readErr := track.ReadRTP()
-			if readErr != nil {
-				if readErr == io.EOF {
+			_, err := ReadRTP(r, packetBuf, track, c.recvMTU)
+			if err != nil {
+				if err == io.EOF {
 					return // Track closed, exit loop
 				}
-				log.Println("PACKET READ ERR: ", readErr)
 				continue // Temporary error, keep trying
 			}
 
 			// TODO: check for 0 samples decoded and call PLC?
-			samplesDecoded, decodeErr := decoder.Decode(packet.Payload, decodeBuf)
+			samplesDecoded, decodeErr := decoder.Decode(r.Payload, decodeBuf)
 			if decodeErr != nil {
 				log.Println("DECODE ERROR: ", decodeErr.Error())
 				continue
@@ -178,4 +187,20 @@ func (c *Call) DataProc() malgo.DataProc {
 		_ = c.stream.rb.Read(writeBuffer)
 		copy(pOutputSample, int16ToBytes(writeBuffer))
 	}
+}
+
+// ReadRTP is a rewrite of webrtc.TrackRemote.ReadRTP() that reuses a
+// provided buffer and rtp Packet so they don't escape to the heap.
+func ReadRTP(r *rtp.Packet, buf []byte, t *webrtc.TrackRemote, recvMTU int) (interceptor.Attributes, error) {
+	n, iAttrs, err := t.Read(buf)
+	if err != nil {
+		log.Printf("PACKET READ ERR: %v", err)
+		return nil, err
+	}
+
+	if err := r.Unmarshal(buf[:n]); err != nil {
+		log.Printf("PACKET UNMARSHAL ERR: %v", err)
+		return nil, err
+	}
+	return iAttrs, err
 }

@@ -152,6 +152,7 @@ func (s *streams) mix(numSamples int) {
 // softSaturate takes a summed int32 value and a threshold,
 // returns a soft-saturated int16 using tanh.
 func softSaturate(sum int32, threshold float64) int16 {
+	// note: could prob reimpl math.tanh with simd.
 	saturated := math.Tanh(float64(sum)/threshold) * threshold
 	return clampInt16(saturated)
 }

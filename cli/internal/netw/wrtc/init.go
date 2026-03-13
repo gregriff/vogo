@@ -8,6 +8,8 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
+const RecvMTU = 3_000
+
 var opusCodec = webrtc.RTPCodecCapability{
 	MimeType:     webrtc.MimeTypeOpus,
 	ClockRate:    audio.SampleRate,
@@ -81,7 +83,7 @@ func newPeerConnection(stunServer string) *webrtc.PeerConnection {
 
 	// not sure if this should be avoided but this prevents packet size overruns
 	settingEngine := webrtc.SettingEngine{}
-	settingEngine.SetReceiveMTU(3_000)
+	settingEngine.SetReceiveMTU(RecvMTU)
 
 	// Possible todo: ICE renomination
 	// For advanced use with a custom generator and interval.

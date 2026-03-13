@@ -21,7 +21,7 @@ import (
 func CallFriend(ctx context.Context, creds *credentials, recipient string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
 	conn := wrtc.NewConnection(uuid.New(), creds.stunServer, track, true)
-	audioState := audio.NewCall(track)
+	audioState := audio.NewCall(track, wrtc.RecvMTU)
 	audioState.AddPeer(conn.Pc)
 	conn.Pc.OnSignalingStateChange(func(s webrtc.SignalingState) {
 		wrtc.OnSignalingStateChange(s, creds.username, recipient)
