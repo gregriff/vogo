@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	NumChannels  = 2
+	NumChannels  = 1
 	SampleRate   = 48_000
 	samplesPerMs = SampleRate / 1000
 
@@ -25,6 +25,8 @@ const (
 
 	// size of buffer to hold encoded opus to be written to packets.
 	opusBufferSize = frameSize / 2
+
+	opusBitrate = 64_000
 
 	// size of buffer to hold decoded PCM from the network.
 	pcmBufferSize = frameSize

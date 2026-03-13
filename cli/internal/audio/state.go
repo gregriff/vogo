@@ -69,6 +69,7 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 					c.streams.remove(track.StreamID())
 					return // Track closed, exit loop
 				}
+				log.Printf("PACKET READ ERR: %v", err)
 				continue // Temporary error, keep trying
 			}
 
@@ -147,6 +148,7 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 				if err == io.EOF {
 					return // Track closed, exit loop
 				}
+				log.Printf("PACKET READ ERR: %v", err)
 				continue // Temporary error, keep trying
 			}
 
@@ -194,10 +196,8 @@ func (c *Call) DataProc() malgo.DataProc {
 func ReadRTP(r *rtp.Packet, buf []byte, t *webrtc.TrackRemote, recvMTU int) (interceptor.Attributes, error) {
 	n, iAttrs, err := t.Read(buf)
 	if err != nil {
-		log.Printf("PACKET READ ERR: %v", err)
 		return nil, err
 	}
-
 	if err := r.Unmarshal(buf[:n]); err != nil {
 		log.Printf("PACKET UNMARSHAL ERR: %v", err)
 		return nil, err

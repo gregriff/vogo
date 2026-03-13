@@ -96,6 +96,9 @@ func (m *microphone) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("encoder error: %w", err)
 	}
+	encoder.SetMaxBandwidth(opus.Fullband)
+	encoder.SetBitrate(opusBitrate)
+	encoder.SetDTX(true)
 	// complexity, _ := encoder.Complexity()
 	// encoder.SetInBandFEC(true)  // adds latency, probably use PLC
 
