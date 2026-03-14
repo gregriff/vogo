@@ -123,7 +123,7 @@ func joinChannelAndConnect(
 	defer conns.CloseAll()
 	for id, name := range res.Users {
 		log.Printf("creating new connection with %s", name)
-		c := wrtc.NewConnection(id, creds.stunServer, audioState.Mic.Track(), false)
+		c := wrtc.NewConnection(id, name, creds.stunServer, audioState.Mic.Track(), false)
 		conns.Update(name, c)
 		statusWg.Go(func() {
 			_ = c.HandleEvents(ctx, name)
@@ -225,12 +225,18 @@ func handleOfferMessage(
 
 	var conn *wrtc.Connection
 	if conn = conns.Get(offer.From); conn != nil {
-		if err := conn.Pc.Close(); err != nil {
-			log.Printf("error closing existing pc for %s: %v", offer.From, err)
-		}
+		conn.Close()
+		// if err := conn.Pc.Close(); err != nil {
+		// 	log.Printf("error closing existing pc for %s: %v", offer.From, err)
+		// }
 		log.Printf("recreating offer to %s", offer.From)
 	}
-	conn = wrtc.NewConnection(offer.FromId, conns.Server.StunServer, audioState.Mic.Track(), false)
+	if conns.Len() >= audio.MaxStreams {
+		// TODO: send err on channel for UI to pick up.
+		log.Printf("could not accept offer from %s: already have max audio streams. num conns=%d", offer.From, conns.Len())
+		return
+	}
+	conn = wrtc.NewConnection(offer.FromId, offer.From, conns.Server.StunServer, audioState.Mic.Track(), false)
 	audioState.AddPeer(conn.Pc)
 	conns.Update(offer.From, conn)
 	log.Printf("received offer from %s, created conn", offer.From)
@@ -239,9 +245,7 @@ func handleOfferMessage(
 	err := conn.CreateAnswer(&offer.Sd)
 	if err != nil { // should prob retry
 		log.Printf("error creating answer: %v", err)
-		if cErr := conn.Pc.GracefulClose(); cErr != nil {
-			log.Printf("error closing pc after answer creation error: %v", cErr)
-		}
+		conn.Close()
 		return
 	}
 
@@ -258,9 +262,7 @@ func handleOfferMessage(
 	aMsg := wsock.Message{Type: "answer", Data: bytes}
 	if err := websocket.JSON.Send(conns.Server.Ws, aMsg); err != nil {
 		log.Printf("error sending answer: %v", err)
-		if cErr := conn.Pc.GracefulClose(); cErr != nil {
-			log.Printf("error closing pc after send answer error: %v", cErr)
-		}
+		conn.Close()
 		return
 	}
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
@@ -286,9 +288,7 @@ func handleAnswerMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 	}
 	if err := conn.Pc.SetRemoteDescription(answer.Sd); err != nil {
 		log.Printf("error while setting remote description: %v", err)
-		if cErr := conn.Pc.GracefulClose(); cErr != nil {
-			log.Printf("error closing pc after remote description error: %v", cErr)
-		}
+		conn.Close()
 		return
 	}
 	conn.Once.Do(func() { close(conn.RemoteSet) })
@@ -315,8 +315,6 @@ func handleIceMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 	}
 	if data.Candidate.Candidate == "" {
 		log.Printf("%s NIL recv", msg.Type)
-	} else {
-		log.Printf("%s candidate received: %s\n", msg.Type, *data.Candidate.SDPMid)
 	}
 }
 

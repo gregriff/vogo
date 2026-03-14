@@ -14,41 +14,15 @@ var opusCodec = webrtc.RTPCodecCapability{
 	MimeType:     webrtc.MimeTypeOpus,
 	ClockRate:    audio.SampleRate,
 	Channels:     audio.NumChannels,
-	SDPFmtpLine:  "", // "minptime=10;useinbandfec=1",
+	SDPFmtpLine:  "", // "minptime=10",
 	RTCPFeedback: nil,
 }
 
 // NewAudioPeerConnection creates the PeerConnection for a bidirectional audio webrtc connection.
-// It also returns the TrackLocalStaticSample used to write microphone audio to, and two channels,
-// one for receiving the client's ICE candidates as they're gathered, and the other for signaling
-// when the PeerConnection moves to a connected state.
-// TODO: create a struct for this retval.
-func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample, exitOnFail bool) (
-	*webrtc.PeerConnection,
-	<-chan webrtc.ICECandidateInit,
-	<-chan webrtc.PeerConnectionState,
-	<-chan struct{},
-) {
+func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample) *webrtc.PeerConnection {
 	pc := newPeerConnection(stunServer)
 	addAudioTrack(pc, track)
-
-	var (
-		// carries this client's ICE candidates as they're gathered
-		candidates = make(chan webrtc.ICECandidateInit, 10)
-
-		// notification channel for when the peer connection becomes connected
-		connected = make(chan struct{})
-
-		// channel to pass along connection status updates
-		updates = make(chan webrtc.PeerConnectionState)
-	)
-	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		onICECandidate(c, candidates)
-	})
-	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		onConnectionStateChange(s, updates, connected, exitOnFail)
-	})
-	return pc, candidates, updates, connected
+	return pc
 }
 
 // newPeerConnection creates a PeerConnection configured with the Opus audio codec.
@@ -70,9 +44,9 @@ func newPeerConnection(stunServer string) *webrtc.PeerConnection {
 	// for each PeerConnection.
 	// interceptorRegistry := &interceptor.Registry{}
 
-	// jitterBufferFactory, err := jitterbuffer.NewInterceptor()
+	// jitterBufferFactory, err := jitterbuffer.NewInterceptor(jitterbuffer.WithMinimumPacketCount((uint(2))))
 	// if err != nil {
-	// 	panic(err)
+	// panic(err)
 	// }
 	// interceptorRegistry.Add(jitterBufferFactory)
 
@@ -108,7 +82,6 @@ func newPeerConnection(stunServer string) *webrtc.PeerConnection {
 	}
 	pc, err := api.NewPeerConnection(config)
 	if err != nil {
-		_ = ClosePC(pc, true)
 		log.Panicf("error creating PeerConnection: %v", err)
 	}
 	return pc
@@ -132,11 +105,9 @@ func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSamp
 		},
 	)
 	if err != nil {
-		_ = ClosePC(pc, true)
 		log.Panicf("error adding transceiver: %v", err)
 	}
 	if err = audioTrsv.Sender().ReplaceTrack(track); err != nil {
-		_ = ClosePC(pc, true)
 		log.Panicf("error replacing track: %v", err)
 	}
 }

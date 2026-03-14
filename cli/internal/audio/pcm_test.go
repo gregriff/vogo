@@ -9,7 +9,7 @@ import (
 	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 )
 
-func TestStreamsMix(t *testing.T) {
+func TestMix(t *testing.T) {
 	t.Run("single full stream", func(t *testing.T) {
 		numSamples := 5
 		s := newStreams()
@@ -216,11 +216,11 @@ func BenchmarkMix(b *testing.B) {
 
 func (s *streams) mixSlow(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [maxStreams]unsafe.Pointer{}, int32(0)
+	full, numFull := [MaxStreams]unsafe.Pointer{}, int32(0)
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
-			// since we're in the lock and ensured length, we can use unsafe access
 			_ = rb.Read(s.writeBufs[numFull][:])
+			// since we're in the lock and ensured length, we can use unsafe access.
 			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
 			numFull++
 		}
@@ -235,18 +235,18 @@ func (s *streams) mixSlow(numSamples int) {
 	// if only one other person in the room, don't mix, just write their pcm
 	if numFull == 1 {
 		copy(s.mixed[:], s.writeBufs[0][:numSamples])
-		// remove samples from stream that was written.
 		full[0] = nil
 		return
 	}
 
-	// avoid bounds checks
-	// _ = s.mixed[numSamples-1]
-	// _ = full[numFull-1]
+	summed := [pcmBufferSize]int32{}
 
-	// mix full pcm bufs and write to s.mixed
-	// NOTE: for SIMD, it's prob better to create an array of all the sums,
-	// then do the mixing on those sums after arr is full.
+	// avoid bounds checks
+	// _ = full[numFull-1]
+	// _ = summed[numSamples-1]
+
+	// sum samples for each buffer
+	// TODO: SIMD
 	const zero = int32(0)
 	const int16Size = unsafe.Sizeof(int16(0))
 	var sum int32
@@ -254,12 +254,19 @@ func (s *streams) mixSlow(numSamples int) {
 	for i := range numSamples {
 		sum = zero
 		offset = uintptr(i) * int16Size
-		for j := range numFull { // TODO: use SIMD
+		for j := range numFull {
 			// use ptr arithmetic for no bounds checks for branchless SIMD.
 			sum += int32(*((*int16)(unsafe.Add(full[j], offset))))
 		}
+		summed[i] = sum
+	}
+
+	// actual mixing
+	// _ = s.mixed[numSamples-1]
+	// _ = summed[numSamples-1]
+	for i := range numSamples {
 		// s.mixed[i] = clampInt16(sum / numFull)
-		s.mixed[i] = softSaturate(sum, math.MaxInt16)
+		s.mixed[i] = softSaturate(summed[i], math.MaxInt16)
 	}
 
 	// ensure these are cleaned up

@@ -49,7 +49,7 @@ func (s *speaker) Init(onSendFrames malgo.DataProc) error {
 	config.SampleRate = SampleRate
 	config.NoClip = 1
 	config.NoPreSilencedOutputBuffer = 1
-	config.PeriodSizeInMilliseconds = frameDurationMs
+	config.PeriodSizeInMilliseconds = playbackPeriodMs
 
 	device, err := malgo.InitDevice(s.ctx.Context, config, malgo.DeviceCallbacks{
 		Data: onSendFrames, // note: could also include a stop callback

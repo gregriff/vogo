@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"os"
 	"sync"
 
 	"github.com/google/uuid"
@@ -27,34 +28,66 @@ type Connection struct {
 	Pc *webrtc.PeerConnection
 
 	// channel for sending ICE Candidates
-	Candidates <-chan webrtc.ICECandidateInit
+	Candidates chan webrtc.ICECandidateInit
 
-	StatusUpdates <-chan webrtc.PeerConnectionState
+	ConnectionStateChanges chan webrtc.PeerConnectionState
+	ICEStateChanges        chan webrtc.ICEConnectionState
 
 	// notification channels
-	Connected <-chan struct{}
+	Connected chan struct{}
 	RemoteSet chan struct{}
 
-	Once sync.Once
+	Once      sync.Once
+	closeOnce sync.Once
 }
 
 // NewConnection creates a new peer connection with a vogo user given their uuid, and returns a *Connection
 // so the caller can keep track of the connection and signaling states.
 func NewConnection(
 	id uuid.UUID,
+	recipient,
 	stunServer string,
 	track *webrtc.TrackLocalStaticSample,
 	exitOnClose bool,
 ) *Connection {
-	pc, candidates, updates, connected := NewAudioPeerConnection(stunServer, track, exitOnClose)
-	return &Connection{
-		Id:            id,
-		Pc:            pc,
-		Candidates:    candidates,
-		StatusUpdates: updates,
-		Connected:     connected,
-		RemoteSet:     make(chan struct{}),
+	pc := NewAudioPeerConnection(stunServer, track)
+	conn := &Connection{
+		Id: id,
+		Pc: pc,
+
+		// where ice candidates will be sent as they're gathered
+		Candidates: make(chan webrtc.ICECandidateInit, 10),
+
+		ICEStateChanges: make(chan webrtc.ICEConnectionState),
+
+		// channel to pass along connection status pcUpdates
+		ConnectionStateChanges: make(chan webrtc.PeerConnectionState),
+
+		// notification channel for when the peer connection becomes connected
+		Connected: make(chan struct{}),
+
+		RemoteSet: make(chan struct{}),
 	}
+
+	// set up webrtc event handlers
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c == nil {
+			close(conn.Candidates)
+			return
+		}
+		conn.Candidates <- c.ToJSON()
+	})
+	pc.OnSignalingStateChange(func(s webrtc.SignalingState) {
+		log.Printf("signaling state with %s changed to %s", recipient, s.String())
+	})
+	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+		conn.onConnectionStateChange(s, exitOnClose)
+	})
+
+	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
+		conn.onICEConnectionStateChange(s, exitOnClose)
+	})
+	return conn
 }
 
 type candidateType string
@@ -128,9 +161,7 @@ func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, cal
 			msg := wsock.Message{Type: string(tag), Data: bytes}
 			if err := websocket.JSON.Send(ws, msg); err != nil {
 				log.Printf("error sending candidate: %v", err)
-				if cErr := c.Pc.GracefulClose(); cErr != nil {
-					log.Printf("error closing pc after send candidate error: %v", cErr)
-				}
+				c.Close()
 				return
 			}
 			if !ok {
@@ -141,17 +172,67 @@ func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, cal
 }
 
 // HandleEvents will handle PeerConnection-related events such as status changes, manual retries
-// and failure to write audio packets to the network.
+// and failure to write audio packets to the network. In general, it handles updating the UI with the status changes.
 func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case status := <-c.StatusUpdates:
-			log.Printf("Peer Connection State with %s has changed: %s\n", peerName, status.String())
-			// case failedPeer := <-c.audioState.Mic.FailedPeers():
+		case status, ok := <-c.ConnectionStateChanges:
+			log.Printf("PeerConnectionState with %s has changed: %s\n", peerName, status.String())
+			if !ok {
+				c.ConnectionStateChanges = nil
+			}
+		// case failedPeer := <-c.audioState.Mic.FailedPeers():
+		case iceStatus, ok := <-c.ICEStateChanges:
+			log.Printf("IceConnectionState with %s has changed: %s\n", peerName, iceStatus.String())
+			if !ok {
+				c.ICEStateChanges = nil
+			}
 		}
 	}
+}
+
+// onConnectionStateChange performs mandatory event handling for connection state changes. Logging
+// and other non-essential event handling should be done in handleEvents.
+func (c *Connection) onConnectionStateChange(
+	state webrtc.PeerConnectionState,
+	exitOnFail bool,
+) {
+	c.ConnectionStateChanges <- state
+
+	switch state {
+	case webrtc.PeerConnectionStateConnected:
+		close(c.Connected)
+	// https://github.com/pion/webrtc/wiki/Release-WebRTC@v4.0.0
+	// if PeerConnection was explicitly closed, this usually happens from a DTLS CloseNotify
+	case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
+		close(c.ConnectionStateChanges)
+		if exitOnFail {
+			os.Exit(0)
+		}
+		c.closeOnce.Do(func() { _ = ClosePC(c.Pc, true) })
+	}
+}
+
+func (c *Connection) onICEConnectionStateChange(state webrtc.ICEConnectionState, exitOnClose bool) {
+	c.ICEStateChanges <- state
+
+	switch state {
+	case webrtc.ICEConnectionStateClosed, webrtc.ICEConnectionStateFailed:
+		close(c.ICEStateChanges)
+		if exitOnClose {
+			os.Exit(0)
+		}
+		c.closeOnce.Do(func() { _ = ClosePC(c.Pc, true) })
+	}
+}
+
+// Close closes the PeerConnection held by the Connection.
+func (c *Connection) Close() {
+	// Note: replacing this with graceful close will hang and cause audio bug.
+	// Some webrtc goroutine is not finishing...
+	c.closeOnce.Do(func() { _ = c.Pc.Close() })
 }
 
 type serverConn struct {
@@ -201,6 +282,12 @@ func (cm *ConnectionMap) Update(key string, c *Connection) {
 	cm.data[key] = c
 }
 
+func (cm *ConnectionMap) Len() int {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	return len(cm.data)
+}
+
 // TODO: do we want to call this every time a PC is closed? or retry closed conns?
 // func (cm *ConnectionMap) Delete(key string) {
 // 	cm.mu.Lock()
@@ -223,9 +310,7 @@ func (cm *ConnectionMap) CloseAll() {
 
 	for key, c := range cm.data {
 		wg.Go(func() {
-			if err := c.Pc.GracefulClose(); err != nil {
-				log.Printf("error while trying to close %s's pc: %v", key, err)
-			}
+			c.Close()
 			log.Printf("%s's pc closed", key)
 		})
 	}

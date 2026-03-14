@@ -2,9 +2,20 @@
 
 ### Next:
 - slog client
-- check out track.ReadRTP()'s interceptor.attributes retval
-- have room code listen for pc statuses to know when to destruct audiomixing and connmap
+- Have Connmap merge listening for events from all connections in it, to know when to remove them. 
 - use ansi colors per profile to echo vogoenv
+
+### Opus:
+- try BWE+DRED+Wideband at 12kb/s for DMOS=4.75 quality audio (sounds almost as good as fullband)
+- Enabling BWE: 
+  - comp-time and runtime flag
+  - 48khz sample rate
+  - enc. complexity >=4
+- Enabling DeepPLC: 
+  - set decoder complexity >=5
+  - call decodePLC???
+- Enable LACE or NoLACE:
+  - these require 20ms frames; check if they only apply to <=12kb/s (im at 64)
 
 ##### CI:
 
@@ -31,6 +42,7 @@
 - client/server: gracefully fail when channel not found (sentinel?)
 - disallow user in room to join twice
 - return 409 for duplicate add friend
+- add 'packet-loss-recovery' setting to channel db schema/app schemas. 
 - enfore one-word usernames
 - for tui, status, call, answer and join should all be accessible under one ws endpoint. all client
   funcs should use this one endpoint
@@ -43,7 +55,7 @@
 ### Polish before release
 - ensure ws is using TLS
 - ensure simd is enabled
-- profile cpu and mem
+- make softSaturate threshold configurable by client. 
 - add a updater service that runs async upon client init that checks the vogo github releases for a newer release, and prompts to run
   a new updater binary, that downloads new release and replaces current bin. ensure this preserves symlinks/shortcuts from og bin
 - see if shell completion can be reran after every 'vogo status', to autocomplete the 'vogo answer' command to use the caller's name

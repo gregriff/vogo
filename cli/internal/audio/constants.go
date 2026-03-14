@@ -10,24 +10,31 @@ import (
 
 const (
 	NumChannels  = 1
-	SampleRate   = 48_000
+	SampleRate   = 48_000 // kHz
 	samplesPerMs = SampleRate / 1000
 
 	// denotes how many bytes per element of pcm.
 	AudioFormat = malgo.FormatS16
 
+	// frameDurationMs sets the period size for the mic and speaker callbacks.
+	frameDurationMs = 10
+
 	// the frameDuration is used for webrtc metadata and for packetizing the correct amount of pcm into opus.
-	frameDuration   = 20 * time.Millisecond
-	frameDurationMs = 20
+	frameDuration = frameDurationMs * time.Millisecond
+
+	// sets the period size in ms for miniaudio mic and speaker
+	capturePeriodMs  = frameDurationMs
+	playbackPeriodMs = frameDurationMs // Note: multiply this by 2 if playback glitches happen
 
 	// frameSize is the number of samples per frame.
 	frameSize = NumChannels * frameDurationMs * samplesPerMs
 
-	// size of buffer to hold encoded opus to be written to packets.
-	opusBufferSize = frameSize / 2
+	// size of buffer to hold opus encoded from mic, to be written to packets.
+	opusBufferSize = frameSize
 
+	// opusBitrate sets the bitrate of the opus encoder
 	opusBitrate = 64_000
 
 	// size of buffer to hold decoded PCM from the network.
-	pcmBufferSize = frameSize
+	pcmBufferSize = frameSize * (playbackPeriodMs / capturePeriodMs)
 )

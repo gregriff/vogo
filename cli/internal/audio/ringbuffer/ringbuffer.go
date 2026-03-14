@@ -4,7 +4,8 @@ package ringbuffer
 // reslicing, preventing allocations and GC pressure. RingBuffer is meant to be shared
 // by pointer between the writer and reader, but all methods assume they are using a mutex
 // to prevent data races. RingBuffer should be initialized to be multiple times larger than the
-// pcm frame size as to not overwrite samples during bad network conditions.
+// pcm frame size as to not overwrite samples during bad network conditions. The length and capacity
+// of the underlying buffer are never used in any operation.
 type RingBuffer struct {
 	// pcm data
 	buf []int16
@@ -81,7 +82,9 @@ func (r *RingBuffer) Read(dst []int16) int {
 }
 
 // Len returns the logical length: the number of unread samples in the ringbuffer.
-func (r *RingBuffer) Len() int { return r.count }
+func (r *RingBuffer) Len() int    { return r.count }
+func (r *RingBuffer) Full() bool  { return r.count == r.size }
+func (r *RingBuffer) Empty() bool { return r.count == 0 }
 
 // Peek reads len(dst) samples into dst without consuming.
 // func (r *RingBuffer) Peek(dst []int16) int {
@@ -93,8 +96,6 @@ func (r *RingBuffer) Len() int { return r.count }
 // }
 
 // func (r *RingBuffer) Cap() int    { return r.size }
-// func (r *RingBuffer) Full() bool  { return r.count == r.size }
-// func (r *RingBuffer) Empty() bool { return r.count == 0 }
 // func (r *RingBuffer) Reset() {
 // 	r.head = 0
 // 	r.tail = 0

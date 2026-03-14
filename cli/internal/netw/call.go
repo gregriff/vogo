@@ -20,17 +20,10 @@ import (
 // be cancelled with the provided context, and the first error encountered will be returned.
 func CallFriend(ctx context.Context, creds *credentials, recipient string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
-	conn := wrtc.NewConnection(uuid.New(), creds.stunServer, track, true)
+	conn := wrtc.NewConnection(uuid.New(), recipient, creds.stunServer, track, true)
 	audioState := audio.NewCall(track, wrtc.RecvMTU)
 	audioState.AddPeer(conn.Pc)
-	conn.Pc.OnSignalingStateChange(func(s webrtc.SignalingState) {
-		wrtc.OnSignalingStateChange(s, creds.username, recipient)
-	})
-	defer func() {
-		if err := wrtc.ClosePC(conn.Pc, true); err != nil {
-			log.Println(err)
-		}
-	}()
+	defer conn.Close()
 
 	// g.Go(func() error {
 	// 	start := time.Now()
@@ -109,9 +102,7 @@ func sendCallAndConnect(
 
 	g, gCtx := errgroup.WithContext(ctx)
 	defer func() {
-		if err := closeAndWait(ws, g); err != nil {
-			log.Printf("error: %v", err)
-		}
+		_ = closeAndWait(ws, g)
 	}()
 
 	// gather local ice candidates and write to websocket
@@ -142,16 +133,17 @@ func sendCallAndConnect(
 // recvCandidates reads recipient candidates from ws and adds them to the pc.
 func recvCandidates(ctx context.Context, ws *websocket.Conn, pc *webrtc.PeerConnection) error {
 	var candidate webrtc.ICECandidateInit
+	var count int
 	for {
 		err := wsock.ReceiveJSON(ctx, ws, &candidate)
 		if err != nil {
 			return fmt.Errorf("error reading from ws: %w", err)
 		}
 		if candidate.Candidate == "" {
-			log.Println("ice recv completed")
+			log.Printf("ice recv completed, %d candidates total", count)
 			return nil
 		}
-		log.Println("recv candidate")
+		count++
 		if err := pc.AddICECandidate(candidate); err != nil {
 			log.Println("WARN: error adding ICE candidate: %w", err)
 		}

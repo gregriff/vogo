@@ -27,14 +27,10 @@ import (
 // be cancelled with the provided context, and the first error encountered will be returned.
 func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
-	conn := wrtc.NewConnection(uuid.New(), creds.stunServer, track, true)
+	conn := wrtc.NewConnection(uuid.New(), caller, creds.stunServer, track, true)
 	audioState := audio.NewCall(track, wrtc.RecvMTU)
 	audioState.AddPeer(conn.Pc)
-	defer func() {
-		if err := wrtc.ClosePC(conn.Pc, true); err != nil {
-			log.Println(err)
-		}
-	}()
+	defer conn.Close()
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -45,9 +41,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 		return audioState.Speaker.Init(audioState.DataProc())
 	})
 	defer func() {
-		if err := conn.Pc.GracefulClose(); err != nil {
-			log.Printf("error gracefully closing peer connection: %v\n", err)
-		}
+		conn.Close()
 		_ = audioState.Speaker.Uninit()
 	}()
 
@@ -124,7 +118,9 @@ func answerAndConnect(
 	log.Println("answer sent")
 
 	g, gCtx := errgroup.WithContext(ctx)
-	// defer closeAndWait(ws, g)
+	defer func() {
+		_ = closeAndWait(ws, g)
+	}()
 
 	// gather local ice candidates and write to websocket
 	g.Go(func() error {

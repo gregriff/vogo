@@ -60,7 +60,7 @@ func (m *microphone) Init() error {
 	deviceConfig.Capture.Format = AudioFormat
 	deviceConfig.Capture.Channels = NumChannels
 	deviceConfig.SampleRate = SampleRate
-	deviceConfig.PeriodSizeInMilliseconds = frameDurationMs
+	deviceConfig.PeriodSizeInMilliseconds = capturePeriodMs
 
 	// this controls quality?
 	// deviceConfig.Resampling.Linear.LpfOrder = ?

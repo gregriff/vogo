@@ -13,10 +13,10 @@ import (
 // This file contains structs that store PCM data.
 
 // Note: this would have to be doubled if you want to allow users to send text also.
-const maxStreams = shared.ChannelCapacity - 1
+const MaxStreams = shared.ChannelCapacity - 1
 
-// allocating more size to rb decreases dropped samples due to network conditions
-const ringBufferSize = pcmBufferSize * 8 // 15360 — ~320ms at 48kHz
+// allocating more size to rb prevents overwriting samples after bursty packet arrival
+const ringBufferSize = pcmBufferSize * 6
 
 // stream stores PCM audio data. The microphone writes PCM to its stream, where
 // it is then encoded into Opus and written to a webrtc Track, and in a 1:1 voice call
@@ -42,7 +42,7 @@ type streams struct {
 	data map[string]*ringbuffer.RingBuffer
 
 	// these are used during mixing to allow for easier vectorized iteration of pcm.
-	writeBufs [maxStreams][pcmBufferSize]int16
+	writeBufs [MaxStreams][pcmBufferSize]int16
 
 	// this is where mixed pcm is written.
 	mixed [pcmBufferSize]int16
@@ -50,8 +50,8 @@ type streams struct {
 
 func newStreams() streams {
 	return streams{
-		data:      make(map[string]*ringbuffer.RingBuffer, maxStreams),
-		writeBufs: [maxStreams][pcmBufferSize]int16{},
+		data:      make(map[string]*ringbuffer.RingBuffer, MaxStreams),
+		writeBufs: [MaxStreams][pcmBufferSize]int16{},
 		mixed:     [pcmBufferSize]int16{},
 	}
 }
@@ -64,15 +64,17 @@ func (s *streams) add(id string, rb *ringbuffer.RingBuffer) {
 	if _, ok := s.data[id]; ok {
 		log.Printf("WARN stream with id: %s has already been added", id)
 	}
-	if len(s.data) == maxStreams {
-		log.Printf("WARN there are %d streams", maxStreams)
+	if len(s.data) == MaxStreams {
+		log.Printf("WARN there are %d streams", MaxStreams)
 	}
 	s.data[id] = rb
-	if len(s.data) > maxStreams {
+	if len(s.data) > MaxStreams {
 		log.Panicf("len(streams.bufs): %d, > maxStreams", len(s.data))
 	}
 }
 
+// remove removes a stream. This should be called when a PeerConnection fails.
+// It takes the user's name as the id.
 func (s *streams) remove(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -87,7 +89,7 @@ func (s *streams) remove(id string) {
 // Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams
 func (s *streams) mix(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [maxStreams]unsafe.Pointer{}, int32(0)
+	full, numFull := [MaxStreams]unsafe.Pointer{}, int32(0)
 
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
