@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"log"
+	"net/http"
 	"path/filepath"
 
 	"github.com/gregriff/vogo/server/configs"
@@ -10,12 +11,21 @@ import (
 )
 
 var ConfigFile string
+var pprofAddr string
 
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
 	Use:   "vogo-server",
 	Short: "Facilitates WebRTC signaling and persists call/channel state for Vogo clients",
 	Long:  ``,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if pprofAddr != "" {
+			log.Printf("starting pprof server at %s", pprofAddr)
+			go func() {
+				log.Println(http.ListenAndServe(pprofAddr, nil))
+			}()
+		}
+	},
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
@@ -51,4 +61,6 @@ func init() {
 	configDir := configs.Dir("vogo")
 	defaultConfigFilePath := filepath.Join(configDir, "vogo-server.toml")
 	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config", defaultConfigFilePath, "config file")
+
+	rootCmd.PersistentFlags().StringVar(&pprofAddr, "pprof", "", "enable pprof on addr (e.g. localhost:6060)")
 }

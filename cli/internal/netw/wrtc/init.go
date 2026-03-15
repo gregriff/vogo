@@ -1,7 +1,6 @@
 package wrtc
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/gregriff/vogo/cli/internal/audio"
@@ -110,14 +109,4 @@ func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSamp
 	if err = audioTrsv.Sender().ReplaceTrack(track); err != nil {
 		log.Panicf("error replacing track: %v", err)
 	}
-}
-
-func ClosePC(pc *webrtc.PeerConnection, verbose bool) error {
-	if verbose {
-		log.Println("closing peer connection")
-	}
-	if err := pc.Close(); err != nil {
-		return fmt.Errorf("cannot close peer connection: %w", err)
-	}
-	return nil
 }

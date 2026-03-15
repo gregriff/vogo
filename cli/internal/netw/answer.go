@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
@@ -27,57 +26,68 @@ import (
 // be cancelled with the provided context, and the first error encountered will be returned.
 func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
-	conn := wrtc.NewConnection(uuid.New(), caller, creds.stunServer, track, true)
-	audioState := audio.NewCall(track, wrtc.RecvMTU)
+	conn := wrtc.NewConnection(uuid.New(), caller, creds.stunServer, track)
+	audioState := audio.NewCall(ctx, track, wrtc.RecvMTU)
 	audioState.AddPeer(conn.Pc)
 	defer conn.Close()
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		start := time.Now()
-		defer func() {
-			log.Printf("playback device created in %v", time.Since(start))
-		}()
-		return audioState.Speaker.Init(audioState.DataProc())
+		return audio.CreateMalgoContext(gCtx, audioState.CtxChan)
+	})
+	defer func() {
+		if err := audioState.Uninit(); err != nil {
+			log.Printf("error uninitializing allocated ctx: %v", err)
+		}
+	}()
+
+	g.Go(func() error {
+		return audioState.Speaker.Init(gCtx, audioState.DataProc())
 	})
 	defer func() {
 		conn.Close()
-		_ = audioState.Speaker.Uninit()
+		audioState.Speaker.Uninit()
 	}()
+
+	g.Go(func() error {
+		return audioState.Mic.Init(gCtx)
+	})
+	defer audioState.Mic.Uninit()
 
 	g.Go(func() error {
 		return answerAndConnect(gCtx, conn, creds, caller)
 	})
 
+	// this will return io.EOF when PC fails.
 	g.Go(func() error {
 		return conn.HandleEvents(gCtx, caller)
 	})
 
 	// init microphone, and start it and the speaker once call is connected
 	g.Go(func() error {
-		// todo: could do this in another goroutine and use its init chan
-		if err := audioState.Mic.Init(); err != nil {
-			return err
-		}
-		defer func() {
-			_ = audioState.Mic.Uninit()
-		}()
+		micReady := audioState.Mic.Initialized()
+		speakerReady := audioState.Speaker.Initialized()
 
-		select {
-		case <-gCtx.Done():
-			return nil
-		case <-conn.Connected:
-			<-audioState.Speaker.Initialized()
-			if err := audioState.Speaker.Start(); err != nil {
-				return err
+		for {
+			select {
+			case <-gCtx.Done():
+				return nil
+			case <-conn.Connected:
+				conn.Connected = nil
+			case <-speakerReady:
+				if err := audioState.Speaker.Start(); err != nil {
+					return err
+				}
+				speakerReady = nil
+			case <-micReady:
+				micReady = nil
 			}
-			break
-		}
 
-		if err := audioState.Mic.Start(gCtx); err != nil {
-			return fmt.Errorf("error starting mic: %w", err)
+			// Both initialized and call connected
+			if micReady == nil && speakerReady == nil && conn.Connected == nil {
+				return audioState.Mic.Start(gCtx)
+			}
 		}
-		return nil
 	})
 
 	return g.Wait()

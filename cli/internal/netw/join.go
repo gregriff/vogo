@@ -29,54 +29,62 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// - make sure to send connection successful sentinels
 
 	track := wrtc.CreateAudioTrack(creds.username)
-	audioState := audio.NewChannel(track, wrtc.RecvMTU)
+	audioState := audio.NewChannel(ctx, track, wrtc.RecvMTU)
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		start := time.Now()
-		defer func() {
-			log.Printf("playback device created in %v", time.Since(start))
-		}()
-		return audioState.Speaker.Init(audioState.DataProc())
+		return audio.CreateMalgoContext(gCtx, audioState.CtxChan)
 	})
 	defer func() {
-		_ = audioState.Speaker.Uninit()
+		if err := audioState.Uninit(); err != nil {
+			log.Printf("error uninitializing allocated ctx: %v", err)
+		}
 	}()
+
+	// todo: defer a func that uninits the context once, waiting for both devices to be uninited on two chans.
+	g.Go(func() error {
+		return audioState.Speaker.Init(gCtx, audioState.DataProc())
+	})
+	defer audioState.Speaker.Uninit()
+
+	g.Go(func() error {
+		return audioState.Mic.Init(gCtx)
+	})
+	defer audioState.Mic.Uninit()
 
 	g.Go(func() error {
 		return joinChannelAndConnect(gCtx, creds, ownerName, channelName, audioState)
 	})
 
-	// init microphone, and start it and the speaker once call is connected
+	// start speaker and mic once both are initialized
 	g.Go(func() error {
-		// todo: could do this in another goroutine and use its init chan
-		if err := audioState.Mic.Init(); err != nil {
-			return err
-		}
-		defer func() {
-			_ = audioState.Mic.Uninit()
-		}()
+		micReady := audioState.Mic.Initialized()
+		speakerReady := audioState.Speaker.Initialized()
 
-		select {
-		case <-gCtx.Done():
-			return nil
-		case <-audioState.Speaker.Initialized():
-			// for testing, disable speaker for test user two
-			// NOTE: if two speakers are playing on the same machine, audio will sound bad
-			// NOTE: if Speaker.Start() is not called, memory leaks occur.
-			// if user := os.Getenv("VOGOENV"); user == "two" {
-			// 	break
-			// }
-			if err := audioState.Speaker.Start(); err != nil {
-				return err
+		for {
+			select {
+			case <-gCtx.Done():
+				return nil
+			case <-speakerReady:
+				// for testing, disable speaker for test user two
+				// NOTE: if two speakers are playing on the same machine, audio will sound bad
+				// NOTE: if Speaker.Start() is not called, memory leaks occur.
+				// if user := os.Getenv("VOGOENV"); user == "two" {
+				// 	speakerReady = nil
+				// }
+				if err := audioState.Speaker.Start(); err != nil {
+					return err
+				}
+				speakerReady = nil
+			case <-micReady:
+				micReady = nil
 			}
-			break
-		}
 
-		if err := audioState.Mic.Start(gCtx); err != nil {
-			return fmt.Errorf("error starting mic: %w", err)
+			// Both initialized
+			if micReady == nil && speakerReady == nil {
+				return audioState.Mic.Start(gCtx)
+			}
 		}
-		return nil
 	})
 
 	return g.Wait()
@@ -123,7 +131,7 @@ func joinChannelAndConnect(
 	defer conns.CloseAll()
 	for id, name := range res.Users {
 		log.Printf("creating new connection with %s", name)
-		c := wrtc.NewConnection(id, name, creds.stunServer, audioState.Mic.Track(), false)
+		c := wrtc.NewConnection(id, name, creds.stunServer, audioState.Mic.Track())
 		conns.Update(name, c)
 		statusWg.Go(func() {
 			_ = c.HandleEvents(ctx, name)
@@ -148,8 +156,6 @@ func joinChannelAndConnect(
 	// send ice candidates to each user in the room
 	for _, c := range conns.Snapshot() {
 		iceWg.Go(func() {
-			defer log.Println("ice-offer sending done")
-			log.Println("sending ice-offers now")
 			c.SendCandidates(ctx, ws, creds.username, "ice-offer")
 		})
 	}
@@ -236,7 +242,7 @@ func handleOfferMessage(
 		log.Printf("could not accept offer from %s: already have max audio streams. num conns=%d", offer.From, conns.Len())
 		return
 	}
-	conn = wrtc.NewConnection(offer.FromId, offer.From, conns.Server.StunServer, audioState.Mic.Track(), false)
+	conn = wrtc.NewConnection(offer.FromId, offer.From, conns.Server.StunServer, audioState.Mic.Track())
 	audioState.AddPeer(conn.Pc)
 	conns.Update(offer.From, conn)
 	log.Printf("received offer from %s, created conn", offer.From)
@@ -268,8 +274,6 @@ func handleOfferMessage(
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
 	conns.IceWg.Go(func() {
-		defer log.Println("ice-answer sending done")
-		log.Println("sending ice-answers now")
 		conn.SendCandidates(ctx, conns.Server.Ws, conns.Server.Username, "ice-answer")
 	})
 }
@@ -280,7 +284,6 @@ func handleAnswerMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 	if err := json.Unmarshal(msg.Data, &answer); err != nil {
 		log.Panicf("error unmarshaling answer: %v", err)
 	}
-	log.Printf("received answer from ws: from:%s to: %s\n", answer.From, answer.To)
 
 	var conn *wrtc.Connection
 	if conn = conns.Get(answer.To); conn == nil {
@@ -292,7 +295,6 @@ func handleAnswerMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 		return
 	}
 	conn.Once.Do(func() { close(conn.RemoteSet) })
-	log.Printf("received answer from %s", answer.From)
 }
 
 func handleIceMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
@@ -312,9 +314,6 @@ func handleIceMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 	// todo: ensure remote description has been set before this runs
 	if err := conn.Pc.AddICECandidate(data.Candidate); err != nil {
 		log.Printf("error adding ICE candidate: %v", err)
-	}
-	if data.Candidate.Candidate == "" {
-		log.Printf("%s NIL recv", msg.Type)
 	}
 }
 

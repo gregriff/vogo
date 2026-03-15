@@ -6,16 +6,13 @@
 - use ansi colors per profile to echo vogoenv
 
 ### Opus:
-- try BWE+DRED+Wideband at 12kb/s for DMOS=4.75 quality audio (sounds almost as good as fullband)
 - Enabling BWE: 
   - comp-time and runtime flag
   - 48khz sample rate
   - enc. complexity >=4
 - Enabling DeepPLC: 
   - set decoder complexity >=5
-  - call decodePLC???
-- Enable LACE or NoLACE:
-  - these require 20ms frames; check if they only apply to <=12kb/s (im at 64)
+  - call decodePLC
 
 ##### CI:
 
@@ -34,11 +31,12 @@
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
 - add an 'init' command to walk through registering
 - add query/status functionality to get outgoing friend requests
-- impl PLC?
+- impl PLC
 - ensure DTLS is working correctly and encrypting
 - look here https://github.com/pion/webrtc/blob/master/examples/README.md#media-api to see info about rtcp media stats
 
 ##### Server:
+- busy loop or something going on when its run for a long time. enable profiler
 - client/server: gracefully fail when channel not found (sentinel?)
 - disallow user in room to join twice
 - return 409 for duplicate add friend

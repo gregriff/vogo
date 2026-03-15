@@ -1,9 +1,10 @@
 package audio
 
 import (
+	"context"
 	"fmt"
 	"log"
-	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/gen2brain/malgo"
@@ -15,33 +16,37 @@ type speaker struct {
 	ctx    *malgo.AllocatedContext
 	device *malgo.Device
 
-	// this WaitGroup needs to be incremented for each PeerConnection that
-	// writes data to the speaker. It is used to wait for all PC's to stop
-	// writing to the speaker so uninit is clean.
-	wg *sync.WaitGroup
-
 	// initialized will be closed when the speaker device is initialized.
 	initialized chan struct{}
+
+	// the malgo context will be sent over this chan
+	CtxChan chan *malgo.AllocatedContext
 }
 
 func newSpeaker() speaker {
 	return speaker{
 		ctx:         &malgo.AllocatedContext{},
 		device:      &malgo.Device{},
-		wg:          &sync.WaitGroup{},
 		initialized: make(chan struct{}),
+		CtxChan:     make(chan *malgo.AllocatedContext),
 	}
 }
 
 // Init initializes and starts a speaker device for playback.
 // It requires a callback that will run every [frameDurationMs], that is
 // responsible for writing audio PCM to the speaker's buffer.
-func (s *speaker) Init(onSendFrames malgo.DataProc) error {
-	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	s.ctx = ctx
-	if err != nil {
-		return fmt.Errorf("error initializing speaker context: %w", err)
+func (s *speaker) Init(ctx context.Context, onSendFrames malgo.DataProc) error {
+	select {
+	case <-ctx.Done():
+		return nil
+	case s.ctx = <-s.CtxChan:
+		break
 	}
+
+	start := time.Now()
+	defer func() {
+		log.Printf("speaker initialized in %v", time.Since(start))
+	}()
 
 	config := malgo.DefaultDeviceConfig(malgo.Playback)
 	config.Playback.Format = AudioFormat
@@ -69,20 +74,11 @@ func (s *speaker) Start() error {
 // Uninit uninitializes the malgo speaker device and frees all its resources. Ideally,
 // nothing should be writing to the speaker device when this is called. This is ensured by
 // closing all PeerConnections beforehand, since their RemoteTrack handlers write to the device.
-func (s *speaker) Uninit() error {
-	if s.ctx == nil {
-		log.Panic("speaker ctx uninit before init")
-	}
+func (s *speaker) Uninit() {
 	if s.device != nil {
 		s.device.Uninit()
 	}
-	s.wg.Wait() // TODO: check if this is even nessicary.
-	if err := s.ctx.Uninit(); err != nil {
-		return fmt.Errorf("error uninitializing speaker context: %w", err)
-	}
-	s.ctx.Free()
 	log.Println("uninit and freed speaker")
-	return nil
 }
 
 // Initialized returns the channel to notify the caller when the speaker

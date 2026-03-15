@@ -4,8 +4,11 @@ package audio
 // in either a 1:1 voice call or 1:many voice chat format.
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"log"
+	"time"
 
 	"github.com/gen2brain/malgo"
 	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
@@ -16,14 +19,37 @@ import (
 )
 
 type Channel struct {
+	// deviceCtx allows creation of the microphone and speaker
+	deviceCtx *malgo.AllocatedContext
+
+	// CtxChan should be sent the AllocatedContext to be shared between the mic and speaker
+	CtxChan chan *malgo.AllocatedContext
+
 	Mic     microphone
 	Speaker speaker
 	streams streams
 	recvMTU int
 }
 
-func NewChannel(track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
-	return &Channel{newMicrophone(track), newSpeaker(), newStreams(), recvMTU}
+// NewChannel creates a new audio channel struct and starts a goroutine that will forward the
+// AllocatedContext to the mic and speaker.
+func NewChannel(ctx context.Context, track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
+	deviceCtxChan := make(chan *malgo.AllocatedContext)
+	c := &Channel{nil, deviceCtxChan, newMicrophone(track), newSpeaker(), newStreams(), recvMTU}
+
+	// forward malgo context to devices once it's created
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case deviceCtx := <-deviceCtxChan:
+			c.deviceCtx = deviceCtx
+			c.Mic.CtxChan <- deviceCtx
+			c.Speaker.CtxChan <- deviceCtx
+		}
+	}()
+
+	return c
 }
 
 // AddPeer sets an event handler on pc that decodes incoming audio.
@@ -34,9 +60,6 @@ func NewChannel(track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
 func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 	// note: this callback should not panic
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		c.Speaker.wg.Add(1)
-		defer c.Speaker.wg.Done()
-
 		// decoder operates on only one audio stream so init here.
 		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
 		if err != nil { // panic is fine since its a startup dev error
@@ -47,7 +70,6 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 		decodeBuf := make([]int16, pcmBufferSize)
 		pcm := ringbuffer.New(ringBufferSize)
 		c.streams.add(track.StreamID(), &pcm)
-		log.Printf("added track with id: %s, streamID: %s\n", track.ID(), track.StreamID())
 
 		for {
 			r := &rtp.Packet{}
@@ -101,7 +123,24 @@ func (c *Channel) DataProc() malgo.DataProc {
 	}
 }
 
+func (c *Channel) Uninit() error {
+	if c.deviceCtx == nil {
+		log.Panic("allocatedContext uninit called on a nil context")
+	}
+	if err := c.deviceCtx.Uninit(); err != nil {
+		return err
+	}
+	c.deviceCtx.Free()
+	return nil
+}
+
 type Call struct {
+	// deviceCtx allows creation of the microphone and speaker
+	deviceCtx *malgo.AllocatedContext
+
+	// CtxChan should be sent the AllocatedContext to be shared between the mic and speaker
+	CtxChan chan *malgo.AllocatedContext
+
 	Mic     microphone
 	Speaker speaker
 	stream  stream
@@ -109,8 +148,23 @@ type Call struct {
 	recvMTU int
 }
 
-func NewCall(track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
-	return &Call{newMicrophone(track), newSpeaker(), newStream(), recvMTU}
+func NewCall(ctx context.Context, track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
+	deviceCtxChan := make(chan *malgo.AllocatedContext)
+	c := &Call{nil, deviceCtxChan, newMicrophone(track), newSpeaker(), newStream(), recvMTU}
+
+	// forward malgo context to devices once it's created
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case deviceCtx := <-deviceCtxChan:
+			c.deviceCtx = deviceCtx
+			c.Mic.CtxChan <- deviceCtx
+			c.Speaker.CtxChan <- deviceCtx
+		}
+	}()
+
+	return c
 }
 
 // AddPeer sets an event handler on pc that writes incoming audio data to the speaker.
@@ -119,9 +173,6 @@ func NewCall(track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
 // from which the speaker goroutine reads for playback.
 func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		c.Speaker.wg.Add(1)
-		defer c.Speaker.wg.Done()
-
 		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
 		if err != nil {
 			log.Panicf("decoder init error: %v", err)
@@ -181,6 +232,17 @@ func (c *Call) DataProc() malgo.DataProc {
 	}
 }
 
+func (c *Call) Uninit() error {
+	if c.deviceCtx == nil {
+		log.Panic("allocatedContext uninit called on a nil context")
+	}
+	if err := c.deviceCtx.Uninit(); err != nil {
+		return err
+	}
+	c.deviceCtx.Free()
+	return nil
+}
+
 // ReadRTP is a rewrite of webrtc.TrackRemote.ReadRTP() that reuses a
 // provided buffer and rtp Packet so they don't escape to the heap.
 func ReadRTP(r *rtp.Packet, buf []byte, t *webrtc.TrackRemote, recvMTU int) (interceptor.Attributes, error) {
@@ -193,4 +255,21 @@ func ReadRTP(r *rtp.Packet, buf []byte, t *webrtc.TrackRemote, recvMTU int) (int
 		return nil, err
 	}
 	return iAttrs, err
+}
+
+// CreateMalgoContext creates a malgo context that will be shared between the speaker and mic.
+// It should be run in its own goroutine because this can take a while.
+func CreateMalgoContext(ctx context.Context, ch chan<- *malgo.AllocatedContext) error {
+	start := time.Now()
+	defer func() {
+		log.Printf("malgo context created in %v", time.Since(start))
+	}()
+
+	c, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	if err != nil {
+		return fmt.Errorf("error initializing mic context: %w", err)
+	}
+
+	ch <- c
+	return nil
 }

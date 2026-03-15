@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"maps"
-	"os"
 	"sync"
 
 	"github.com/google/uuid"
@@ -48,7 +48,6 @@ func NewConnection(
 	recipient,
 	stunServer string,
 	track *webrtc.TrackLocalStaticSample,
-	exitOnClose bool,
 ) *Connection {
 	pc := NewAudioPeerConnection(stunServer, track)
 	conn := &Connection{
@@ -78,14 +77,14 @@ func NewConnection(
 		conn.Candidates <- c.ToJSON()
 	})
 	pc.OnSignalingStateChange(func(s webrtc.SignalingState) {
-		log.Printf("signaling state with %s changed to %s", recipient, s.String())
+		log.Printf("SignalingState with %s has changed: %s", recipient, s.String())
 	})
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		conn.onConnectionStateChange(s, exitOnClose)
+		conn.onConnectionStateChange(s)
 	})
 
 	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
-		conn.onICEConnectionStateChange(s, exitOnClose)
+		conn.onICEConnectionStateChange(s)
 	})
 	return conn
 }
@@ -114,7 +113,6 @@ func (c *Connection) NewOffer(caller, recipient string) requests.Connection {
 	}
 
 	req := requests.Connection{From: caller, To: recipient, Sd: offer}
-	log.Printf("%s will send offer to %s...\n", caller, recipient)
 	return req
 }
 
@@ -172,22 +170,34 @@ func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, cal
 }
 
 // HandleEvents will handle PeerConnection-related events such as status changes, manual retries
-// and failure to write audio packets to the network. In general, it handles updating the UI with the status changes.
+// and failure to write audio packets to the network. It will also handle updating the UI with the status changes.
+// On PeerConnection failure, it returns an error, so returning that in an errgroup can be used to see when the PC
+// has ended and is closed.
 func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case status, ok := <-c.ConnectionStateChanges:
-			log.Printf("PeerConnectionState with %s has changed: %s\n", peerName, status.String())
 			if !ok {
 				c.ConnectionStateChanges = nil
+				continue
+			}
+			log.Printf("PeerConnectionState with %s has changed: %s\n", peerName, status.String())
+			switch status {
+			case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
+				return io.EOF
 			}
 		// case failedPeer := <-c.audioState.Mic.FailedPeers():
-		case iceStatus, ok := <-c.ICEStateChanges:
-			log.Printf("IceConnectionState with %s has changed: %s\n", peerName, iceStatus.String())
+		case status, ok := <-c.ICEStateChanges:
 			if !ok {
 				c.ICEStateChanges = nil
+				continue
+			}
+			log.Printf("IceConnectionState with %s has changed: %s\n", peerName, status.String())
+			switch status {
+			case webrtc.ICEConnectionStateClosed, webrtc.ICEConnectionStateFailed:
+				return io.EOF
 			}
 		}
 	}
@@ -195,10 +205,7 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 
 // onConnectionStateChange performs mandatory event handling for connection state changes. Logging
 // and other non-essential event handling should be done in handleEvents.
-func (c *Connection) onConnectionStateChange(
-	state webrtc.PeerConnectionState,
-	exitOnFail bool,
-) {
+func (c *Connection) onConnectionStateChange(state webrtc.PeerConnectionState) {
 	c.ConnectionStateChanges <- state
 
 	switch state {
@@ -208,23 +215,17 @@ func (c *Connection) onConnectionStateChange(
 	// if PeerConnection was explicitly closed, this usually happens from a DTLS CloseNotify
 	case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
 		close(c.ConnectionStateChanges)
-		if exitOnFail {
-			os.Exit(0)
-		}
-		c.closeOnce.Do(func() { _ = ClosePC(c.Pc, true) })
+		c.closeOnce.Do(func() { _ = c.Pc.Close() })
 	}
 }
 
-func (c *Connection) onICEConnectionStateChange(state webrtc.ICEConnectionState, exitOnClose bool) {
+func (c *Connection) onICEConnectionStateChange(state webrtc.ICEConnectionState) {
 	c.ICEStateChanges <- state
 
 	switch state {
 	case webrtc.ICEConnectionStateClosed, webrtc.ICEConnectionStateFailed:
 		close(c.ICEStateChanges)
-		if exitOnClose {
-			os.Exit(0)
-		}
-		c.closeOnce.Do(func() { _ = ClosePC(c.Pc, true) })
+		c.closeOnce.Do(func() { _ = c.Pc.Close() })
 	}
 }
 
@@ -304,31 +305,15 @@ func (cm *ConnectionMap) Snapshot() map[string]*Connection {
 }
 
 func (cm *ConnectionMap) CloseAll() {
-	log.Println("closing all conns in connmap")
 	var wg sync.WaitGroup
 	cm.mu.Lock()
 
-	for key, c := range cm.data {
+	for _, c := range cm.data {
 		wg.Go(func() {
 			c.Close()
-			log.Printf("%s's pc closed", key)
 		})
 	}
 
 	cm.mu.Unlock()
 	wg.Wait()
 }
-
-// EnsureClosed closes the PeerConnection stored by ConnectionMap with the given key,
-// if it exists. NOTE: users may leave, and their pc's destroyed before this runs
-// func (cm *ConnectionMap) EnsureClosed(key string) {
-// 	// defer cm.Delete(key)
-// 	if c, ok := cm.Get(key); ok {
-// 		if err := c.Pc.GracefulClose(); err != nil {
-// 			log.Printf("error while trying to close %s's pc: %v", err)
-// 		}
-// 		log.Printf("%s's pc closed", key)
-// 		return
-// 	}
-// 	log.Printf("tried to close connection for %s, did not exist", key)
-// }
