@@ -29,11 +29,11 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// - make sure to send connection successful sentinels
 
 	track := wrtc.CreateAudioTrack(creds.username)
-	audioState := audio.NewChannel(ctx, track, wrtc.RecvMTU)
+	audioState := audio.NewChannel(track, wrtc.RecvMTU)
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return audio.CreateMalgoContext(gCtx, audioState.CtxChan)
+		return audioState.CreateDeviceContext(gCtx)
 	})
 	defer func() {
 		if err := audioState.Uninit(); err != nil {

@@ -21,13 +21,13 @@ import (
 func CallFriend(ctx context.Context, creds *credentials, recipient string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
 	conn := wrtc.NewConnection(uuid.New(), recipient, creds.stunServer, track)
-	audioState := audio.NewCall(ctx, track, wrtc.RecvMTU)
+	audioState := audio.NewCall(track, wrtc.RecvMTU)
 	audioState.AddPeer(conn.Pc)
 	defer conn.Close()
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return audio.CreateMalgoContext(gCtx, audioState.CtxChan)
+		return audioState.CreateDeviceContext(gCtx)
 	})
 	defer func() {
 		if err := audioState.Uninit(); err != nil {

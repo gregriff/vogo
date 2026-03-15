@@ -18,7 +18,8 @@ import (
 	"gopkg.in/hraban/opus.v2"
 )
 
-type Channel struct {
+// audioBase contains shared state between 1:1 voice calls and multi-user channels.
+type audioBase struct {
 	// deviceCtx allows creation of the microphone and speaker
 	deviceCtx *malgo.AllocatedContext
 
@@ -27,29 +28,62 @@ type Channel struct {
 
 	Mic     microphone
 	Speaker speaker
-	streams streams
+
 	recvMTU int
 }
 
-// NewChannel creates a new audio channel struct and starts a goroutine that will forward the
-// AllocatedContext to the mic and speaker.
-func NewChannel(ctx context.Context, track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
-	deviceCtxChan := make(chan *malgo.AllocatedContext)
-	c := &Channel{nil, deviceCtxChan, newMicrophone(track), newSpeaker(), newStreams(), recvMTU}
+func newAudioBase(track *webrtc.TrackLocalStaticSample, recvMTU int) *audioBase {
+	return &audioBase{
+		CtxChan: make(chan *malgo.AllocatedContext),
+		Mic:     newMicrophone(track),
+		Speaker: newSpeaker(),
+		recvMTU: recvMTU,
+	}
+}
 
-	// forward malgo context to devices once it's created
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		case deviceCtx := <-deviceCtxChan:
-			c.deviceCtx = deviceCtx
-			c.Mic.CtxChan <- deviceCtx
-			c.Speaker.CtxChan <- deviceCtx
-		}
+// CreateDeviceContext creates a malgo context that will be shared between the speaker and mic.
+// It should be run in its own goroutine because this can take a while.
+func (ab *audioBase) CreateDeviceContext(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		log.Printf("malgo context created in %v", time.Since(start))
 	}()
 
-	return c
+	c, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	if err != nil {
+		return fmt.Errorf("error initializing mic context: %w", err)
+	}
+
+	ab.deviceCtx = c
+
+	// send context to the mic and speaker which
+	// will wait on it before starting.
+	ab.Mic.CtxChan <- c
+	ab.Speaker.CtxChan <- c
+	return nil
+}
+
+// Uninit uninitializes the cgo context that the mic and speaker rely on. It must only be called
+// if both the mic and speaker are uninitialized.
+func (ab *audioBase) Uninit() error {
+	if ab.deviceCtx == nil {
+		return nil
+	}
+	if err := ab.deviceCtx.Uninit(); err != nil {
+		return err
+	}
+	ab.deviceCtx.Free()
+	return nil
+}
+
+type Channel struct {
+	audioBase
+	streams streams
+}
+
+// NewChannel creates a new audio channel struct.
+func NewChannel(track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
+	return &Channel{*newAudioBase(track, recvMTU), newStreams()}
 }
 
 // AddPeer sets an event handler on pc that decodes incoming audio.
@@ -123,48 +157,14 @@ func (c *Channel) DataProc() malgo.DataProc {
 	}
 }
 
-func (c *Channel) Uninit() error {
-	if c.deviceCtx == nil {
-		log.Panic("allocatedContext uninit called on a nil context")
-	}
-	if err := c.deviceCtx.Uninit(); err != nil {
-		return err
-	}
-	c.deviceCtx.Free()
-	return nil
-}
-
 type Call struct {
-	// deviceCtx allows creation of the microphone and speaker
-	deviceCtx *malgo.AllocatedContext
-
-	// CtxChan should be sent the AllocatedContext to be shared between the mic and speaker
-	CtxChan chan *malgo.AllocatedContext
-
-	Mic     microphone
-	Speaker speaker
-	stream  stream
-
-	recvMTU int
+	audioBase
+	stream stream
 }
 
-func NewCall(ctx context.Context, track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
-	deviceCtxChan := make(chan *malgo.AllocatedContext)
-	c := &Call{nil, deviceCtxChan, newMicrophone(track), newSpeaker(), newStream(), recvMTU}
-
-	// forward malgo context to devices once it's created
-	go func() {
-		select {
-		case <-ctx.Done():
-			return
-		case deviceCtx := <-deviceCtxChan:
-			c.deviceCtx = deviceCtx
-			c.Mic.CtxChan <- deviceCtx
-			c.Speaker.CtxChan <- deviceCtx
-		}
-	}()
-
-	return c
+// NewCall creates the state for a 1:1 voice call.
+func NewCall(track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
+	return &Call{*newAudioBase(track, recvMTU), newStream()}
 }
 
 // AddPeer sets an event handler on pc that writes incoming audio data to the speaker.
@@ -232,17 +232,6 @@ func (c *Call) DataProc() malgo.DataProc {
 	}
 }
 
-func (c *Call) Uninit() error {
-	if c.deviceCtx == nil {
-		log.Panic("allocatedContext uninit called on a nil context")
-	}
-	if err := c.deviceCtx.Uninit(); err != nil {
-		return err
-	}
-	c.deviceCtx.Free()
-	return nil
-}
-
 // ReadRTP is a rewrite of webrtc.TrackRemote.ReadRTP() that reuses a
 // provided buffer and rtp Packet so they don't escape to the heap.
 func ReadRTP(r *rtp.Packet, buf []byte, t *webrtc.TrackRemote, recvMTU int) (interceptor.Attributes, error) {
@@ -255,21 +244,4 @@ func ReadRTP(r *rtp.Packet, buf []byte, t *webrtc.TrackRemote, recvMTU int) (int
 		return nil, err
 	}
 	return iAttrs, err
-}
-
-// CreateMalgoContext creates a malgo context that will be shared between the speaker and mic.
-// It should be run in its own goroutine because this can take a while.
-func CreateMalgoContext(ctx context.Context, ch chan<- *malgo.AllocatedContext) error {
-	start := time.Now()
-	defer func() {
-		log.Printf("malgo context created in %v", time.Since(start))
-	}()
-
-	c, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	if err != nil {
-		return fmt.Errorf("error initializing mic context: %w", err)
-	}
-
-	ch <- c
-	return nil
 }
