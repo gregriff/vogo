@@ -171,6 +171,9 @@ func (m *microphone) FailedPeers() <-chan error {
 	return m.failedPeers
 }
 
+// Initialized returns the channel to notify the caller when the microphone
+// is fully initialized. Since microphone initialization is slow, this allows the caller to do
+// it asynchronously and wait for its completion.
 func (m *microphone) Initialized() <-chan struct{} {
 	return m.initialized
 }

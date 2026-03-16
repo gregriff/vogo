@@ -120,21 +120,23 @@ func joinChannelAndConnect(
 		log.Println("no users in channel")
 	}
 
-	var iceWg sync.WaitGroup
-	defer iceWg.Wait()
-
-	var statusWg sync.WaitGroup
-	defer statusWg.Wait()
+	// var iceWg sync.WaitGroup
+	// defer iceWg.Wait()
 
 	// this holds the state of the room from this client's perspective
-	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username, &iceWg)
+	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username)
+	defer conns.Wg.Wait()
+	defer conns.IceWg.Wait()
 	defer conns.CloseAll()
 	for id, name := range res.Users {
 		log.Printf("creating new connection with %s", name)
 		c := wrtc.NewConnection(id, name, creds.stunServer, audioState.Mic.Track())
 		conns.Update(name, c)
-		statusWg.Go(func() {
-			_ = c.HandleEvents(ctx, name)
+		conns.Wg.Go(func() {
+			err := c.HandleEvents(ctx, name)
+			if err == io.EOF { // pc closed
+				conns.Delete(name)
+			}
 		})
 	}
 	// todo: track, cleanup failed/expired connections
@@ -155,7 +157,7 @@ func joinChannelAndConnect(
 
 	// send ice candidates to each user in the room
 	for _, c := range conns.Snapshot() {
-		iceWg.Go(func() {
+		conns.IceWg.Go(func() {
 			c.SendCandidates(ctx, ws, creds.username, "ice-offer")
 		})
 	}
@@ -235,16 +237,24 @@ func handleOfferMessage(
 		// if err := conn.Pc.Close(); err != nil {
 		// 	log.Printf("error closing existing pc for %s: %v", offer.From, err)
 		// }
-		log.Printf("recreating offer to %s", offer.From)
+		log.Printf("recreating connection to %s", offer.From)
 	}
 	if conns.Len() >= audio.MaxStreams {
 		// TODO: send err on channel for UI to pick up.
 		log.Printf("could not accept offer from %s: already have max audio streams. num conns=%d", offer.From, conns.Len())
 		return
 	}
+	// TODO: conns.NewConnection(offer, audioState)
 	conn = wrtc.NewConnection(offer.FromId, offer.From, conns.Server.StunServer, audioState.Mic.Track())
 	audioState.AddPeer(conn.Pc)
 	conns.Update(offer.From, conn)
+	conns.Wg.Go(func() {
+		err := conn.HandleEvents(ctx, offer.From)
+		if err == io.EOF { // pc closed
+			conns.Delete(offer.From)
+		}
+	})
+	// =============== ^^ runs all the above
 	log.Printf("received offer from %s, created conn", offer.From)
 
 	// create and send answer. TODO: are retries automatic?

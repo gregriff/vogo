@@ -179,22 +179,24 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 		case <-ctx.Done():
 			return nil
 		case status, ok := <-c.ConnectionStateChanges:
+			log.Printf("PeerConnectionState with %s has changed: %s\n", peerName, status.String())
 			if !ok {
 				c.ConnectionStateChanges = nil
 				continue
 			}
-			log.Printf("PeerConnectionState with %s has changed: %s\n", peerName, status.String())
+
 			switch status {
 			case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
 				return io.EOF
 			}
 		// case failedPeer := <-c.audioState.Mic.FailedPeers():
 		case status, ok := <-c.ICEStateChanges:
+			log.Printf("IceConnectionState with %s has changed: %s\n", peerName, status.String())
 			if !ok {
 				c.ICEStateChanges = nil
 				continue
 			}
-			log.Printf("IceConnectionState with %s has changed: %s\n", peerName, status.String())
+
 			switch status {
 			case webrtc.ICEConnectionStateClosed, webrtc.ICEConnectionStateFailed:
 				return io.EOF
@@ -250,6 +252,10 @@ type ConnectionMap struct {
 
 	Server serverConn
 
+	// this is responsible for removing a Connection from the ConnectionMap
+	// when it's PeerConnection is closed.
+	Wg *sync.WaitGroup
+
 	// all conns use this for sending ice candidates
 	IceWg *sync.WaitGroup
 }
@@ -257,7 +263,6 @@ type ConnectionMap struct {
 func NewConnectionMap(
 	ws *websocket.Conn,
 	stunServer, username string,
-	iceWg *sync.WaitGroup,
 ) *ConnectionMap {
 	return &ConnectionMap{
 		data: make(map[string]*Connection, shared.ChannelCapacity),
@@ -266,7 +271,8 @@ func NewConnectionMap(
 			StunServer: stunServer,
 			Username:   username,
 		},
-		IceWg: iceWg,
+		Wg:    &sync.WaitGroup{},
+		IceWg: &sync.WaitGroup{},
 	}
 }
 
@@ -290,11 +296,12 @@ func (cm *ConnectionMap) Len() int {
 }
 
 // TODO: do we want to call this every time a PC is closed? or retry closed conns?
-// func (cm *ConnectionMap) Delete(key string) {
-// 	cm.mu.Lock()
-// 	delete(cm.data, key)
-// 	cm.mu.Unlock()
-// }
+func (cm *ConnectionMap) Delete(key string) {
+	cm.mu.Lock()
+	delete(cm.data, key)
+	cm.mu.Unlock()
+	log.Printf("deleted %s from connMap", key)
+}
 
 // Snapshot returns a shallow copy of the ConnectionMap. It should be used when iteration
 // over the Connections is required, and it prevents concurrent writes from causing errors.
@@ -304,6 +311,7 @@ func (cm *ConnectionMap) Snapshot() map[string]*Connection {
 	return maps.Clone(cm.data)
 }
 
+// CloseAll closes all the Connection's PeerConnections.
 func (cm *ConnectionMap) CloseAll() {
 	var wg sync.WaitGroup
 	cm.mu.Lock()
