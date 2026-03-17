@@ -10,10 +10,13 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
+	"github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
@@ -26,6 +29,9 @@ type Connection struct {
 
 	// webrtc PeerConnection
 	Pc *webrtc.PeerConnection
+
+	// RTPSender is used to obtain Receiver Reports
+	Sender *webrtc.RTPSender
 
 	// channel for sending ICE Candidates
 	Candidates chan webrtc.ICECandidateInit
@@ -49,10 +55,11 @@ func NewConnection(
 	stunServer string,
 	track *webrtc.TrackLocalStaticSample,
 ) *Connection {
-	pc := NewAudioPeerConnection(stunServer, track)
+	pc, sender := NewAudioPeerConnection(stunServer, track)
 	conn := &Connection{
-		Id: id,
-		Pc: pc,
+		Id:     id,
+		Pc:     pc,
+		Sender: sender,
 
 		// where ice candidates will be sent as they're gathered
 		Candidates: make(chan webrtc.ICECandidateInit, 10),
@@ -169,11 +176,54 @@ func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, cal
 	}
 }
 
+// CollectReceiverReports listens and collects ReceiverReports from the RTPSender. These
+// can be used to estimate connection quality. Later this could be used to adjust bitrate.
+// This function should be run in its own goroutine. It will return nil when the Sender is closed,
+// which must be explicitally called somewhere.
+func (c *Connection) CollectReceiverReports() error {
+	buf := make([]byte, RecvMTU)
+	for {
+		packets, _, err := ReadRTCP(c.Sender, buf)
+		if err != nil {
+			if err == io.EOF {
+				return nil // sender closed
+			}
+			log.Printf("readRTCP err: %v", err)
+			continue // hopefully a temporary error
+		}
+
+		for _, pkt := range packets {
+			switch report := pkt.(type) {
+			case *rtcp.ReceiverReport:
+				for _, block := range report.Reports {
+					log.Printf("RR -- SSRC: %d | %%Lost: %d | Jitter: %d | LastSR: %d, Delay: %d",
+						block.SSRC,
+						block.FractionLost,
+						block.Jitter,
+						block.LastSenderReport,
+						block.Delay,
+					)
+				}
+			case *rtcp.ReceiverEstimatedMaximumBitrate:
+				log.Printf("REMB: %f bps", report.Bitrate)
+			default:
+				log.Printf("Got RTCP packet: %T", pkt)
+			}
+		}
+	}
+}
+
 // HandleEvents will handle PeerConnection-related events such as status changes, manual retries
 // and failure to write audio packets to the network. It will also handle updating the UI with the status changes.
 // On PeerConnection failure, it returns an error, so returning that in an errgroup can be used to see when the PC
 // has ended and is closed.
 func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
+	defer func() {
+		if err := c.Sender.Stop(); err != nil {
+			log.Printf("error stopping RTPSender: %v", err)
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -250,7 +300,11 @@ type ConnectionMap struct {
 	mu   sync.Mutex
 	data map[string]*Connection
 
+	// Server encapsulates a websocket connection to the vogo server.
 	Server serverConn
+
+	// Channel allows access to the audio devices and systems of the multi-user voice channel.
+	Channel *audio.Channel
 
 	// this is responsible for removing a Connection from the ConnectionMap
 	// when it's PeerConnection is closed.
@@ -262,6 +316,7 @@ type ConnectionMap struct {
 
 func NewConnectionMap(
 	ws *websocket.Conn,
+	channel *audio.Channel,
 	stunServer, username string,
 ) *ConnectionMap {
 	return &ConnectionMap{
@@ -271,9 +326,30 @@ func NewConnectionMap(
 			StunServer: stunServer,
 			Username:   username,
 		},
-		Wg:    &sync.WaitGroup{},
-		IceWg: &sync.WaitGroup{},
+		Channel: channel,
+		Wg:      &sync.WaitGroup{},
+		IceWg:   &sync.WaitGroup{},
 	}
+}
+
+// AddConnection creates a new *Connection for the recipient, sets up audio playback for their RemoteTrack, and
+// starts an eventlistener for this connection.
+func (cm *ConnectionMap) AddConnection(ctx context.Context, recipientId uuid.UUID, recipientName string) *Connection {
+	c := NewConnection(recipientId, recipientName, cm.Server.StunServer, cm.Channel.Mic.Track())
+	cm.Channel.AddPeer(c.Pc)
+	cm.Update(recipientName, c)
+	cm.Wg.Go(func() {
+		err := c.HandleEvents(ctx, recipientName)
+		if err == io.EOF { // pc closed
+			cm.Delete(recipientName)
+		}
+	})
+
+	// TODO: this will need to be appended to a struct that stores them for UI to pull from.
+	cm.Wg.Go(func() {
+		_ = c.CollectReceiverReports()
+	})
+	return c
 }
 
 // Get returns a *Connection if key is in the ConnectionMap. Nil if not.
@@ -324,4 +400,19 @@ func (cm *ConnectionMap) CloseAll() {
 
 	cm.mu.Unlock()
 	wg.Wait()
+}
+
+// ReadRTCP reads an RTCP packet into a preallocated buffer and returns a slice of the RTCP packets, if any.
+func ReadRTCP(sender *webrtc.RTPSender, dst []byte) ([]rtcp.Packet, interceptor.Attributes, error) {
+	i, iAttrs, err := sender.Read(dst)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pkts, err := rtcp.Unmarshal(dst[:i])
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return pkts, iAttrs, nil
 }

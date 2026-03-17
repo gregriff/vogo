@@ -120,24 +120,14 @@ func joinChannelAndConnect(
 		log.Println("no users in channel")
 	}
 
-	// var iceWg sync.WaitGroup
-	// defer iceWg.Wait()
-
 	// this holds the state of the room from this client's perspective
-	conns := wrtc.NewConnectionMap(ws, creds.stunServer, creds.username)
+	conns := wrtc.NewConnectionMap(ws, audioState, creds.stunServer, creds.username)
 	defer conns.Wg.Wait()
 	defer conns.IceWg.Wait()
 	defer conns.CloseAll()
 	for id, name := range res.Users {
 		log.Printf("creating new connection with %s", name)
-		c := wrtc.NewConnection(id, name, creds.stunServer, audioState.Mic.Track())
-		conns.Update(name, c)
-		conns.Wg.Go(func() {
-			err := c.HandleEvents(ctx, name)
-			if err == io.EOF { // pc closed
-				conns.Delete(name)
-			}
-		})
+		conns.AddConnection(ctx, id, name)
 	}
 	// todo: track, cleanup failed/expired connections
 
@@ -147,7 +137,6 @@ func joinChannelAndConnect(
 	for recipient, c := range conns.Snapshot() {
 		req := c.NewOffer(creds.username, recipient)
 		bulkReq.Data[c.Id] = req
-		audioState.AddPeer(c.Pc) // set up audio mixing
 	}
 	log.Printf("offers took %v to generate\n", time.Since(start))
 
@@ -244,17 +233,7 @@ func handleOfferMessage(
 		log.Printf("could not accept offer from %s: already have max audio streams. num conns=%d", offer.From, conns.Len())
 		return
 	}
-	// TODO: conns.NewConnection(offer, audioState)
-	conn = wrtc.NewConnection(offer.FromId, offer.From, conns.Server.StunServer, audioState.Mic.Track())
-	audioState.AddPeer(conn.Pc)
-	conns.Update(offer.From, conn)
-	conns.Wg.Go(func() {
-		err := conn.HandleEvents(ctx, offer.From)
-		if err == io.EOF { // pc closed
-			conns.Delete(offer.From)
-		}
-	})
-	// =============== ^^ runs all the above
+	conn = conns.AddConnection(ctx, offer.FromId, offer.From)
 	log.Printf("received offer from %s, created conn", offer.From)
 
 	// create and send answer. TODO: are retries automatic?

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -54,6 +55,9 @@ func callFriend(_ *cobra.Command, _ []string) {
 	credentials := netw.NewCredentials(stunServer, vogoServer, username, password)
 	err := netw.CallFriend(ctx, credentials, recipient)
 	if err != nil {
+		if err == io.EOF {
+			return
+		}
 		fmt.Println(err)
 	}
 }

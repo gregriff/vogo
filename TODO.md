@@ -2,7 +2,9 @@
 
 ### Next:
 - slog client
-- Have Connmap merge listening for events from all connections in it, to know when to remove them. 
+- use packet seq numbers to impl PLC for up to like 10 packets. 
+- use sender reports and receiver reports (interceptors) to impl adaptive bitrate (encoding)
+- create sentinel errors for CallEnded, ConnectionFailed, handle them in top-level cli funcs
 - use ansi colors per profile to echo vogoenv
 
 ### Opus:

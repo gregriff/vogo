@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -54,6 +55,9 @@ func answerCall(_ *cobra.Command, _ []string) {
 	credentials := netw.NewCredentials(stunServer, vogoServer, username, password)
 	err := netw.AnswerCall(ctx, credentials, caller)
 	if err != nil {
+		if err == io.EOF {
+			return
+		}
 		fmt.Println(err)
 	}
 }

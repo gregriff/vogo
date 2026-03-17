@@ -57,6 +57,10 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 		return conn.HandleEvents(gCtx, recipient)
 	})
 
+	g.Go(func() error {
+		return conn.CollectReceiverReports()
+	})
+
 	// init microphone, and start it and the speaker once call is connected
 	g.Go(func() error {
 		micReady := audioState.Mic.Initialized()

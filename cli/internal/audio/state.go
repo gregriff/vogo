@@ -172,7 +172,7 @@ func NewCall(track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
 // should only have one RemoteTrack. Decoded audio is written to c.stream,
 // from which the speaker goroutine reads for playback.
 func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
-	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
 		if err != nil {
 			log.Panicf("decoder init error: %v", err)
@@ -192,6 +192,20 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 				log.Printf("PACKET READ ERR: %v", err)
 				continue // Temporary error, keep trying
 			}
+
+			// count++
+			// if count%150 == 0 {
+			// 	rtcp, _, err := receiver.ReadRTCP()
+			// 	if err != nil {
+			// 		log.Printf("rtcp recv err: %#v", err)
+			// 	}
+			// 	for _, r := range rtcp {
+			// 		// Print a string description of the packets
+			// 		if stringer, canString := r.(fmt.Stringer); canString {
+			// 			fmt.Printf("Received RTCP Packet: %v", stringer.String())
+			// 		}
+			// 	}
+			// }
 
 			// TODO: check for 0 samples decoded and call PLC?
 			samplesDecoded, decodeErr := decoder.Decode(r.Payload, decodeBuf)

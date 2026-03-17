@@ -63,6 +63,10 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 		return conn.HandleEvents(gCtx, caller)
 	})
 
+	g.Go(func() error {
+		return conn.CollectReceiverReports()
+	})
+
 	// init microphone, and start it and the speaker once call is connected
 	g.Go(func() error {
 		micReady := audioState.Mic.Initialized()

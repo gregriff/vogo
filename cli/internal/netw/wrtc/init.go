@@ -4,6 +4,8 @@ import (
 	"log"
 
 	"github.com/gregriff/vogo/cli/internal/audio"
+	"github.com/pion/interceptor"
+	"github.com/pion/interceptor/pkg/stats"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -18,10 +20,10 @@ var opusCodec = webrtc.RTPCodecCapability{
 }
 
 // NewAudioPeerConnection creates the PeerConnection for a bidirectional audio webrtc connection.
-func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample) *webrtc.PeerConnection {
+func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample) (*webrtc.PeerConnection, *webrtc.RTPSender) {
 	pc := newPeerConnection(stunServer)
-	addAudioTrack(pc, track)
-	return pc
+	sender := addAudioTrack(pc, track)
+	return pc, sender
 }
 
 // newPeerConnection creates a PeerConnection configured with the Opus audio codec.
@@ -41,18 +43,28 @@ func newPeerConnection(stunServer string) *webrtc.PeerConnection {
 	// This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
 	// this is enabled by default. If you are manually managing You MUST create a InterceptorRegistry
 	// for each PeerConnection.
-	// interceptorRegistry := &interceptor.Registry{}
+	interceptorRegistry := &interceptor.Registry{}
 
-	// jitterBufferFactory, err := jitterbuffer.NewInterceptor(jitterbuffer.WithMinimumPacketCount((uint(2))))
+	// TODO: to impl jitter buffer (with custom minpacketcount), will need to create custom receiver_interceptor
+	// that stores a jitterbuffer.New(jitterbuffer.WithMinimumPacketCount(2)) in it.
+	// https://github.com/pion/interceptor/blob/master/pkg/jitterbuffer/receiver_interceptor.go
+	// jitterBufferFactory, err := jitterbuffer.NewInterceptor()
 	// if err != nil {
 	// panic(err)
 	// }
 	// interceptorRegistry.Add(jitterBufferFactory)
 
 	// Use the default set of Interceptors
-	// if err = webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
-	// 	panic(err)
-	// }
+	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
+		panic(err)
+	}
+
+	statsFactory, err := stats.NewInterceptor()
+	if err != nil {
+		panic(err)
+	}
+
+	interceptorRegistry.Add(statsFactory)
 
 	// not sure if this should be avoided but this prevents packet size overruns
 	settingEngine := webrtc.SettingEngine{}
@@ -96,7 +108,7 @@ func CreateAudioTrack(trackId string) *webrtc.TrackLocalStaticSample {
 }
 
 // addAudioTrack configures a PeerConnection with a bidirectional transceiver and adds the track to it.
-func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) {
+func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) *webrtc.RTPSender {
 	audioTrsv, err := pc.AddTransceiverFromKind(
 		webrtc.RTPCodecTypeAudio,
 		webrtc.RTPTransceiverInit{
@@ -106,7 +118,9 @@ func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSamp
 	if err != nil {
 		log.Panicf("error adding transceiver: %v", err)
 	}
-	if err = audioTrsv.Sender().ReplaceTrack(track); err != nil {
+	sender := audioTrsv.Sender()
+	if err = sender.ReplaceTrack(track); err != nil {
 		log.Panicf("error replacing track: %v", err)
 	}
+	return sender
 }
