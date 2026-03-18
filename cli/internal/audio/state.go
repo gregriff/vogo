@@ -40,7 +40,7 @@ func newAudioBase(track *webrtc.TrackLocalStaticSample, recvMTU int) devices {
 
 // CreateDeviceContext creates a malgo context that will be shared between the speaker and mic.
 // It should be run in its own goroutine because this can take a while.
-func (d *devices) CreateDeviceContext(ctx context.Context) error {
+func (d *devices) CreateDeviceContext(_ context.Context) error {
 	start := time.Now()
 	defer func() {
 		log.Printf("malgo context created in %v", time.Since(start))
@@ -114,7 +114,7 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 		for {
 			r := &rtp.Packet{}
 
-			_, err := ReadRTP(r, packetBuf, track, c.recvMTU)
+			_, err := ReadRTP(r, packetBuf, track)
 			if err != nil {
 				if err == io.EOF {
 					c.streams.remove(track.StreamID())
@@ -205,7 +205,7 @@ func NewCall(track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
 // should only have one RemoteTrack. Decoded audio is written to c.stream,
 // from which the speaker goroutine reads for playback.
 func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
-	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
 		if err != nil {
 			log.Panicf("decoder init error: %v", err)
@@ -217,7 +217,7 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 			r := &rtp.Packet{}
 
 			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
-			_, err := ReadRTP(r, packetBuf, track, c.recvMTU)
+			_, err := ReadRTP(r, packetBuf, track)
 			if err != nil {
 				if err == io.EOF {
 					return // Track closed, exit loop
@@ -267,7 +267,7 @@ func (c *Call) DataProc() malgo.DataProc {
 
 // ReadRTP is a rewrite of webrtc.TrackRemote.ReadRTP() that reuses a
 // provided buffer and rtp Packet so they don't escape to the heap.
-func ReadRTP(r *rtp.Packet, buf []byte, t *webrtc.TrackRemote, recvMTU int) (interceptor.Attributes, error) {
+func ReadRTP(r *rtp.Packet, buf []byte, t *webrtc.TrackRemote) (interceptor.Attributes, error) {
 	n, iAttrs, err := t.Read(buf)
 	if err != nil {
 		return nil, err

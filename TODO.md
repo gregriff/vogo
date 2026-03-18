@@ -2,7 +2,7 @@
 
 ### Next:
 - slog client
-- use packet seq numbers to impl PLC for up to like 10 packets. 
+- impl PLC for calls, refactor decode loop to reduce duplicate code. tweak PLC threshold. 
 - create sentinel errors for CallEnded, ConnectionFailed, handle them in top-level cli funcs
 - use ansi colors per profile to echo vogoenv
 - Test Packet Loss+PLC impl:

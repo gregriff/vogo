@@ -23,7 +23,7 @@ func calculateRTT(rr *rtcp.ReceptionReport) time.Duration {
 	return time.Duration(float64(rtt) / 65536.0 * float64(time.Second))
 }
 
-// toNTP32 computes seconds since 1900 from t, returning the middle 32 bits
+// toNTP32 computes seconds since 1900 from t, returning the middle 32 bits.
 func toNTP32(t time.Time) uint32 {
 	// NTP epoch is Jan 1, 1900
 	const ntpEpoch = 2208988800

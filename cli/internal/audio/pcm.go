@@ -15,7 +15,7 @@ import (
 // Note: this would have to be doubled if you want to allow users to send text also.
 const MaxStreams = shared.ChannelCapacity - 1
 
-// allocating more size to rb prevents overwriting samples after bursty packet arrival
+// allocating more size to rb prevents overwriting samples after bursty packet arrival.
 const ringBufferSize = pcmBufferSize * 6
 
 // stream stores PCM audio data. The microphone writes PCM to its stream, where
@@ -86,7 +86,7 @@ func (s *streams) remove(id string) {
 // [s.mixed]. It must be run within a mutex lock. If [full] is empty due to network conditions,
 // or [s.bufs] is empty due to none being added, the caller can still write [s.mixed]
 // to the speaker because it is zeroed, and the speaker will play silence.
-// Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams
+// Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams.
 func (s *streams) mix(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
 	full, numFull := [MaxStreams]unsafe.Pointer{}, int32(0)
@@ -118,8 +118,8 @@ func (s *streams) mix(numSamples int) {
 	summed := [pcmBufferSize]int32{}
 
 	// avoid bounds checks
-	_ = full[numFull-1]
-	_ = summed[numSamples-1]
+	_ = full[numFull-1]      //nolint:gosec // G602: checked in streams.add
+	_ = summed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
 	// sum samples for each buffer
 	// TODO: SIMD
@@ -139,7 +139,7 @@ func (s *streams) mix(numSamples int) {
 
 	// actual mixing
 	_ = s.mixed[numSamples-1]
-	_ = summed[numSamples-1]
+	_ = summed[numSamples-1] //nolint:gosec // G602: checked in caller
 	for i := range numSamples {
 		// s.mixed[i] = clampInt16(sum / numFull)
 		s.mixed[i] = softSaturate(summed[i], math.MaxInt16)

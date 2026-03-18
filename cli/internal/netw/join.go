@@ -181,7 +181,7 @@ func joinChannelAndConnect(
 			return g.Wait()
 		case msg := <-msgs:
 			handlerWg.Go(func() {
-				handleMessage(ctx, msg, conns, audioState)
+				handleMessage(ctx, msg, conns)
 			})
 		}
 	}
@@ -189,19 +189,14 @@ func joinChannelAndConnect(
 
 // handleMessage dispatches handlers for each incoming message. It should be run in its
 // own goroutine to prevent blocking the unbuffered message loop.
-func handleMessage(
-	ctx context.Context,
-	msg wsock.Message,
-	conns *wrtc.ConnectionMap,
-	audioState *audio.Channel,
-) {
+func handleMessage(ctx context.Context, msg wsock.Message, conns *wrtc.ConnectionMap) {
 	switch msg.Type {
 	case "ice-offer", "ice-answer":
 		handleIceMessage(msg, conns)
 	case "answer":
 		handleAnswerMessage(msg, conns)
 	case "offer":
-		handleOfferMessage(ctx, msg, conns, audioState)
+		handleOfferMessage(ctx, msg, conns)
 	default:
 		log.Printf("WARN: unknown message: %v", msg)
 	}
@@ -213,7 +208,6 @@ func handleOfferMessage(
 	ctx context.Context,
 	msg wsock.Message,
 	conns *wrtc.ConnectionMap,
-	audioState *audio.Channel,
 ) {
 	var offer requests.ConnectionWithId
 	if err := json.Unmarshal(msg.Data, &offer); err != nil {
@@ -223,9 +217,6 @@ func handleOfferMessage(
 	var conn *wrtc.Connection
 	if conn = conns.Get(offer.From); conn != nil {
 		conn.Close()
-		// if err := conn.Pc.Close(); err != nil {
-		// 	log.Printf("error closing existing pc for %s: %v", offer.From, err)
-		// }
 		log.Printf("recreating connection to %s", offer.From)
 	}
 	if conns.Len() >= audio.MaxStreams {
@@ -305,22 +296,3 @@ func handleIceMessage(msg wsock.Message, conns *wrtc.ConnectionMap) {
 		log.Printf("error adding ICE candidate: %v", err)
 	}
 }
-
-// func mergeConnected(ctx context.Context, channels ...<-chan struct{}) <-chan struct{} {
-// 	merged := make(chan struct{}, 1)
-// 	for _, ch := range channels {
-// 		go func(c <-chan struct{}) {
-// 			select {
-// 			case <-ctx.Done():
-// 			case _, ok := <-c:
-// 				if ok {
-// 					select {
-// 					case merged <- struct{}{}:
-// 					default: // already notified, drop
-// 					}
-// 				}
-// 			}
-// 		}(ch)
-// 	}
-// 	return merged
-// }

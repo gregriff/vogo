@@ -296,6 +296,8 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 			switch status {
 			case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
 				return io.EOF
+			default:
+				continue
 			}
 		// case failedPeer := <-c.audioState.Mic.FailedPeers():
 		case status, ok := <-c.ICEStateChan:
@@ -308,6 +310,8 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 			switch status {
 			case webrtc.ICEConnectionStateClosed, webrtc.ICEConnectionStateFailed:
 				return io.EOF
+			default:
+				continue
 			}
 		}
 	}
@@ -326,6 +330,8 @@ func (c *Connection) onConnectionStateChange(state webrtc.PeerConnectionState) {
 	case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
 		close(c.ConnStateChan)
 		c.closeOnce.Do(func() { _ = c.Pc.Close() })
+	default:
+		return
 	}
 }
 
@@ -336,6 +342,8 @@ func (c *Connection) onICEConnectionStateChange(state webrtc.ICEConnectionState)
 	case webrtc.ICEConnectionStateClosed, webrtc.ICEConnectionStateFailed:
 		close(c.ICEStateChan)
 		c.closeOnce.Do(func() { _ = c.Pc.Close() })
+	default:
+		return
 	}
 }
 

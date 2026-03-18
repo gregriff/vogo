@@ -103,9 +103,15 @@ func (m *microphone) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("encoder error: %w", err)
 	}
-	encoder.SetMaxBandwidth(opus.Fullband)
-	encoder.SetBitrate(opusBitrate)
-	encoder.SetDTX(true)
+	if err := encoder.SetMaxBandwidth(opus.Fullband); err != nil {
+		log.Panicf("error setting max bandwidth: %v", err)
+	}
+	if err := encoder.SetBitrate(opusBitrate); err != nil {
+		log.Panicf("error setting bitrate: %v", err)
+	}
+	if err := encoder.SetDTX(true); err != nil {
+		log.Panicf("error setting DTX: %v", err)
+	}
 	// complexity, _ := encoder.Complexity()  // currently it's == 9, 10 max
 
 	// TODO: shorten this?

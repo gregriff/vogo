@@ -25,10 +25,10 @@ const (
 	// max Ms of audio to extrapolate using PLC.
 	maxPLCDurationMs = 60
 
-	// max frames to extrapolate using PLC
+	// max frames to extrapolate using PLC.
 	maxPLCFrames = maxPLCDurationMs / frameDurationMs
 
-	// sets the period size in ms for miniaudio mic and speaker
+	// sets the period size in ms for miniaudio mic and speaker.
 	capturePeriodMs  = frameDurationMs
 	playbackPeriodMs = frameDurationMs // Note: multiply this by 2 if playback glitches happen
 
@@ -38,7 +38,7 @@ const (
 	// size of buffer to hold opus encoded from mic, to be written to packets.
 	opusBufferSize = frameSize
 
-	// opusBitrate sets the bitrate of the opus encoder
+	// opusBitrate sets the bitrate of the opus encoder.
 	opusBitrate = 64_000
 
 	// size of buffer to hold decoded PCM from the network.

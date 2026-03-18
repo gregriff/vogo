@@ -24,7 +24,7 @@ var rootCmd = &cobra.Command{
 	Use:   "vogo",
 	Short: "Client for cross-platform P2P voice chat via WebRTC",
 	Long:  ``,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRun: func(_ *cobra.Command, _ []string) {
 		if pprofAddr != "" && viper.GetString("user.name") == "greg" {
 			log.Printf("starting pprof server at %s", pprofAddr)
 			go func() {
