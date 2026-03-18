@@ -57,8 +57,7 @@ func joinChannel(_ *cobra.Command, _ []string) {
 		viper.GetString("user.name"),
 		viper.GetString("user.password")
 
-	ctx, stop := signal.NotifyContext(context.Background(),
-		os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	credentials := netw.NewCredentials(stunServer, vogoServer, username, password)

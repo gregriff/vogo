@@ -30,19 +30,6 @@ func TestMix(t *testing.T) {
 		}
 	})
 
-	// when using softSaturate() this won't pass
-	// t.Run("two streams averaged correctly", func(t *testing.T) {
-	// 	s := newStreams()
-	// 	a := []int16{100}
-	// 	b := []int16{200}
-	// 	s.add("a", &a)
-	// 	s.add("b", &b)
-	// 	s.mix(1)
-	// 	if s.mixed[0] != 150 {
-	// 		t.Errorf("sample mix err: got %d, want %d", s.mixed[0], 150)
-	// 	}
-	// })
-
 	t.Run("silence streams mix to silence", func(t *testing.T) {
 		s := newStreams()
 		pcm := []int16{0, 0, 0}

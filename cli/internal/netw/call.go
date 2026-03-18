@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
+	"github.com/gregriff/vogo/cli/internal/netw/calls"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/pion/webrtc/v4"
@@ -20,33 +21,33 @@ import (
 // be cancelled with the provided context, and the first error encountered will be returned.
 func CallFriend(ctx context.Context, creds *credentials, recipient string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
-	conn := wrtc.NewConnection(uuid.New(), recipient, creds.stunServer, track)
-	audioState := audio.NewCall(track, wrtc.RecvMTU)
-	audioState.AddPeer(conn.Pc)
+	conn := calls.NewConnection(uuid.New(), recipient, creds.stunServer, track)
+	call := audio.NewCall(track, wrtc.RecvMTU)
+	call.AddPeer(conn.Pc)
 	defer conn.Close()
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return audioState.CreateDeviceContext(gCtx)
+		return call.CreateDeviceContext(gCtx)
 	})
 	defer func() {
-		if err := audioState.Uninit(); err != nil {
+		if err := call.Uninit(); err != nil {
 			log.Printf("error uninitializing allocated ctx: %v", err)
 		}
 	}()
 
 	g.Go(func() error {
-		return audioState.Speaker.Init(gCtx, audioState.DataProc())
+		return call.Speaker.Init(gCtx, call.DataProc())
 	})
 	defer func() {
 		conn.Close()
-		audioState.Speaker.Uninit()
+		call.Speaker.Uninit()
 	}()
 
 	g.Go(func() error {
-		return audioState.Mic.Init(gCtx)
+		return call.Mic.Init(gCtx)
 	})
-	defer audioState.Mic.Uninit()
+	defer call.Mic.Uninit()
 
 	g.Go(func() error {
 		return sendCallAndConnect(gCtx, conn, creds, recipient)
@@ -67,8 +68,8 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 
 	// init microphone, and start it and the speaker once call is connected
 	g.Go(func() error {
-		micReady := audioState.Mic.Initialized()
-		speakerReady := audioState.Speaker.Initialized()
+		micReady := call.Mic.Initialized()
+		speakerReady := call.Speaker.Initialized()
 
 		for {
 			select {
@@ -88,7 +89,7 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 
 			// Both initialized and call connected
 			if micReady == nil && speakerReady == nil && conn.Connected == nil {
-				return audioState.Mic.Start(gCtx)
+				return call.Mic.Start(gCtx)
 			}
 		}
 	})
@@ -102,7 +103,7 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 // a PeerConnection set up correctly for opus audio.
 func sendCallAndConnect(
 	ctx context.Context,
-	conn *wrtc.Connection,
+	conn *calls.Connection,
 	creds *credentials,
 	recipient string,
 ) error {

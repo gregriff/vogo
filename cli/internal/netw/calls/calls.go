@@ -1,4 +1,7 @@
-package wrtc
+// package calls contains the Connection struct, which is used to create and maintain a 1:1
+// webrtc PeerConnection for voice chat. It is also used by the rooms package to compose state
+// for multi-user voice channels.
+package calls
 
 import (
 	"context"
@@ -6,23 +9,19 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"maps"
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/shared"
+	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
-	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
 // Connection encapsulates a bidirectional audio webrtc connection.
-// TODO: this could be directly created by NewAudioPeerConnection.
 type Connection struct {
 	// the uuid of the recipient user.
 	Id uuid.UUID
@@ -31,22 +30,25 @@ type Connection struct {
 	Pc *webrtc.PeerConnection
 
 	// used to obtain Receiver Reports
-	Sender *webrtc.RTPSender
+	sender *webrtc.RTPSender
 
 	// used to obtain Sender Reports
-	Receiver *webrtc.RTPReceiver
+	receiver *webrtc.RTPReceiver
 
 	// channel for sending ICE Candidates
 	Candidates chan webrtc.ICECandidateInit
 
-	ConnStateChan chan webrtc.PeerConnectionState
-	ICEStateChan  chan webrtc.ICEConnectionState
+	connStateChan chan webrtc.PeerConnectionState
+	iceStateChan  chan webrtc.ICEConnectionState
 
 	// notification channels
-	Connected chan struct{}
+	Connected,
 	RemoteSet chan struct{}
 
-	Once      sync.Once
+	// CloseRemoteSetOnce is used to signal that the remote description has been set on the PeerConnection
+	CloseRemoteSetOnce sync.Once
+
+	// closeOnce is used to ensure the PeerConnection is closed only one time.
 	closeOnce sync.Once
 }
 
@@ -58,21 +60,21 @@ func NewConnection(
 	stunServer string,
 	track *webrtc.TrackLocalStaticSample,
 ) *Connection {
-	pc, sender, receiver := NewAudioPeerConnection(stunServer, track)
+	pc, sender, receiver := wrtc.NewAudioPeerConnection(stunServer, track)
 	conn := &Connection{
 		Id:       id,
 		Pc:       pc,
-		Sender:   sender,
-		Receiver: receiver,
+		sender:   sender,
+		receiver: receiver,
 
 		// where ice candidates will be sent as they're gathered
 		Candidates: make(chan webrtc.ICECandidateInit, 10),
 
 		// NOTE: these being unbuffered may be causing a lock if pc.Close() is changed to pc.GracefulClose()
-		ICEStateChan: make(chan webrtc.ICEConnectionState),
+		iceStateChan: make(chan webrtc.ICEConnectionState),
 
 		// channel to pass along connection status pcUpdates
-		ConnStateChan: make(chan webrtc.PeerConnectionState),
+		connStateChan: make(chan webrtc.PeerConnectionState),
 
 		// notification channel for when the peer connection becomes connected
 		Connected: make(chan struct{}),
@@ -100,6 +102,13 @@ func NewConnection(
 	})
 	return conn
 }
+
+type RTCPReadMode int
+
+const (
+	senderReportMode RTCPReadMode = iota
+	receiverReportMode
+)
 
 // NewOffer creates a webrtc offer, sets the local description and starts ice gathering.
 func (c *Connection) NewOffer(caller, recipient string) requests.Connection {
@@ -129,7 +138,7 @@ func (c *Connection) CreateAnswer(offer *webrtc.SessionDescription) error {
 	if err := c.Pc.SetRemoteDescription(*offer); err != nil {
 		return fmt.Errorf("error setting remote description: %v", err)
 	}
-	c.Once.Do(func() { close(c.RemoteSet) })
+	c.CloseRemoteSetOnce.Do(func() { close(c.RemoteSet) })
 
 	answer, err := c.Pc.CreateAnswer(nil)
 	if err != nil {
@@ -143,17 +152,10 @@ func (c *Connection) CreateAnswer(offer *webrtc.SessionDescription) error {
 	return nil
 }
 
-type candidateType int
-
-const (
-	CandidateICEOffer = iota
-	CanidateICEAnswer
-)
-
 // SendCandidates gathers local ICE candidates created for the connection's recipient
 // and sends them to the server via the websocket in a new goroutine. It sends them with a
 // [candidateType] tag to let the server know if they're ICE offers or answers.
-func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, callerName string, tag candidateType) {
+func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, callerName string, tag wrtc.CandidateType) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -169,7 +171,7 @@ func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, cal
 			}
 
 			var tagStr string
-			if tag == CandidateICEOffer {
+			if tag == wrtc.CandidateICEOffer {
 				tagStr = "ice-offer"
 			} else {
 				tagStr = "ice-answer"
@@ -192,11 +194,11 @@ func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, cal
 // This function should be run in its own goroutine. It will return nil when the Sender is closed,
 // which must be explicitally called somewhere.
 func (c *Connection) CollectReceiverReports() error {
-	buf := make([]byte, RecvMTU)
+	buf := make([]byte, wrtc.RecvMTU)
 	for {
-		packets, _, err := c.ReadRTCP(receiverReportMode, buf)
+		packets, _, err := wrtc.ReadSenderRTCP(c.sender, buf)
 		if err != nil {
-			if err == io.EOF {
+			if err == io.EOF || err == io.ErrClosedPipe {
 				return nil // sender closed
 			}
 			log.Printf("readRTCP err: %v", err)
@@ -207,12 +209,12 @@ func (c *Connection) CollectReceiverReports() error {
 			switch report := pkt.(type) {
 			case *rtcp.ReceiverReport:
 				for _, block := range report.Reports {
-					rtt := calculateRTT(&block)
+					rtt := wrtc.CalculateRTT(&block)
 					lossPercent := float64(block.FractionLost) / 256.0 * 100
 					log.Printf("RR -- SSRC: %d | Loss: %.1f%% | Jitter: %.2f ms | RTT: %v",
 						block.SSRC,
 						lossPercent,
-						jitterToMs(block.Jitter),
+						wrtc.JitterToMs(block.Jitter),
 						rtt,
 					)
 				}
@@ -223,15 +225,16 @@ func (c *Connection) CollectReceiverReports() error {
 	}
 }
 
-// CollectSenderReports listens and reads RTCP sender reports until the sender is stopped.
+// CollectSenderReports listens and collects SenderReports from the RTPReceiver.
 // For some reason, sender reports for a peer connectiondon't seem to be generated
-// unless this function runs.
+// unless this function runs. It will return nil when the Receiver is closed,
+// which must be explicitally called somewhere.
 func (c *Connection) CollectSenderReports() error {
-	buf := make([]byte, RecvMTU)
+	buf := make([]byte, wrtc.RecvMTU)
 	for {
-		_, _, err := c.ReadRTCP(senderReportMode, buf)
+		_, _, err := wrtc.ReadReceiverRTCP(c.receiver, buf)
 		if err != nil {
-			if err == io.EOF {
+			if err == io.EOF || err == io.ErrClosedPipe {
 				return nil // sender closed
 			}
 			log.Printf("readRTCP err: %v", err)
@@ -240,44 +243,16 @@ func (c *Connection) CollectSenderReports() error {
 	}
 }
 
-type RTCPReadMode int
-
-const (
-	senderReportMode = iota
-	receiverReportMode
-)
-
-// ReadRTCP reads an RTCP packet into a preallocated buffer and returns a slice of the RTCP packets, if any.
-// It must be set to operate on either the RTPSender or RTPReceiver.
-func (c *Connection) ReadRTCP(mode RTCPReadMode, dst []byte) (pkts []rtcp.Packet, iAttrs interceptor.Attributes, err error) {
-	var i int
-	if mode == senderReportMode {
-		i, iAttrs, err = c.Receiver.Read(dst)
-	} else { // ReceiverReport
-		i, iAttrs, err = c.Sender.Read(dst)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pkts, err = rtcp.Unmarshal(dst[:i])
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return pkts, iAttrs, nil
-}
-
 // HandleEvents will handle PeerConnection-related events such as status changes, manual retries
 // and failure to write audio packets to the network. It will also handle updating the UI with the status changes.
 // On PeerConnection failure, it returns an error, so returning that in an errgroup can be used to see when the PC
 // has ended and is closed.
 func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 	defer func() {
-		if err := c.Sender.Stop(); err != nil {
+		if err := c.sender.Stop(); err != nil {
 			log.Printf("error stopping RTPSender: %v", err)
 		}
-		if err := c.Receiver.Stop(); err != nil {
+		if err := c.receiver.Stop(); err != nil {
 			log.Printf("error stopping RTPReceiver: %v", err)
 		}
 	}()
@@ -286,10 +261,10 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case status, ok := <-c.ConnStateChan:
+		case status, ok := <-c.connStateChan:
 			log.Printf("PeerConnectionState with %s has changed: %s\n", peerName, status.String())
 			if !ok {
-				c.ConnStateChan = nil
+				c.connStateChan = nil
 				continue
 			}
 
@@ -300,10 +275,10 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 				continue
 			}
 		// case failedPeer := <-c.audioState.Mic.FailedPeers():
-		case status, ok := <-c.ICEStateChan:
+		case status, ok := <-c.iceStateChan:
 			log.Printf("IceConnectionState with %s has changed: %s\n", peerName, status.String())
 			if !ok {
-				c.ICEStateChan = nil
+				c.iceStateChan = nil
 				continue
 			}
 
@@ -320,7 +295,7 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 // onConnectionStateChange performs mandatory event handling for connection state changes. Logging
 // and other non-essential event handling should be done in handleEvents.
 func (c *Connection) onConnectionStateChange(state webrtc.PeerConnectionState) {
-	c.ConnStateChan <- state
+	c.connStateChan <- state
 
 	switch state {
 	case webrtc.PeerConnectionStateConnected:
@@ -328,7 +303,7 @@ func (c *Connection) onConnectionStateChange(state webrtc.PeerConnectionState) {
 	// https://github.com/pion/webrtc/wiki/Release-WebRTC@v4.0.0
 	// if PeerConnection was explicitly closed, this usually happens from a DTLS CloseNotify
 	case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
-		close(c.ConnStateChan)
+		close(c.connStateChan)
 		c.closeOnce.Do(func() { _ = c.Pc.Close() })
 	default:
 		return
@@ -336,11 +311,11 @@ func (c *Connection) onConnectionStateChange(state webrtc.PeerConnectionState) {
 }
 
 func (c *Connection) onICEConnectionStateChange(state webrtc.ICEConnectionState) {
-	c.ICEStateChan <- state
+	c.iceStateChan <- state
 
 	switch state {
 	case webrtc.ICEConnectionStateClosed, webrtc.ICEConnectionStateFailed:
-		close(c.ICEStateChan)
+		close(c.iceStateChan)
 		c.closeOnce.Do(func() { _ = c.Pc.Close() })
 	default:
 		return
@@ -352,122 +327,4 @@ func (c *Connection) Close() {
 	// Note: replacing this with graceful close will hang and cause audio bug.
 	// Some webrtc goroutine is not finishing...
 	c.closeOnce.Do(func() { _ = c.Pc.Close() })
-}
-
-type serverConn struct {
-	Ws *websocket.Conn
-	StunServer,
-	Username string
-}
-
-// ConnectionMap maps recipient usernames to Connections. It is used to store the state of all
-// outgoing connections to members of a channel.
-type ConnectionMap struct {
-	mu   sync.Mutex
-	data map[string]*Connection
-
-	// Server encapsulates a websocket connection to the vogo server.
-	Server serverConn
-
-	// Channel allows access to the audio devices and systems of the multi-user voice channel.
-	Channel *audio.Channel
-
-	// this is responsible for removing a Connection from the ConnectionMap
-	// when it's PeerConnection is closed.
-	Wg *sync.WaitGroup
-
-	// all conns use this for sending ice candidates
-	IceWg *sync.WaitGroup
-}
-
-func NewConnectionMap(
-	ws *websocket.Conn,
-	channel *audio.Channel,
-	stunServer, username string,
-) *ConnectionMap {
-	return &ConnectionMap{
-		data: make(map[string]*Connection, shared.ChannelCapacity),
-		Server: serverConn{
-			Ws:         ws,
-			StunServer: stunServer,
-			Username:   username,
-		},
-		Channel: channel,
-		Wg:      &sync.WaitGroup{},
-		IceWg:   &sync.WaitGroup{},
-	}
-}
-
-// AddConnection creates a new *Connection for the recipient, sets up audio playback for their RemoteTrack, and
-// starts an eventlistener for this connection.
-func (cm *ConnectionMap) AddConnection(ctx context.Context, recipientId uuid.UUID, recipientName string) *Connection {
-	c := NewConnection(recipientId, recipientName, cm.Server.StunServer, cm.Channel.Mic.Track())
-	cm.Channel.AddPeer(c.Pc)
-	cm.Update(recipientName, c)
-	cm.Wg.Go(func() {
-		err := c.HandleEvents(ctx, recipientName)
-		if err == io.EOF { // pc closed
-			cm.Delete(recipientName)
-		}
-	})
-
-	cm.Wg.Go(func() {
-		_ = c.CollectSenderReports()
-	})
-
-	// TODO: this will need to be appended to a struct that stores them for UI to pull from.
-	cm.Wg.Go(func() {
-		_ = c.CollectReceiverReports()
-	})
-	return c
-}
-
-// Get returns a *Connection if key is in the ConnectionMap. Nil if not.
-func (cm *ConnectionMap) Get(key string) *Connection {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	return cm.data[key]
-}
-
-func (cm *ConnectionMap) Update(key string, c *Connection) {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	cm.data[key] = c
-}
-
-func (cm *ConnectionMap) Len() int {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	return len(cm.data)
-}
-
-// TODO: do we want to call this every time a PC is closed? or retry closed conns?
-func (cm *ConnectionMap) Delete(key string) {
-	cm.mu.Lock()
-	delete(cm.data, key)
-	cm.mu.Unlock()
-	log.Printf("deleted %s from connMap", key)
-}
-
-// Snapshot returns a shallow copy of the ConnectionMap. It should be used when iteration
-// over the Connections is required, and it prevents concurrent writes from causing errors.
-func (cm *ConnectionMap) Snapshot() map[string]*Connection {
-	cm.mu.Lock()
-	defer cm.mu.Unlock()
-	return maps.Clone(cm.data)
-}
-
-// CloseAll closes all the Connection's PeerConnections.
-func (cm *ConnectionMap) CloseAll() {
-	var wg sync.WaitGroup
-	cm.mu.Lock()
-
-	for _, c := range cm.data {
-		wg.Go(func() {
-			c.Close()
-		})
-	}
-
-	cm.mu.Unlock()
-	wg.Wait()
 }

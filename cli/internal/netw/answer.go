@@ -1,7 +1,6 @@
 // package netw implements high-level networking functionality to enable p2p voice chat.
 // It handles the client-side connection process, using the wrtc package for signaling.
 // In addition, CRUD operations with the vogo server are contained here.
-// Many of the public functions in netw map directly to cli commands.
 package netw
 
 import (
@@ -12,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
+	"github.com/gregriff/vogo/cli/internal/netw/calls"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
@@ -26,33 +26,33 @@ import (
 // be cancelled with the provided context, and the first error encountered will be returned.
 func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
-	conn := wrtc.NewConnection(uuid.New(), caller, creds.stunServer, track)
-	audioState := audio.NewCall(track, wrtc.RecvMTU)
-	audioState.AddPeer(conn.Pc)
+	conn := calls.NewConnection(uuid.New(), caller, creds.stunServer, track)
+	call := audio.NewCall(track, wrtc.RecvMTU)
+	call.AddPeer(conn.Pc)
 	defer conn.Close()
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return audioState.CreateDeviceContext(gCtx)
+		return call.CreateDeviceContext(gCtx)
 	})
 	defer func() {
-		if err := audioState.Uninit(); err != nil {
+		if err := call.Uninit(); err != nil {
 			log.Printf("error uninitializing allocated ctx: %v", err)
 		}
 	}()
 
 	g.Go(func() error {
-		return audioState.Speaker.Init(gCtx, audioState.DataProc())
+		return call.Speaker.Init(gCtx, call.DataProc())
 	})
 	defer func() {
 		conn.Close()
-		audioState.Speaker.Uninit()
+		call.Speaker.Uninit()
 	}()
 
 	g.Go(func() error {
-		return audioState.Mic.Init(gCtx)
+		return call.Mic.Init(gCtx)
 	})
-	defer audioState.Mic.Uninit()
+	defer call.Mic.Uninit()
 
 	g.Go(func() error {
 		return answerAndConnect(gCtx, conn, creds, caller)
@@ -73,8 +73,8 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 
 	// init microphone, and start it and the speaker once call is connected
 	g.Go(func() error {
-		micReady := audioState.Mic.Initialized()
-		speakerReady := audioState.Speaker.Initialized()
+		micReady := call.Mic.Initialized()
+		speakerReady := call.Speaker.Initialized()
 
 		for {
 			select {
@@ -83,7 +83,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 			case <-conn.Connected:
 				conn.Connected = nil
 			case <-speakerReady:
-				if err := audioState.Speaker.Start(); err != nil {
+				if err := call.Speaker.Start(); err != nil {
 					return err
 				}
 				speakerReady = nil
@@ -93,7 +93,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 
 			// Both initialized and call connected
 			if micReady == nil && speakerReady == nil && conn.Connected == nil {
-				return audioState.Mic.Start(gCtx)
+				return call.Mic.Start(gCtx)
 			}
 		}
 	})
@@ -107,7 +107,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 // correctly for opus audio.
 func answerAndConnect(
 	ctx context.Context,
-	conn *wrtc.Connection,
+	conn *calls.Connection,
 	credentials *credentials,
 	caller string,
 ) error {

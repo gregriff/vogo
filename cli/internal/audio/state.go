@@ -30,7 +30,7 @@ type devices struct {
 	recvMTU int
 }
 
-func newAudioBase(track *webrtc.TrackLocalStaticSample, recvMTU int) devices {
+func newDevices(track *webrtc.TrackLocalStaticSample, recvMTU int) devices {
 	return devices{
 		Mic:     newMicrophone(track),
 		Speaker: newSpeaker(),
@@ -79,7 +79,7 @@ type Channel struct {
 
 // NewChannel creates a new audio channel struct.
 func NewChannel(track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
-	return &Channel{newAudioBase(track, recvMTU), newStreams()}
+	return &Channel{newDevices(track, recvMTU), newStreams()}
 }
 
 // AddPeer sets an event handler on pc that decodes incoming audio.
@@ -197,7 +197,7 @@ type Call struct {
 
 // NewCall creates the state for a 1:1 voice call.
 func NewCall(track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
-	return &Call{newAudioBase(track, recvMTU), newStream()}
+	return &Call{newDevices(track, recvMTU), newStream()}
 }
 
 // AddPeer sets an event handler on pc that writes incoming audio data to the speaker.

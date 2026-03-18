@@ -54,8 +54,7 @@ func registerUser(_ *cobra.Command, _ []string) {
 		log.Fatal(msg.Error())
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(),
-		os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	vogoClient := crud.NewClient(vogoServer, "", "")

@@ -136,3 +136,10 @@ func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSamp
 	}
 	return sender, audioTrsv.Receiver()
 }
+
+type CandidateType int
+
+const (
+	CandidateICEOffer CandidateType = iota
+	CanidateICEAnswer
+)
