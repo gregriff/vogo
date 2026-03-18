@@ -33,7 +33,7 @@ type microphone struct {
 	failedPeers chan error
 
 	// the malgo context will be sent over this chan.
-	CtxChan chan *malgo.AllocatedContext
+	ctxChan chan *malgo.AllocatedContext
 }
 
 func newMicrophone(track *webrtc.TrackLocalStaticSample) microphone {
@@ -44,7 +44,7 @@ func newMicrophone(track *webrtc.TrackLocalStaticSample) microphone {
 		pcm:         newStream(),
 		initialized: make(chan struct{}),
 		failedPeers: make(chan error, shared.ChannelCapacity-1),
-		CtxChan:     make(chan *malgo.AllocatedContext),
+		ctxChan:     make(chan *malgo.AllocatedContext),
 	}
 }
 
@@ -52,7 +52,7 @@ func (m *microphone) Init(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return nil
-	case m.ctx = <-m.CtxChan:
+	case m.ctx = <-m.ctxChan:
 		break
 	}
 
@@ -106,8 +106,7 @@ func (m *microphone) Start(ctx context.Context) error {
 	encoder.SetMaxBandwidth(opus.Fullband)
 	encoder.SetBitrate(opusBitrate)
 	encoder.SetDTX(true)
-	// complexity, _ := encoder.Complexity()
-	// encoder.SetInBandFEC(true)  // adds latency, probably use PLC
+	// complexity, _ := encoder.Complexity()  // currently it's == 9, 10 max
 
 	// TODO: shorten this?
 	ticker := time.NewTicker(frameDuration)

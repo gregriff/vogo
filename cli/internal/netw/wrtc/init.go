@@ -20,10 +20,22 @@ var opusCodec = webrtc.RTPCodecCapability{
 }
 
 // NewAudioPeerConnection creates the PeerConnection for a bidirectional audio webrtc connection.
-func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample) (*webrtc.PeerConnection, *webrtc.RTPSender) {
+// It also returns the RTP sender and receiver, so the caller can access sender and receiver reports
+// for the peer connection.
+func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample) (
+	*webrtc.PeerConnection,
+	*webrtc.RTPSender,
+	*webrtc.RTPReceiver,
+) {
 	pc := newPeerConnection(stunServer)
-	sender := addAudioTrack(pc, track)
-	return pc, sender
+	sender, receiver := addAudioTrack(pc, track)
+	if sender == nil {
+		log.Panicf("RTPSender is nil")
+	}
+	if receiver == nil {
+		log.Panicf("RTPReceiver is nil")
+	}
+	return pc, sender, receiver
 }
 
 // newPeerConnection creates a PeerConnection configured with the Opus audio codec.
@@ -108,7 +120,7 @@ func CreateAudioTrack(trackId string) *webrtc.TrackLocalStaticSample {
 }
 
 // addAudioTrack configures a PeerConnection with a bidirectional transceiver and adds the track to it.
-func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) *webrtc.RTPSender {
+func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) (*webrtc.RTPSender, *webrtc.RTPReceiver) {
 	audioTrsv, err := pc.AddTransceiverFromKind(
 		webrtc.RTPCodecTypeAudio,
 		webrtc.RTPTransceiverInit{
@@ -122,5 +134,5 @@ func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSamp
 	if err = sender.ReplaceTrack(track); err != nil {
 		log.Panicf("error replacing track: %v", err)
 	}
-	return sender
+	return sender, audioTrsv.Receiver()
 }

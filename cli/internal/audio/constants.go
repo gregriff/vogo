@@ -22,6 +22,12 @@ const (
 	// the frameDuration is used for webrtc metadata and for packetizing the correct amount of pcm into opus.
 	frameDuration = frameDurationMs * time.Millisecond
 
+	// max Ms of audio to extrapolate using PLC.
+	maxPLCDurationMs = 60
+
+	// max frames to extrapolate using PLC
+	maxPLCFrames = maxPLCDurationMs / frameDurationMs
+
 	// sets the period size in ms for miniaudio mic and speaker
 	capturePeriodMs  = frameDurationMs
 	playbackPeriodMs = frameDurationMs // Note: multiply this by 2 if playback glitches happen

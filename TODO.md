@@ -3,9 +3,23 @@
 ### Next:
 - slog client
 - use packet seq numbers to impl PLC for up to like 10 packets. 
-- use sender reports and receiver reports (interceptors) to impl adaptive bitrate (encoding)
 - create sentinel errors for CallEnded, ConnectionFailed, handle them in top-level cli funcs
 - use ansi colors per profile to echo vogoenv
+- Test Packet Loss+PLC impl:
+```
+# Add packet loss on loopback (lo0)
+  sudo dnctl pipe 1 config plr 0.10   # 10% packet loss
+  sudo pfctl -e
+  echo "dummynet-anchor \"myrules\"" | sudo tee /etc/pf.conf.d/dummynet.conf
+  echo "anchor \"myrules\"" | sudo tee -a /etc/pf.conf
+
+# Apply the rule to loopback
+  echo "dummynet on lo0 all pipe 1" | sudo pfctl -a myrules -f -
+
+# Remove it when done:
+  sudo pfctl -a myrules -F all
+  sudo dnctl -f flush
+```
 
 ### Opus:
 - Enabling BWE: 

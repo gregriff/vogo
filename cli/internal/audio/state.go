@@ -18,23 +18,20 @@ import (
 	"gopkg.in/hraban/opus.v2"
 )
 
-// audioBase contains shared state between 1:1 voice calls and multi-user channels.
-type audioBase struct {
-	// deviceCtx allows creation of the microphone and speaker
-	deviceCtx *malgo.AllocatedContext
-
-	// CtxChan should be sent the AllocatedContext to be shared between the mic and speaker
-	CtxChan chan *malgo.AllocatedContext
+// devices contains the microphone and speaker.
+type devices struct {
+	// ctx allows creation of the microphone and speaker
+	ctx *malgo.AllocatedContext
 
 	Mic     microphone
 	Speaker speaker
 
+	// recvMTU is the maximum transmissible unit in bytes, for receiving pcm over the network.
 	recvMTU int
 }
 
-func newAudioBase(track *webrtc.TrackLocalStaticSample, recvMTU int) audioBase {
-	return audioBase{
-		CtxChan: make(chan *malgo.AllocatedContext),
+func newAudioBase(track *webrtc.TrackLocalStaticSample, recvMTU int) devices {
+	return devices{
 		Mic:     newMicrophone(track),
 		Speaker: newSpeaker(),
 		recvMTU: recvMTU,
@@ -43,7 +40,7 @@ func newAudioBase(track *webrtc.TrackLocalStaticSample, recvMTU int) audioBase {
 
 // CreateDeviceContext creates a malgo context that will be shared between the speaker and mic.
 // It should be run in its own goroutine because this can take a while.
-func (ab *audioBase) CreateDeviceContext(ctx context.Context) error {
+func (d *devices) CreateDeviceContext(ctx context.Context) error {
 	start := time.Now()
 	defer func() {
 		log.Printf("malgo context created in %v", time.Since(start))
@@ -53,31 +50,30 @@ func (ab *audioBase) CreateDeviceContext(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error initializing mic context: %w", err)
 	}
-
-	ab.deviceCtx = c
+	d.ctx = c
 
 	// send context to the mic and speaker which
 	// will wait on it before starting.
-	ab.Mic.CtxChan <- c
-	ab.Speaker.CtxChan <- c
+	d.Mic.ctxChan <- c
+	d.Speaker.ctxChan <- c
 	return nil
 }
 
 // Uninit uninitializes the cgo context that the mic and speaker rely on. It must only be called
 // if both the mic and speaker are uninitialized.
-func (ab *audioBase) Uninit() error {
-	if ab.deviceCtx == nil {
+func (d *devices) Uninit() error {
+	if d.ctx == nil {
 		return nil
 	}
-	if err := ab.deviceCtx.Uninit(); err != nil {
+	if err := d.ctx.Uninit(); err != nil {
 		return err
 	}
-	ab.deviceCtx.Free()
+	d.ctx.Free()
 	return nil
 }
 
 type Channel struct {
-	audioBase
+	devices
 	streams streams
 }
 
@@ -94,9 +90,8 @@ func NewChannel(track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
 func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 	// note: this callback should not panic
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		// decoder operates on only one audio stream so init here.
 		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
-		if err != nil { // panic is fine since its a startup dev error
+		if err != nil {
 			log.Panicf("decoder init error: %v", err)
 		}
 
@@ -105,35 +100,73 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 		pcm := ringbuffer.New(ringBufferSize)
 		c.streams.add(track.StreamID(), &pcm)
 
+		var (
+			lastSeqNum  uint16
+			initialized bool
+		)
+
+		writePCM := func(buf []int16) {
+			c.streams.mu.Lock()
+			pcm.Write(buf)
+			c.streams.mu.Unlock()
+		}
+
 		for {
 			r := &rtp.Packet{}
 
-			// this blocks until either a packet is fully read or the pc is shutdown (returns an io.EOF err)
 			_, err := ReadRTP(r, packetBuf, track, c.recvMTU)
 			if err != nil {
 				if err == io.EOF {
 					c.streams.remove(track.StreamID())
-					return // Track closed, exit loop
+					return
 				}
 				log.Printf("PACKET READ ERR: %v", err)
-				continue // Temporary error, keep trying
+				continue
 			}
 
-			// TODO: check for 0 samples decoded and call PLC?
-			samplesDecoded, decodeErr := decoder.Decode(r.Payload, decodeBuf)
-			if decodeErr != nil {
-				log.Printf("DECODE ERROR: %v", decodeErr)
+			if !initialized {
+				lastSeqNum = r.SequenceNumber - 1
+				initialized = true
+			}
+
+			// signed diff handles uint16 wraparound correctly (65535 → 0 = diff of 1)
+			diff := int16(r.SequenceNumber - lastSeqNum)
+
+			if diff <= 0 {
+				// duplicate or reordered — drop
+				log.Printf("received dropped or reordered frame. skipping it")
+				continue
+			}
+
+			if diff > 1 {
+				// gap detected — fill with PLC using last known packet duration
+				lastDuration, err := decoder.LastPacketDuration()
+				if err != nil {
+					log.Printf("PLC: could not get last packet duration: %v", err)
+				} else {
+					lost := min(int(diff-1), maxPLCFrames)
+					plcBuf := make([]int16, lastDuration*NumChannels)
+					for range lost {
+						if err := decoder.DecodePLC(plcBuf); err != nil {
+							log.Printf("PLC ERROR: %v", err)
+							continue
+						}
+						writePCM(plcBuf)
+					}
+				}
+			}
+
+			// decode real packet
+			samplesDecoded, err := decoder.Decode(r.Payload, decodeBuf)
+			if err != nil {
+				log.Printf("DECODE ERROR: %v", err)
+				lastSeqNum = r.SequenceNumber
 				continue
 			}
 
 			framesDecoded := samplesDecoded * NumChannels
-			// Write decoded PCM to playback buffer, which malgo will pull from for playback
-			c.streams.mu.Lock()
-			pcm.Write(decodeBuf[:framesDecoded])
-			c.streams.mu.Unlock()
-
-			// TODO: ensure capacity doesnt continue to grow??
-			// decodeBuf = decodeBuf[framesDecoded:]
+			writePCM(decodeBuf[:framesDecoded])
+			lastSeqNum = r.SequenceNumber
 		}
 	})
 }
@@ -158,7 +191,7 @@ func (c *Channel) DataProc() malgo.DataProc {
 }
 
 type Call struct {
-	audioBase
+	devices
 	stream stream
 }
 
@@ -192,20 +225,6 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 				log.Printf("PACKET READ ERR: %v", err)
 				continue // Temporary error, keep trying
 			}
-
-			// count++
-			// if count%150 == 0 {
-			// 	rtcp, _, err := receiver.ReadRTCP()
-			// 	if err != nil {
-			// 		log.Printf("rtcp recv err: %#v", err)
-			// 	}
-			// 	for _, r := range rtcp {
-			// 		// Print a string description of the packets
-			// 		if stringer, canString := r.(fmt.Stringer); canString {
-			// 			fmt.Printf("Received RTCP Packet: %v", stringer.String())
-			// 		}
-			// 	}
-			// }
 
 			// TODO: check for 0 samples decoded and call PLC?
 			samplesDecoded, decodeErr := decoder.Decode(r.Payload, decodeBuf)

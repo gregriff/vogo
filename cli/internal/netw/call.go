@@ -58,6 +58,10 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 	})
 
 	g.Go(func() error {
+		return conn.CollectSenderReports()
+	})
+
+	g.Go(func() error {
 		return conn.CollectReceiverReports()
 	})
 

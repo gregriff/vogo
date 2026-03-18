@@ -30,14 +30,17 @@ type Connection struct {
 	// webrtc PeerConnection
 	Pc *webrtc.PeerConnection
 
-	// RTPSender is used to obtain Receiver Reports
+	// used to obtain Receiver Reports
 	Sender *webrtc.RTPSender
+
+	// used to obtain Sender Reports
+	Receiver *webrtc.RTPReceiver
 
 	// channel for sending ICE Candidates
 	Candidates chan webrtc.ICECandidateInit
 
-	ConnectionStateChanges chan webrtc.PeerConnectionState
-	ICEStateChanges        chan webrtc.ICEConnectionState
+	ConnStateChan chan webrtc.PeerConnectionState
+	ICEStateChan  chan webrtc.ICEConnectionState
 
 	// notification channels
 	Connected chan struct{}
@@ -55,19 +58,21 @@ func NewConnection(
 	stunServer string,
 	track *webrtc.TrackLocalStaticSample,
 ) *Connection {
-	pc, sender := NewAudioPeerConnection(stunServer, track)
+	pc, sender, receiver := NewAudioPeerConnection(stunServer, track)
 	conn := &Connection{
-		Id:     id,
-		Pc:     pc,
-		Sender: sender,
+		Id:       id,
+		Pc:       pc,
+		Sender:   sender,
+		Receiver: receiver,
 
 		// where ice candidates will be sent as they're gathered
 		Candidates: make(chan webrtc.ICECandidateInit, 10),
 
-		ICEStateChanges: make(chan webrtc.ICEConnectionState),
+		// NOTE: these being unbuffered may be causing a lock if pc.Close() is changed to pc.GracefulClose()
+		ICEStateChan: make(chan webrtc.ICEConnectionState),
 
 		// channel to pass along connection status pcUpdates
-		ConnectionStateChanges: make(chan webrtc.PeerConnectionState),
+		ConnStateChan: make(chan webrtc.PeerConnectionState),
 
 		// notification channel for when the peer connection becomes connected
 		Connected: make(chan struct{}),
@@ -95,13 +100,6 @@ func NewConnection(
 	})
 	return conn
 }
-
-type candidateType string
-
-var (
-	_ candidateType = "ice-offer"
-	_ candidateType = "ice-answer"
-)
 
 // NewOffer creates a webrtc offer, sets the local description and starts ice gathering.
 func (c *Connection) NewOffer(caller, recipient string) requests.Connection {
@@ -145,6 +143,13 @@ func (c *Connection) CreateAnswer(offer *webrtc.SessionDescription) error {
 	return nil
 }
 
+type candidateType int
+
+const (
+	CandidateICEOffer = iota
+	CanidateICEAnswer
+)
+
 // SendCandidates gathers local ICE candidates created for the connection's recipient
 // and sends them to the server via the websocket in a new goroutine. It sends them with a
 // [candidateType] tag to let the server know if they're ICE offers or answers.
@@ -163,7 +168,13 @@ func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, cal
 				log.Panicf("error encoding candidate: %v", err)
 			}
 
-			msg := wsock.Message{Type: string(tag), Data: bytes}
+			var tagStr string
+			if tag == CandidateICEOffer {
+				tagStr = "ice-offer"
+			} else {
+				tagStr = "ice-answer"
+			}
+			msg := wsock.Message{Type: tagStr, Data: bytes}
 			if err := websocket.JSON.Send(ws, msg); err != nil {
 				log.Printf("error sending candidate: %v", err)
 				c.Close()
@@ -183,7 +194,7 @@ func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, cal
 func (c *Connection) CollectReceiverReports() error {
 	buf := make([]byte, RecvMTU)
 	for {
-		packets, _, err := ReadRTCP(c.Sender, buf)
+		packets, _, err := c.ReadRTCP(receiverReportMode, buf)
 		if err != nil {
 			if err == io.EOF {
 				return nil // sender closed
@@ -196,21 +207,65 @@ func (c *Connection) CollectReceiverReports() error {
 			switch report := pkt.(type) {
 			case *rtcp.ReceiverReport:
 				for _, block := range report.Reports {
-					log.Printf("RR -- SSRC: %d | %%Lost: %d | Jitter: %d | LastSR: %d, Delay: %d",
+					rtt := calculateRTT(&block)
+					lossPercent := float64(block.FractionLost) / 256.0 * 100
+					log.Printf("RR -- SSRC: %d | Loss: %.1f%% | Jitter: %.2f ms | RTT: %v",
 						block.SSRC,
-						block.FractionLost,
-						block.Jitter,
-						block.LastSenderReport,
-						block.Delay,
+						lossPercent,
+						jitterToMs(block.Jitter),
+						rtt,
 					)
 				}
-			case *rtcp.ReceiverEstimatedMaximumBitrate:
-				log.Printf("REMB: %f bps", report.Bitrate)
 			default:
 				log.Printf("Got RTCP packet: %T", pkt)
 			}
 		}
 	}
+}
+
+// CollectSenderReports listens and reads RTCP sender reports until the sender is stopped.
+// For some reason, sender reports for a peer connectiondon't seem to be generated
+// unless this function runs.
+func (c *Connection) CollectSenderReports() error {
+	buf := make([]byte, RecvMTU)
+	for {
+		_, _, err := c.ReadRTCP(senderReportMode, buf)
+		if err != nil {
+			if err == io.EOF {
+				return nil // sender closed
+			}
+			log.Printf("readRTCP err: %v", err)
+			continue // hopefully a temporary error
+		}
+	}
+}
+
+type RTCPReadMode int
+
+const (
+	senderReportMode = iota
+	receiverReportMode
+)
+
+// ReadRTCP reads an RTCP packet into a preallocated buffer and returns a slice of the RTCP packets, if any.
+// It must be set to operate on either the RTPSender or RTPReceiver.
+func (c *Connection) ReadRTCP(mode RTCPReadMode, dst []byte) (pkts []rtcp.Packet, iAttrs interceptor.Attributes, err error) {
+	var i int
+	if mode == senderReportMode {
+		i, iAttrs, err = c.Receiver.Read(dst)
+	} else { // ReceiverReport
+		i, iAttrs, err = c.Sender.Read(dst)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pkts, err = rtcp.Unmarshal(dst[:i])
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return pkts, iAttrs, nil
 }
 
 // HandleEvents will handle PeerConnection-related events such as status changes, manual retries
@@ -222,16 +277,19 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 		if err := c.Sender.Stop(); err != nil {
 			log.Printf("error stopping RTPSender: %v", err)
 		}
+		if err := c.Receiver.Stop(); err != nil {
+			log.Printf("error stopping RTPReceiver: %v", err)
+		}
 	}()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case status, ok := <-c.ConnectionStateChanges:
+		case status, ok := <-c.ConnStateChan:
 			log.Printf("PeerConnectionState with %s has changed: %s\n", peerName, status.String())
 			if !ok {
-				c.ConnectionStateChanges = nil
+				c.ConnStateChan = nil
 				continue
 			}
 
@@ -240,10 +298,10 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 				return io.EOF
 			}
 		// case failedPeer := <-c.audioState.Mic.FailedPeers():
-		case status, ok := <-c.ICEStateChanges:
+		case status, ok := <-c.ICEStateChan:
 			log.Printf("IceConnectionState with %s has changed: %s\n", peerName, status.String())
 			if !ok {
-				c.ICEStateChanges = nil
+				c.ICEStateChan = nil
 				continue
 			}
 
@@ -258,7 +316,7 @@ func (c *Connection) HandleEvents(ctx context.Context, peerName string) error {
 // onConnectionStateChange performs mandatory event handling for connection state changes. Logging
 // and other non-essential event handling should be done in handleEvents.
 func (c *Connection) onConnectionStateChange(state webrtc.PeerConnectionState) {
-	c.ConnectionStateChanges <- state
+	c.ConnStateChan <- state
 
 	switch state {
 	case webrtc.PeerConnectionStateConnected:
@@ -266,17 +324,17 @@ func (c *Connection) onConnectionStateChange(state webrtc.PeerConnectionState) {
 	// https://github.com/pion/webrtc/wiki/Release-WebRTC@v4.0.0
 	// if PeerConnection was explicitly closed, this usually happens from a DTLS CloseNotify
 	case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
-		close(c.ConnectionStateChanges)
+		close(c.ConnStateChan)
 		c.closeOnce.Do(func() { _ = c.Pc.Close() })
 	}
 }
 
 func (c *Connection) onICEConnectionStateChange(state webrtc.ICEConnectionState) {
-	c.ICEStateChanges <- state
+	c.ICEStateChan <- state
 
 	switch state {
 	case webrtc.ICEConnectionStateClosed, webrtc.ICEConnectionStateFailed:
-		close(c.ICEStateChanges)
+		close(c.ICEStateChan)
 		c.closeOnce.Do(func() { _ = c.Pc.Close() })
 	}
 }
@@ -345,6 +403,10 @@ func (cm *ConnectionMap) AddConnection(ctx context.Context, recipientId uuid.UUI
 		}
 	})
 
+	cm.Wg.Go(func() {
+		_ = c.CollectSenderReports()
+	})
+
 	// TODO: this will need to be appended to a struct that stores them for UI to pull from.
 	cm.Wg.Go(func() {
 		_ = c.CollectReceiverReports()
@@ -400,19 +462,4 @@ func (cm *ConnectionMap) CloseAll() {
 
 	cm.mu.Unlock()
 	wg.Wait()
-}
-
-// ReadRTCP reads an RTCP packet into a preallocated buffer and returns a slice of the RTCP packets, if any.
-func ReadRTCP(sender *webrtc.RTPSender, dst []byte) ([]rtcp.Packet, interceptor.Attributes, error) {
-	i, iAttrs, err := sender.Read(dst)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	pkts, err := rtcp.Unmarshal(dst[:i])
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return pkts, iAttrs, nil
 }

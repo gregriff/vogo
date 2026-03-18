@@ -147,7 +147,7 @@ func joinChannelAndConnect(
 	// send ice candidates to each user in the room
 	for _, c := range conns.Snapshot() {
 		conns.IceWg.Go(func() {
-			c.SendCandidates(ctx, ws, creds.username, "ice-offer")
+			c.SendCandidates(ctx, ws, creds.username, wrtc.CandidateICEOffer)
 		})
 	}
 
@@ -263,7 +263,7 @@ func handleOfferMessage(
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
 	conns.IceWg.Go(func() {
-		conn.SendCandidates(ctx, conns.Server.Ws, conns.Server.Username, "ice-answer")
+		conn.SendCandidates(ctx, conns.Server.Ws, conns.Server.Username, wrtc.CanidateICEAnswer)
 	})
 }
 

@@ -20,7 +20,7 @@ type speaker struct {
 	initialized chan struct{}
 
 	// the malgo context will be sent over this chan
-	CtxChan chan *malgo.AllocatedContext
+	ctxChan chan *malgo.AllocatedContext
 }
 
 func newSpeaker() speaker {
@@ -28,7 +28,7 @@ func newSpeaker() speaker {
 		ctx:         &malgo.AllocatedContext{},
 		device:      &malgo.Device{},
 		initialized: make(chan struct{}),
-		CtxChan:     make(chan *malgo.AllocatedContext),
+		ctxChan:     make(chan *malgo.AllocatedContext),
 	}
 }
 
@@ -39,7 +39,7 @@ func (s *speaker) Init(ctx context.Context, onSendFrames malgo.DataProc) error {
 	select {
 	case <-ctx.Done():
 		return nil
-	case s.ctx = <-s.CtxChan:
+	case s.ctx = <-s.ctxChan:
 		break
 	}
 

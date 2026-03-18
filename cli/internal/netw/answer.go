@@ -64,6 +64,10 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	})
 
 	g.Go(func() error {
+		return conn.CollectSenderReports()
+	})
+
+	g.Go(func() error {
 		return conn.CollectReceiverReports()
 	})
 

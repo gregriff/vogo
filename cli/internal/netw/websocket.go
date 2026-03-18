@@ -69,9 +69,7 @@ func newWebsocketConfig(c *credentials, endpoint string) (*websocket.Config, err
 // for the goroutine reading the websocket. If goroutines reading the
 // websocket are using recieveWithContext, they will unblock.
 func closeAndWait(ws *websocket.Conn, g *errgroup.Group) error {
-	if err := ws.Close(); err == nil { // errs if already closed
-		log.Println("ws closed by client")
-	}
+	_ = ws.Close() // errs if already closed
 	if g != nil {
 		return g.Wait()
 	}
