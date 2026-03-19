@@ -1,4 +1,4 @@
-package ringbuffer
+package audio
 
 import "testing"
 
@@ -6,20 +6,20 @@ func TestRingBuffer(t *testing.T) {
 	t.Run("writing", func(t *testing.T) {
 		rbCap, writeLen := 10, 4
 
-		r := New(rbCap)
+		r := newRingBuffer(rbCap)
 		r.Write([]int16{})
 		if r.Len() != 0 {
 			t.Errorf("nil write failed, Len() should return 0, got %d", r.Len())
 		}
 
-		r = New(rbCap)
+		r = newRingBuffer(rbCap)
 		src := make([]int16, 0)
 		r.Write(src)
 		if r.Len() != 0 {
 			t.Errorf("empty write failed, Len() should return 0, got %d", r.Len())
 		}
 
-		r = New(rbCap)
+		r = newRingBuffer(rbCap)
 		src = make([]int16, writeLen)
 		r.Write(src)
 		if r.Len() != writeLen {
@@ -29,7 +29,7 @@ func TestRingBuffer(t *testing.T) {
 			t.Errorf("small write failed, expected tail=%d, got %d", writeLen, r.tail)
 		}
 
-		r = New(rbCap)
+		r = newRingBuffer(rbCap)
 		src = make([]int16, rbCap)
 		r.Write(src)
 		if !r.Full() {
@@ -43,7 +43,7 @@ func TestRingBuffer(t *testing.T) {
 		}
 
 		wraparoundLen := 2
-		r = New(rbCap)
+		r = newRingBuffer(rbCap)
 		src = make([]int16, rbCap+wraparoundLen)
 		r.Write(src[:4])
 		r.Write(src[4:])
@@ -59,14 +59,14 @@ func TestRingBuffer(t *testing.T) {
 		rbCap, readLen := 10, 4
 		src := make([]int16, rbCap) // will fill rb entirely
 
-		r := New(rbCap)
+		r := newRingBuffer(rbCap)
 		r.Write(src)
 		n := r.Read([]int16{})
 		if n != 0 {
 			t.Errorf("nil read failed, expected n=0, got %d", n)
 		}
 
-		r = New(rbCap)
+		r = newRingBuffer(rbCap)
 		r.Write(src)
 		emptyDst := make([]int16, 0)
 		n = r.Read(emptyDst)
@@ -74,7 +74,7 @@ func TestRingBuffer(t *testing.T) {
 			t.Errorf("empty read failed, expected n=0, got %d", n)
 		}
 
-		r = New(rbCap)
+		r = newRingBuffer(rbCap)
 		r.Write(src)
 		dst := make([]int16, readLen)
 		n = r.Read(dst)

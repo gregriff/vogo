@@ -1,3 +1,5 @@
+// package wrtc contains functions that initialize pion webrtc functionality, as well as functions to
+// read RTCP packets
 package wrtc
 
 import (
@@ -136,10 +138,3 @@ func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSamp
 	}
 	return sender, audioTrsv.Receiver()
 }
-
-type CandidateType int
-
-const (
-	CandidateICEOffer CandidateType = iota
-	CanidateICEAnswer
-)

@@ -1,11 +1,11 @@
-// package calls contains the Connection struct, which is used to create and maintain a 1:1
+package netw
+
+// conn.go contains the Connection struct, which is used to create and maintain a 1:1
 // webrtc PeerConnection for voice chat. It is also used by the rooms package to compose state
 // for multi-user voice channels.
-package calls
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -14,11 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/requests"
-	"github.com/gregriff/vogo/shared/wsock"
-	"github.com/gregriff/vogo/shared/wsock/messages"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
-	"golang.org/x/net/websocket"
 )
 
 // Connection encapsulates a bidirectional audio webrtc connection.
@@ -150,43 +147,6 @@ func (c *Connection) CreateAnswer(offer *webrtc.SessionDescription) error {
 		return fmt.Errorf("error setting local description: %v", err)
 	}
 	return nil
-}
-
-// SendCandidates gathers local ICE candidates created for the connection's recipient
-// and sends them to the server via the websocket in a new goroutine. It sends them with a
-// [candidateType] tag to let the server know if they're ICE offers or answers.
-func (c *Connection) SendCandidates(ctx context.Context, ws *websocket.Conn, callerName string, tag wrtc.CandidateType) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case candidate, ok := <-c.Candidates:
-			bytes, err := json.Marshal(messages.Candidate{
-				UserId:    c.Id,
-				Username:  callerName,
-				Candidate: candidate,
-			})
-			if err != nil {
-				log.Panicf("error encoding candidate: %v", err)
-			}
-
-			var tagStr string
-			if tag == wrtc.CandidateICEOffer {
-				tagStr = "ice-offer"
-			} else {
-				tagStr = "ice-answer"
-			}
-			msg := wsock.Message{Type: tagStr, Data: bytes}
-			if err := websocket.JSON.Send(ws, msg); err != nil {
-				log.Printf("error sending candidate: %v", err)
-				c.Close()
-				return
-			}
-			if !ok {
-				return
-			}
-		}
-	}
 }
 
 // CollectReceiverReports listens and collects ReceiverReports from the RTPSender. These

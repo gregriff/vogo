@@ -1,12 +1,12 @@
-package ringbuffer
+package audio
 
-// RingBuffer is a circular buffer of pcm data that allows for reading and writing without
-// reslicing, preventing allocations and GC pressure. RingBuffer is meant to be shared
+// ringBuffer is a circular buffer of pcm data that allows for reading and writing without
+// reslicing, preventing allocations and GC pressure. ringBuffer is meant to be shared
 // by pointer between the writer and reader, but all methods assume they are using a mutex
-// to prevent data races. RingBuffer should be initialized to be multiple times larger than the
+// to prevent data races. ringBuffer should be initialized to be multiple times larger than the
 // pcm frame size as to not overwrite samples during bad network conditions. The length and capacity
 // of the underlying buffer are never used in any operation.
-type RingBuffer struct {
+type ringBuffer struct {
 	// pcm data
 	buf []int16
 
@@ -23,15 +23,15 @@ type RingBuffer struct {
 	size int
 }
 
-func New(size int) RingBuffer {
-	return RingBuffer{
+func newRingBuffer(size int) ringBuffer {
+	return ringBuffer{
 		buf:  make([]int16, size),
 		size: size,
 	}
 }
 
 // Write adds all samples in src, overwriting oldest data if full.
-func (r *RingBuffer) Write(src []int16) {
+func (r *ringBuffer) Write(src []int16) {
 	n := len(src)
 	if n == 0 {
 		return
@@ -62,7 +62,7 @@ func (r *RingBuffer) Write(src []int16) {
 }
 
 // Read consumes up to len(dst) samples and returns how many were read.
-func (r *RingBuffer) Read(dst []int16) int {
+func (r *ringBuffer) Read(dst []int16) int {
 	n := min(r.count, len(dst))
 	if n == 0 {
 		return 0
@@ -81,10 +81,10 @@ func (r *RingBuffer) Read(dst []int16) int {
 	return n
 }
 
-// Len returns the logical length: the number of unread samples in the ringbuffer.
-func (r *RingBuffer) Len() int    { return r.count }
-func (r *RingBuffer) Full() bool  { return r.count == r.size }
-func (r *RingBuffer) Empty() bool { return r.count == 0 }
+// Len returns the logical length: the number of unread samples in the ringbuffer
+func (r *ringBuffer) Len() int    { return r.count }
+func (r *ringBuffer) Full() bool  { return r.count == r.size }
+func (r *ringBuffer) Empty() bool { return r.count == 0 }
 
 // Peek reads len(dst) samples into dst without consuming.
 // func (r *RingBuffer) Peek(dst []int16) int {

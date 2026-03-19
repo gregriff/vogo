@@ -1,5 +1,5 @@
 // package netw implements high-level networking functionality to enable p2p voice chat.
-// It handles the client-side connection process, using the wrtc package for signaling.
+// It handles the client-side connection and signaling processes.
 // In addition, CRUD operations with the vogo server are contained here.
 package netw
 
@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/cli/internal/netw/calls"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
@@ -26,7 +25,7 @@ import (
 // be cancelled with the provided context, and the first error encountered will be returned.
 func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
-	conn := calls.NewConnection(uuid.New(), caller, creds.stunServer, track)
+	conn := NewConnection(uuid.New(), caller, creds.stunServer, track)
 	call := audio.NewCall(track, wrtc.RecvMTU)
 	call.AddPeer(conn.Pc)
 	defer conn.Close()
@@ -107,7 +106,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 // correctly for opus audio.
 func answerAndConnect(
 	ctx context.Context,
-	conn *calls.Connection,
+	conn *Connection,
 	credentials *credentials,
 	caller string,
 ) error {

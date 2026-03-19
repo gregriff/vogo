@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/cli/internal/netw/calls"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/pion/webrtc/v4"
@@ -21,7 +20,7 @@ import (
 // be cancelled with the provided context, and the first error encountered will be returned.
 func CallFriend(ctx context.Context, creds *credentials, recipient string) error {
 	track := wrtc.CreateAudioTrack(creds.username)
-	conn := calls.NewConnection(uuid.New(), recipient, creds.stunServer, track)
+	conn := NewConnection(uuid.New(), recipient, creds.stunServer, track)
 	call := audio.NewCall(track, wrtc.RecvMTU)
 	call.AddPeer(conn.Pc)
 	defer conn.Close()
@@ -103,7 +102,7 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 // a PeerConnection set up correctly for opus audio.
 func sendCallAndConnect(
 	ctx context.Context,
-	conn *calls.Connection,
+	conn *Connection,
 	creds *credentials,
 	recipient string,
 ) error {
@@ -149,43 +148,4 @@ func sendCallAndConnect(
 	// TODO: if sendIce needs to continue to run after it recvs last candidate, add:
 	// <-conn.Connected
 	return g.Wait()
-}
-
-// recvCandidates reads recipient candidates from ws and adds them to the pc.
-func recvCandidates(ctx context.Context, ws *websocket.Conn, pc *webrtc.PeerConnection) error {
-	var candidate webrtc.ICECandidateInit
-	var count int
-	for {
-		err := wsock.ReceiveJSON(ctx, ws, &candidate)
-		if err != nil {
-			return fmt.Errorf("error reading from ws: %w", err)
-		}
-		if candidate.Candidate == "" {
-			log.Printf("ice recv completed, %d candidates total", count)
-			return nil
-		}
-		count++
-		if err := pc.AddICECandidate(candidate); err != nil {
-			log.Println("WARN: error adding ICE candidate: %w", err)
-		}
-	}
-}
-
-// sendCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.
-// It returns when there are no more candidates or the context is cancelled.
-func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.ICECandidateInit) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case candidate, ok := <-ch:
-			if err := websocket.JSON.Send(ws, candidate); err != nil {
-				return fmt.Errorf("error sending ice candidate: %w", err)
-			}
-			if !ok {
-				log.Println("ice send complete")
-				return nil
-			}
-		}
-	}
 }

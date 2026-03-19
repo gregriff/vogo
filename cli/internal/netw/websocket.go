@@ -29,13 +29,9 @@ func NewCredentials(stunServer, baseURL, username, password string) *credentials
 	}
 }
 
-// newWebsocket creates a websocket connection to the vogo server to a given endpoint,
-// with http basic auth headers.
-func newWebsocket(
-	ctx context.Context,
-	creds *credentials,
-	endpoint string,
-) (*websocket.Conn, error) {
+// newWebsocket creates a websocket connection to the vogo server
+// to a given endpoint, with http basic auth headers.
+func newWebsocket(ctx context.Context, creds *credentials, endpoint string) (*websocket.Conn, error) {
 	cfg, err := newWebsocketConfig(creds, endpoint)
 	if err != nil {
 		return nil, err
@@ -47,7 +43,8 @@ func newWebsocket(
 	return ws, nil
 }
 
-// newWebsocketConfig creates a new websocket.Config for the vogo server for a specific endpoint, with basic auth.
+// newWebsocketConfig creates a new websocket.Config for the
+// vogo server for a specific endpoint, with basic auth.
 func newWebsocketConfig(c *credentials, endpoint string) (*websocket.Config, error) {
 	loc := strings.Replace(c.baseURL, "http", "ws", 1) + endpoint
 	log.Printf("ws url: %s", loc)
@@ -67,7 +64,7 @@ func newWebsocketConfig(c *credentials, endpoint string) (*websocket.Config, err
 
 // closeAndWait closes the websocket. g should be the errgroup
 // for the goroutine reading the websocket. If goroutines reading the
-// websocket are using recieveWithContext, they will unblock.
+// websocket are using [shared.ReceiveJSON], they will unblock.
 func closeAndWait(ws *websocket.Conn, g *errgroup.Group) error {
 	_ = ws.Close() // errs if already closed
 	if g != nil {

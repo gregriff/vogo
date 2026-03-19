@@ -1,7 +1,8 @@
-// package rooms provides the connectionMap struct, which uses calls.Connection's to create the
+package netw
+
+// room.go provides the connectionMap struct, which uses Connection's to create the
 // state for a an active multi-user voice channel -- a room. It provides functions to receive websocket
 // messages from the vogo server, and performs actions on the correct Connection per message.
-package rooms
 
 import (
 	"context"
@@ -13,8 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/cli/internal/netw/calls"
-	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
@@ -22,6 +21,7 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+// serverConn encapsulates a websocket connection to the vogo server.
 type serverConn struct {
 	ws *websocket.Conn
 	stunServer,
@@ -31,43 +31,41 @@ type serverConn struct {
 // connectionMap maps recipient usernames to Connections. It is used to store the state of all
 // outgoing connections to users currently in the channel.
 type connectionMap struct {
-	mu   sync.Mutex
-	data map[string]*calls.Connection
-
-	// server encapsulates a websocket connection to the vogo server.
+	mu     sync.Mutex
+	conns  map[string]*Connection
 	server serverConn
 
 	// channel allows access to the audio devices and systems of the room.
 	channel *audio.Channel
 
 	// wg is used to run all sub-goroutines for the connectionMap.
-	wg *sync.WaitGroup
+	wg sync.WaitGroup
 }
 
-// Init initializes the client-side state of a room--a channel with users in it. A room is
+// InitRoom initializes the client-side state of a room--a channel with users in it. A room is
 // encapsulated by a connectionMap, which stores the state of all the 1:1 voice calls between
 // the room participants.
-func Init(
+func InitRoom(
 	ws *websocket.Conn,
 	channel *audio.Channel,
-	stunServer, username string,
+	creds *credentials,
 ) *connectionMap {
 	return &connectionMap{
-		data: make(map[string]*calls.Connection, shared.ChannelCapacity),
+		conns: make(map[string]*Connection, shared.ChannelCapacity),
 		server: serverConn{
 			ws:         ws,
-			stunServer: stunServer,
-			username:   username,
+			stunServer: creds.stunServer,
+			username:   creds.username,
 		},
 		channel: channel,
-		wg:      &sync.WaitGroup{},
+		wg:      sync.WaitGroup{},
 	}
 }
 
 // AddConnection creates a new *Connection for the recipient, sets up audio playback for their RemoteTrack, and
 // starts eventlisteners for this connection, and begins gathering Sender and Receiver reports.
-func (cm *connectionMap) AddConnection(ctx context.Context, recipientId uuid.UUID, recipientName string) *calls.Connection {
-	c := calls.NewConnection(recipientId, recipientName, cm.server.stunServer, cm.channel.Mic.Track())
+func (cm *connectionMap) AddConnection(ctx context.Context, recipientId uuid.UUID, recipientName string) *Connection {
+	c := NewConnection(recipientId, recipientName, cm.server.stunServer, cm.channel.Mic.Track())
 	cm.channel.AddPeer(c.Pc)
 	cm.Update(recipientName, c)
 	cm.wg.Go(func() {
@@ -89,49 +87,49 @@ func (cm *connectionMap) AddConnection(ctx context.Context, recipientId uuid.UUI
 }
 
 // Get returns a *Connection if key is in the connectionMap. Nil if not.
-func (cm *connectionMap) Get(key string) *calls.Connection {
+func (cm *connectionMap) Get(key string) *Connection {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	return cm.data[key]
+	return cm.conns[key]
 }
 
 // Update inserts a new Connection into the map given the recipient's name, overwriting it if already present.
-func (cm *connectionMap) Update(key string, c *calls.Connection) {
+func (cm *connectionMap) Update(key string, c *Connection) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	cm.data[key] = c
+	cm.conns[key] = c
 }
 
 // Len returns the number of Connections in the connectionMap.
 func (cm *connectionMap) Len() int {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	return len(cm.data)
+	return len(cm.conns)
 }
 
 // TODO: do we want to call this every time a PC is closed? or retry closed conns?
 func (cm *connectionMap) Delete(key string) {
 	cm.mu.Lock()
-	delete(cm.data, key)
+	delete(cm.conns, key)
 	cm.mu.Unlock()
 	log.Printf("deleted %s from connMap", key)
 }
 
 // Snapshot returns a shallow copy of the connectionMap. It should be used when iteration
 // over the Connections is required, and it prevents concurrent writes from causing errors.
-func (cm *connectionMap) Snapshot() map[string]*calls.Connection {
+func (cm *connectionMap) Snapshot() map[string]*Connection {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	return maps.Clone(cm.data)
+	return maps.Clone(cm.conns)
 }
 
-// Uninit closes all the Connection's PeerConnections and waits for any spawned goroutines
+// Uninit closes all the room's Connections and waits for any spawned goroutines
 // to finish. It should be called when the client leaves the room.
 func (cm *connectionMap) Uninit() {
 	var wg sync.WaitGroup
 	cm.mu.Lock()
 
-	for _, c := range cm.data {
+	for _, c := range cm.conns {
 		wg.Go(func() {
 			c.Close()
 		})
@@ -146,9 +144,9 @@ func (cm *connectionMap) Uninit() {
 func (cm *connectionMap) SendInitialCandidates(ctx context.Context) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	for _, c := range cm.data {
+	for _, c := range cm.conns {
 		cm.wg.Go(func() {
-			c.SendCandidates(ctx, cm.server.ws, cm.server.username, wrtc.CandidateICEOffer)
+			sendTaggedCandidates(ctx, cm.server.ws, c, cm.server.username, candidateICEOffer)
 		})
 	}
 }
@@ -179,7 +177,7 @@ func (cm *connectionMap) handleOfferMessage(ctx context.Context, msg wsock.Messa
 		log.Panicf("error unmarshaling offer: %v", err)
 	}
 
-	var conn *calls.Connection
+	var conn *Connection
 	if conn = cm.Get(offer.From); conn != nil {
 		conn.Close()
 		log.Printf("recreating connection to %s", offer.From)
@@ -219,7 +217,7 @@ func (cm *connectionMap) handleOfferMessage(ctx context.Context, msg wsock.Messa
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
 	cm.wg.Go(func() {
-		conn.SendCandidates(ctx, cm.server.ws, cm.server.username, wrtc.CanidateICEAnswer)
+		sendTaggedCandidates(ctx, cm.server.ws, conn, cm.server.username, canidateICEAnswer)
 	})
 }
 
@@ -230,7 +228,7 @@ func (cm *connectionMap) handleAnswerMessage(msg wsock.Message) {
 		log.Panicf("error unmarshaling answer: %v", err)
 	}
 
-	var conn *calls.Connection
+	var conn *Connection
 	if conn = cm.Get(answer.To); conn == nil {
 		log.Panicf("error: connection for user %s not found", answer.From)
 	}
@@ -250,7 +248,7 @@ func (cm *connectionMap) handleIceMessage(msg wsock.Message) {
 		log.Panicf("error unmarshaling %s candidate: %v", msg.Type, err)
 	}
 
-	var conn *calls.Connection
+	var conn *Connection
 	if conn = cm.Get(data.Username); conn == nil {
 		log.Panicf("error: connection for user %s not found", data.Username)
 	}

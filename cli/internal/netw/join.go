@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
-	"github.com/gregriff/vogo/cli/internal/netw/rooms"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
@@ -28,37 +27,37 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 	// - make sure to send connection successful sentinels
 
 	track := wrtc.CreateAudioTrack(creds.username)
-	audioState := audio.NewChannel(track, wrtc.RecvMTU)
+	channel := audio.NewChannel(track, wrtc.RecvMTU)
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return audioState.CreateDeviceContext(gCtx)
+		return channel.CreateDeviceContext(gCtx)
 	})
 	defer func() {
-		if err := audioState.Uninit(); err != nil {
+		if err := channel.Uninit(); err != nil {
 			log.Printf("error uninitializing allocated ctx: %v", err)
 		}
 	}()
 
 	// todo: defer a func that uninits the context once, waiting for both devices to be uninited on two chans.
 	g.Go(func() error {
-		return audioState.Speaker.Init(gCtx, audioState.DataProc())
+		return channel.Speaker.Init(gCtx, channel.DataProc())
 	})
-	defer audioState.Speaker.Uninit()
+	defer channel.Speaker.Uninit()
 
 	g.Go(func() error {
-		return audioState.Mic.Init(gCtx)
+		return channel.Mic.Init(gCtx)
 	})
-	defer audioState.Mic.Uninit()
+	defer channel.Mic.Uninit()
 
 	g.Go(func() error {
-		return joinChannelAndConnect(gCtx, creds, ownerName, channelName, audioState)
+		return joinChannelAndConnect(gCtx, creds, ownerName, channelName, channel)
 	})
 
 	// start speaker and mic once both are initialized
 	g.Go(func() error {
-		micReady := audioState.Mic.Initialized()
-		speakerReady := audioState.Speaker.Initialized()
+		micReady := channel.Mic.Initialized()
+		speakerReady := channel.Speaker.Initialized()
 
 		for {
 			select {
@@ -71,7 +70,7 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 				// if user := os.Getenv("VOGOENV"); user == "two" {
 				// 	speakerReady = nil
 				// }
-				if err := audioState.Speaker.Start(); err != nil {
+				if err := channel.Speaker.Start(); err != nil {
 					return err
 				}
 				speakerReady = nil
@@ -81,7 +80,7 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 
 			// Both initialized
 			if micReady == nil && speakerReady == nil {
-				return audioState.Mic.Start(gCtx)
+				return channel.Mic.Start(gCtx)
 			}
 		}
 	})
@@ -120,7 +119,7 @@ func joinChannelAndConnect(
 	}
 
 	// this holds the state of the room from this client's perspective
-	room := rooms.Init(ws, audioState, creds.stunServer, creds.username)
+	room := InitRoom(ws, audioState, creds)
 	defer room.Uninit()
 	for id, name := range res.Users {
 		log.Printf("creating new connection with %s", name)
