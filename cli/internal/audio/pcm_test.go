@@ -4,7 +4,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
-	"unsafe"
 )
 
 func TestMix(t *testing.T) {
@@ -112,7 +111,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("branchless-v1_n=3", func(b *testing.B) {
+	b.Run("branchless-v1_n=4", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -122,21 +121,24 @@ func BenchmarkMix(b *testing.B) {
 		s1 := newRingBuffer(bufSize)
 		s2 := newRingBuffer(bufSize)
 		s3 := newRingBuffer(bufSize)
+		s4 := newRingBuffer(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 		s.add("s3", &s3)
+		s.add("s4", &s4)
 
 		for b.Loop() {
 			b.StopTimer()
 			s1.Write(samples)
 			s2.Write(samples)
 			s3.Write(samples)
+			s4.Write(samples)
 			b.StartTimer()
 			s.mix(pcmBufferSize)
 		}
 	})
 
-	b.Run("slow_n=1", func(b *testing.B) {
+	b.Run("idiomatic_n=1", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -148,11 +150,11 @@ func BenchmarkMix(b *testing.B) {
 
 		for b.Loop() {
 			s1.Write(samples)
-			s.mixSlow(pcmBufferSize)
+			s.mixIdiomatic(pcmBufferSize)
 		}
 	})
 
-	b.Run("slow_n=2", func(b *testing.B) {
+	b.Run("idiomatic_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -169,11 +171,11 @@ func BenchmarkMix(b *testing.B) {
 			s1.Write(samples)
 			s2.Write(samples)
 			b.StartTimer()
-			s.mixSlow(pcmBufferSize)
+			s.mixIdiomatic(pcmBufferSize)
 		}
 	})
 
-	b.Run("slow_n=3", func(b *testing.B) {
+	b.Run("idiomatic_n=4", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -183,30 +185,32 @@ func BenchmarkMix(b *testing.B) {
 		s1 := newRingBuffer(bufSize)
 		s2 := newRingBuffer(bufSize)
 		s3 := newRingBuffer(bufSize)
+		s4 := newRingBuffer(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 		s.add("s3", &s3)
+		s.add("s4", &s4)
 
 		for b.Loop() {
 			b.StopTimer()
 			s1.Write(samples)
 			s2.Write(samples)
 			s3.Write(samples)
+			s4.Write(samples)
 			b.StartTimer()
-			s.mixSlow(pcmBufferSize)
+			s.mixIdiomatic(pcmBufferSize)
 		}
 	})
 
 }
 
-func (s *streams) mixSlow(numSamples int) {
+func (s *streams) mixIdiomatic(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [MaxStreams]unsafe.Pointer{}, int32(0)
+	full, numFull := [MaxStreams]*[pcmBufferSize]int16{}, int32(0)
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
 			_ = rb.Read(s.writeBufs[numFull][:])
-			// since we're in the lock and ensured length, we can use unsafe access.
-			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
+			full[numFull] = &s.writeBufs[numFull]
 			numFull++
 		}
 	}
@@ -224,34 +228,18 @@ func (s *streams) mixSlow(numSamples int) {
 		return
 	}
 
-	summed := [pcmBufferSize]int32{}
-
 	// avoid bounds checks
-	// _ = full[numFull-1]
-	// _ = summed[numSamples-1]
+	_, _ = full[numFull-1], s.mixed[numSamples-1]
 
 	// sum samples for each buffer
-	// TODO: SIMD
 	const zero = int32(0)
-	const int16Size = unsafe.Sizeof(int16(0))
 	var sum int32
-	var offset uintptr
 	for i := range numSamples {
 		sum = zero
-		offset = uintptr(i) * int16Size
 		for j := range numFull {
-			// use ptr arithmetic for no bounds checks for branchless SIMD.
-			sum += int32(*((*int16)(unsafe.Add(full[j], offset))))
+			sum += int32(full[j][i])
 		}
-		summed[i] = sum
-	}
-
-	// actual mixing
-	// _ = s.mixed[numSamples-1]
-	// _ = summed[numSamples-1]
-	for i := range numSamples {
-		// s.mixed[i] = clampInt16(sum / numFull)
-		s.mixed[i] = softSaturate(summed[i], math.MaxInt16)
+		s.mixed[i] = softSaturate(sum, math.MaxInt16)
 	}
 
 	// ensure these are cleaned up

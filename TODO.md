@@ -47,9 +47,7 @@
 - add a 'config' command that invokes default text editor (how do i do this on windows?)
 - add an 'init' command to walk through registering
 - add query/status functionality to get outgoing friend requests
-- impl PLC
 - ensure DTLS is working correctly and encrypting
-- look here https://github.com/pion/webrtc/blob/master/examples/README.md#media-api to see info about rtcp media stats
 
 ##### Server:
 - busy loop or something going on when its run for a long time. enable profiler

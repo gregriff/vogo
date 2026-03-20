@@ -1,3 +1,4 @@
+export GOEXPERIMENT=simd
 OUT_DIR=../bin
 
 build:
