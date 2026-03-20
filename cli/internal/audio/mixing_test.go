@@ -70,7 +70,7 @@ const pcmAmplitude = 3000 // can be up to math.MaxInt16
 func BenchmarkMix(b *testing.B) {
 	const bufSize = pcmBufferSize * 8
 
-	b.Run("branchless-v1_n=1", func(b *testing.B) {
+	b.Run("branchless_n=1", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -90,7 +90,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("branchless-v1_n=2", func(b *testing.B) {
+	b.Run("branchless_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -111,7 +111,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("branchless-v1_n=4", func(b *testing.B) {
+	b.Run("branchless_n=4", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)

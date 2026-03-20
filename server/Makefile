@@ -42,7 +42,7 @@ pprof-goroutine:
 
 pprof-heap:
 	mkdir -p $(PROFILE_DIR)
-	go tool pprof -proto http://localhost:6061/debug/pprof/heap > $(PROFILE_DIR)/heap.prof
+	go tool pprof -proto http://localhost:6061/debug/pprof/heap?gc=1 > $(PROFILE_DIR)/heap.prof
 
 # Opens an existing pprof file in the web browser
 pprof-view:

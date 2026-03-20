@@ -8,6 +8,8 @@ import (
 
 	"github.com/gregriff/vogo/server/configs"
 	"github.com/spf13/cobra"
+
+	_ "net/http/pprof"
 )
 
 var ConfigFile string
