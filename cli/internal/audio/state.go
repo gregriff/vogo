@@ -1,3 +1,5 @@
+//go:build cgo
+
 package audio
 
 // state.go contains structs that encapsulate the capture and playback of opus audio over webrtc,
@@ -8,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"simd/archsimd"
 	"time"
 
 	"github.com/gen2brain/malgo"
@@ -172,6 +175,19 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 
 // DataProc returns a callback that mixes multiple user's audio and sends it to the speaker.
 func (c *Channel) DataProc() malgo.DataProc {
+
+	// use simd versions of streams.mix if able
+	var mix = c.streams.mix
+	if archsimd.X86.AVX512() {
+		log.Println("using mixAVX512()")
+		mix = c.streams.mixAVX512
+	} else if archsimd.X86.AVX2() {
+		log.Println("using mixAVX2()")
+		mix = c.streams.mixAVX2
+	} else {
+		log.Println("using scalar mix()")
+	}
+
 	// read into output sample buf, for output to speaker device.
 	// this fires every [frameDurationMs]
 	return func(pOutputSample, _ []byte, framecount uint32) {
@@ -183,7 +199,7 @@ func (c *Channel) DataProc() malgo.DataProc {
 		}
 
 		// write a full mixed sample to the speaker buffer
-		c.streams.mix(samplesToRead)
+		mix(samplesToRead)
 		copy(pOutputSample, int16ToBytes(c.streams.mixed[:samplesToRead]))
 		c.streams.mu.Unlock()
 	}

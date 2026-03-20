@@ -1,3 +1,5 @@
+//go:build cgo
+
 // package netw implements high-level networking functionality to enable p2p voice chat.
 // It handles the client-side connection and signaling processes.
 // In addition, CRUD operations with the vogo server are contained here.

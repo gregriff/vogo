@@ -232,10 +232,8 @@ func (s *streams) mixIdiomatic(numSamples int) {
 	_, _ = full[numFull-1], s.mixed[numSamples-1]
 
 	// sum samples for each buffer
-	const zero = int32(0)
-	var sum int32
 	for i := range numSamples {
-		sum = zero
+		var sum int32
 		for j := range numFull {
 			sum += int32(full[j][i])
 		}

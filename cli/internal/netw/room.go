@@ -1,3 +1,5 @@
+//go:build cgo
+
 package netw
 
 // room.go provides the connectionMap struct, which uses Connection's to create the
