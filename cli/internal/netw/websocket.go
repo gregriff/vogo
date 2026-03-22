@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"log"
 	"strings"
+	"time"
 
 	"golang.org/x/net/websocket"
 	"golang.org/x/sync/errgroup"
@@ -36,7 +37,11 @@ func newWebsocket(ctx context.Context, creds *credentials, endpoint string) (*we
 	if err != nil {
 		return nil, err
 	}
-	ws, err := cfg.DialContext(ctx)
+
+	const dialTimeout = 10 * time.Second
+	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	ws, err := cfg.DialContext(dialCtx)
 	if err != nil {
 		return nil, err
 	}

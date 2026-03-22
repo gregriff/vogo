@@ -1,6 +1,8 @@
 export GOEXPERIMENT=simd
 OUT_DIR=../bin
 
+# view asm: `go tool objdump -s "func_name" bin/vogo`
+
 build:
 	go build -tags nolibopusfile -o $(OUT_DIR)/vogo main.go
 

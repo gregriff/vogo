@@ -1,6 +1,7 @@
 # TODOs
 
 ### Next:
+- make ws dial cancellable
 - slog client
 - impl PLC for calls, refactor decode loop to reduce duplicate code. tweak PLC threshold. 
 - create sentinel errors for CallEnded, ConnectionFailed, handle them in top-level cli funcs
