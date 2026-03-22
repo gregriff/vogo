@@ -4,6 +4,9 @@ OUT_DIR=../bin
 build:
 	go build -tags nolibopusfile -o $(OUT_DIR)/vogo main.go
 
+install:
+	go install -tags nolibopusfile
+
 format:
 	gofmt -d -e .
 	# golangci-lint fmt
@@ -107,4 +110,4 @@ pprof-view:
 	go tool pprof -http=:$(PPROF_PORT) $${PPROF_FILE}
 
 
-.PHONY: format lint build answer join call invite friends channel status register test escape
+.PHONY: format lint build install answer join call invite friends channel status register test escape
