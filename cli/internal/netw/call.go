@@ -129,7 +129,7 @@ func sendCallAndConnect(
 
 	// gather local ice candidates and write to websocket
 	g.Go(func() error {
-		return sendCandidates(gCtx, ws, conn.Candidates)
+		return sendCandidates(gCtx, ws, conn, creds.username, wsock.ICEOffer)
 	})
 
 	// wait to recv answer
@@ -147,7 +147,9 @@ func sendCallAndConnect(
 		return recvCandidates(gCtx, ws, conn.Pc)
 	})
 
-	// TODO: if sendIce needs to continue to run after it recvs last candidate, add:
-	// <-conn.Connected
+	<-conn.Connected
+	g.Go(func() error {
+		return notifyConnected(ws, creds.username, recipient)
+	})
 	return g.Wait()
 }

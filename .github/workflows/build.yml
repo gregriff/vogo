@@ -120,6 +120,7 @@ jobs:
         run: |
             go version
             GOEXPERIMENT=simd \
+            GOAMD64=v3 \
             CC=gcc \
             CGO_CFLAGS="-I${OPUS_INSTALL_PREFIX}/include/opus" \
             CGO_LDFLAGS="-L${OPUS_INSTALL_PREFIX}/lib -lopus" \

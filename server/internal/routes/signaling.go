@@ -3,7 +3,6 @@ package routes
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -17,7 +16,6 @@ import (
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
-	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 )
 
@@ -85,82 +83,75 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	defer calls.Delete(caller.Id)
 	logger.STATE.Info("call created")
 
-	// read incoming candidates
 	var (
-		readIce                   sync.WaitGroup
-		readIceCtx, cancelReadIce = context.WithCancel(ctx)
-		readChan                  = make(chan webrtc.ICECandidateInit)
-		canListenForClose         = make(chan struct{}, 1)
+		wsRecvWg                sync.WaitGroup
+		wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
+		msgChan                 = make(chan wsock.Message)
 	)
 	defer func() {
-		cancelReadIce()
-		_ = ws.Close()
-		readIce.Wait()
+		cancelWsRecv()
+		wsRecvWg.Wait()
 	}()
-	readIce.Go(func() {
-		defer close(canListenForClose)
-		defer cancelReadIce()
-		if err := readCandidates(readIceCtx, ws, readChan); err != nil {
-			if err == io.EOF {
-				cancel()
-				return
+	wsRecvWg.Go(func() {
+		defer cancel() // if websocket closes, end all goroutines
+		if err := wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
+			if err == io.EOF { // todo: may need to handle this in startMessageLoop
+				logger.ROUTE.Info("connection closed")
+			} else {
+				logger.ROUTE.Error("error during message loop", "err", err)
 			}
-			logger.WRTC.Error("during ICE reading", "err", err)
-		} else {
-			logger.WRTC.Debug("ICE gather completed")
-		}
-		canListenForClose <- struct{}{}
-	})
-
-	// listen for the close frame from the client, since we know the only
-	// thing the client could possibly send after ICE gather is a close frame
-	var (
-		listen sync.WaitGroup
-		closed = make(chan struct{}, 1)
-	)
-	defer listen.Wait()
-	listen.Go(func() {
-		// wait for ice gather to complete
-		if _, ok := <-canListenForClose; !ok {
-			return
-		}
-		if err := wsock.ReceiveJSON(ctx, ws, &struct{}{}); err == io.EOF {
-			closed <- struct{}{}
-		} else if err != nil {
-			logger.ROUTE.Error("ws non-EOF error", "err", err)
+			_ = ws.WriteClose(http.StatusInternalServerError)
 		}
 	})
 
 	for {
 		select {
 		case <-ctx.Done():
-		case <-closed:
-			cancel()
+			logger.ROUTE.Info("context cancelled", "reason", ctx.Err())
+			_ = ws.Close()
 			return
 		case answerSd := <-call.Answer:
 			if err := websocket.JSON.Send(ws, answerSd); err != nil {
 				logger.ROUTE.Error("writing answer", "err", err)
+				_ = ws.WriteClose(http.StatusBadRequest)
 				return
 			}
 		case answerCandidate, ok := <-call.To.Candidates:
 			if err := websocket.JSON.Send(ws, answerCandidate); err != nil {
 				logger.ROUTE.Error("writing candidate", "err", err)
+				_ = ws.WriteClose(http.StatusInternalServerError)
 				return
 			}
-			// we've sent the caller the recipient's last candidate. nothing left to do
 			if !ok {
+				call.To.Candidates = nil
+			}
+		case msg := <-msgChan:
+			switch msg.Type {
+			case "connected":
+				cancel()
 				return
+			case "ice-offer":
+				var data messages.Candidate
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					logger.ROUTE.Error("unmarshalling ice-offer candidate", "err", err)
+					_ = ws.WriteClose(http.StatusBadRequest)
+					return
+				}
+
+				call, err := calls.Get(caller.Id)
+				if err != nil {
+					logger.STATE.Error("call not found during trickle ICE", "err", err)
+					_ = ws.WriteClose(http.StatusInternalServerError)
+					return
+				}
+
+				if data.Candidate.Candidate == "" {
+					close(call.From.Candidates)
+					continue
+				}
+				call.From.Candidates <- data.Candidate
+				logger.WRTC.Debug("caller candidate sent")
 			}
-		// note: this must continue even if the above case completes. in the channel architecture, ensure this is the case?
-		// or maybe even then, caller candidates will be present for the recipient so will always finish first
-		case callerCandidate, ok := <-readChan:
-			if !ok { // caller gather completed
-				close(call.From.Candidates)
-				readChan = nil
-				continue
-			}
-			call.From.Candidates <- callerCandidate
-			logger.WRTC.Debug("caller candidate sent")
 		}
 	}
 }
@@ -218,8 +209,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 
 	// wait for answer from client
 	var answer requests.Connection
-	err = wsock.ReceiveJSON(ctx, ws, &answer)
-	if err != nil {
+	if err = wsock.ReceiveJSON(ctx, ws, &answer); err != nil {
 		if err == io.EOF {
 			return
 		}
@@ -235,57 +225,32 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	logger.WRTC.Debug("answer received")
 	call.Answer <- answer.Sd
 
-	// read incoming candidates
 	var (
-		readIce                   sync.WaitGroup
-		readIceCtx, cancelReadIce = context.WithCancel(ctx)
-		readChan                  = make(chan webrtc.ICECandidateInit)
-		canListenForClose         = make(chan struct{}, 1)
+		wsRecvWg                sync.WaitGroup
+		wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
+		msgChan                 = make(chan wsock.Message)
 	)
 	defer func() {
-		cancelReadIce()
-		_ = ws.Close()
-		readIce.Wait()
+		cancelWsRecv()
+		wsRecvWg.Wait()
 	}()
-	readIce.Go(func() {
-		defer close(canListenForClose)
-		defer cancelReadIce()
-		if err := readCandidates(readIceCtx, ws, readChan); err != nil {
-			if err == io.EOF {
-				cancel()
-				return
+	wsRecvWg.Go(func() {
+		defer cancel() // if websocket closes, end all goroutines
+		if err := wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
+			if err == io.EOF { // todo: may need to handle this in startMessageLoop
+				logger.ROUTE.Info("connection closed")
+			} else {
+				logger.ROUTE.Error("error during message loop", "err", err)
 			}
-			logger.ROUTE.Error("during ICE reading", "err", err)
-		} else {
-			logger.WRTC.Debug("ICE gather completed")
-		}
-		canListenForClose <- struct{}{} // unness?
-	})
-
-	// listen for the close frame from the client, since we know the only
-	// thing the client could possibly send after ICE gather is a close frame
-	var (
-		listen sync.WaitGroup
-		closed = make(chan struct{}, 1)
-	)
-	defer listen.Wait()
-	listen.Go(func() {
-		// wait for ice gather to complete
-		if _, ok := <-canListenForClose; !ok {
-			return
-		}
-		if err := wsock.ReceiveJSON(ctx, ws, &struct{}{}); err == io.EOF {
-			closed <- struct{}{}
-		} else if err != nil {
-			logger.ROUTE.Error("ws non-EOF error", "err", err)
+			_ = ws.WriteClose(http.StatusInternalServerError)
 		}
 	})
 
 	for {
 		select {
 		case <-ctx.Done():
-		case <-closed:
-			cancel()
+			logger.ROUTE.Info("context cancelled", "reason", ctx.Err())
+			_ = ws.Close()
 			return
 		// note: this needs to continue to run even if readchan is closed. this may always complete first tho...
 		case candidate, ok := <-call.From.Candidates:
@@ -296,43 +261,34 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 				logger.ROUTE.Error("writing answer", "err", err)
 				return
 			}
-		case answerCandidate, ok := <-readChan:
-			if !ok { // recipient gather completed
-				close(call.To.Candidates)
+		case msg := <-msgChan:
+			switch msg.Type {
+			case "connected":
+				cancel()
 				return
-			}
-			call, err := calls.Get(caller.Id)
-			if err != nil {
-				logger.STATE.Error("call not found during trickle ICE", "err", err)
-				return
-			}
-			call.To.Candidates <- answerCandidate
-			logger.WRTC.Debug("answer candidate sent")
-		}
-	}
-}
+			case "ice-answer":
+				var data messages.Candidate
+				if err := json.Unmarshal(msg.Data, &data); err != nil {
+					logger.ROUTE.Error("unmarshalling ice-answer candidate", "err", err)
+					_ = ws.WriteClose(http.StatusBadRequest)
+					return
+				}
 
-// readCandidates reads from ws in a loop, sending candidates read to the channel ch.
-// When an empty candidate is read, the channel is closed, signaling that ICE gather on this
-// websocket is finished. If the ws is closed or there is an error while reading, the ws is closed and the loop stops.
-func readCandidates(ctx context.Context, ws *websocket.Conn, ch chan webrtc.ICECandidateInit) error {
-	for {
-		var candidate webrtc.ICECandidateInit
-		if err := wsock.ReceiveJSON(ctx, ws, &candidate); err != nil {
-			if err == io.EOF {
-				return err // ws closed, propagate up
-			}
-			if cErr := ws.Close(); cErr != nil {
-				return fmt.Errorf("error closing ws: %v, after err: %v", cErr, err)
-			}
-			return err
-		}
+				call, err := calls.Get(caller.Id)
+				if err != nil {
+					logger.STATE.Error("call not found during trickle ICE", "err", err)
+					_ = ws.WriteClose(http.StatusInternalServerError)
+					return
+				}
 
-		if candidate.Candidate == "" {
-			close(ch)
-			return nil
+				if data.Candidate.Candidate == "" {
+					close(call.To.Candidates)
+					continue
+				}
+				call.To.Candidates <- data.Candidate
+				logger.WRTC.Debug("answer candidate sent")
+			}
 		}
-		ch <- candidate
 	}
 }
 
@@ -408,8 +364,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 	// note: parallelize this
 	var offers messages.BulkConnection
-	err = wsock.ReceiveJSON(ctx, ws, &offers)
-	if err != nil {
+	if err = wsock.ReceiveJSON(ctx, ws, &offers); err != nil {
 		if err == io.EOF {
 			return
 		}

@@ -148,7 +148,7 @@ func (cm *connectionMap) SendInitialCandidates(ctx context.Context) {
 	defer cm.mu.Unlock()
 	for _, c := range cm.conns {
 		cm.wg.Go(func() {
-			sendTaggedCandidates(ctx, cm.server.ws, c, cm.server.username, candidateICEOffer)
+			_ = sendCandidates(ctx, cm.server.ws, c, cm.server.username, wsock.ICEOffer)
 		})
 	}
 }
@@ -219,7 +219,7 @@ func (cm *connectionMap) handleOfferMessage(ctx context.Context, msg wsock.Messa
 	log.Printf("sent answer (from %s) to %s to server", answer.From, answer.To)
 
 	cm.wg.Go(func() {
-		sendTaggedCandidates(ctx, cm.server.ws, conn, cm.server.username, canidateICEAnswer)
+		_ = sendCandidates(ctx, cm.server.ws, conn, cm.server.username, wsock.ICEAnswer)
 	})
 }
 

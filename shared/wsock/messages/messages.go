@@ -14,6 +14,13 @@ type BulkConnection struct {
 	Data map[uuid.UUID]requests.Connection
 }
 
+// Connected is sent by a client to notify the server that their PeerConnection with a
+// peer is in a Connected state.
+type Connected struct {
+	Username,
+	PeerName string
+}
+
 // Candidate is an ICE Candidate. The Message that wraps it contains a Type field
 // indicating whether its an offer or answer ICE candidate.
 type Candidate struct {

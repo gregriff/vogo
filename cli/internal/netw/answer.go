@@ -109,11 +109,11 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 func answerAndConnect(
 	ctx context.Context,
 	conn *Connection,
-	credentials *credentials,
+	creds *credentials,
 	caller string,
 ) error {
 	endpoint := fmt.Sprintf("/answer/%s", caller)
-	ws, err := newWebsocket(ctx, credentials, endpoint)
+	ws, err := newWebsocket(ctx, creds, endpoint)
 	if err != nil {
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
@@ -143,7 +143,7 @@ func answerAndConnect(
 
 	// gather local ice candidates and write to websocket
 	g.Go(func() error {
-		return sendCandidates(gCtx, ws, conn.Candidates)
+		return sendCandidates(gCtx, ws, conn, creds.username, wsock.ICEAnswer)
 	})
 
 	// recv caller candidates
@@ -151,6 +151,10 @@ func answerAndConnect(
 		return recvCandidates(gCtx, ws, conn.Pc)
 	})
 
+	<-conn.Connected
+	g.Go(func() error {
+		return notifyConnected(ws, creds.username, caller)
+	})
 	return g.Wait()
 }
 

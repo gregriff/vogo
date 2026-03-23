@@ -11,10 +11,30 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+// MessageType defines the allowed message types to be sent over a vogo websocket.
+type MessageType string
+
+const (
+	Offer     MessageType = "offer"
+	Answer    MessageType = "answer"
+	Connected MessageType = "connected"
+	ICEOffer  MessageType = "ice-offer"
+	ICEAnswer MessageType = "ice-answer"
+)
+
+func (t MessageType) IsICEMessage() bool {
+	switch t {
+	case ICEOffer, ICEAnswer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Message is data tied to an event (Type) sent between client and server via
 // websocket. Use Listen() and a switch statement to mux Messages from multiple senders at once.
 type Message struct {
-	Type string          `json:"type"`
+	Type MessageType     `json:"type"`
 	Data json.RawMessage `json:"data"`
 }
 

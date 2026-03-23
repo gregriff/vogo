@@ -32,46 +32,25 @@ func recvCandidates(ctx context.Context, ws *websocket.Conn, pc *webrtc.PeerConn
 	}
 }
 
-// sendCandidates sends the caller's ICE candidates from ch to the websocket as they're gathered.
-// It returns when there are no more candidates or the context is cancelled.
-func sendCandidates(ctx context.Context, ws *websocket.Conn, ch <-chan webrtc.ICECandidateInit) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case candidate, ok := <-ch:
-			if err := websocket.JSON.Send(ws, candidate); err != nil {
-				return fmt.Errorf("error sending ice candidate: %w", err)
-			}
-			if !ok {
-				log.Println("ice send complete")
-				return nil
-			}
-		}
-	}
-}
-
-type candidateType int
-
-const (
-	candidateICEOffer candidateType = iota
-	canidateICEAnswer
-)
-
-// sendTaggedCandidates gathers local ICE candidates created for the connection's recipient
+// sendCandidates gathers local ICE candidates created for the connection's recipient
 // and sends them to the server via the websocket in a new goroutine. It sends them with a
-// [candidateType] tag to let the server know if they're ICE offers or answers.
-func sendTaggedCandidates(
+// [candidateType] tag to let the server know if they're ICE offers or answers. It returns when
+// gathering is complete, an error occurs or the context is cancelled.
+func sendCandidates(
 	ctx context.Context,
 	ws *websocket.Conn,
 	conn *Connection,
 	callerName string,
-	tag candidateType,
-) {
+	tag wsock.MessageType,
+) error {
+	if !tag.IsICEMessage() {
+		log.Panicf("sendCandidates passed a non-ICE MessageType")
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case candidate, ok := <-conn.Candidates:
 			bytes, err := json.Marshal(messages.Candidate{
 				UserId:    conn.Id,
@@ -82,21 +61,23 @@ func sendTaggedCandidates(
 				log.Panicf("error encoding candidate: %v", err)
 			}
 
-			var tagStr string
-			if tag == candidateICEOffer {
-				tagStr = "ice-offer"
-			} else {
-				tagStr = "ice-answer"
-			}
-			msg := wsock.Message{Type: tagStr, Data: bytes}
+			msg := wsock.Message{Type: tag, Data: bytes}
 			if err := websocket.JSON.Send(ws, msg); err != nil {
 				log.Printf("error sending candidate: %v", err)
 				conn.Close()
-				return
+				return err
 			}
 			if !ok {
-				return
+				log.Println("ice sending complete")
+				return nil
 			}
 		}
 	}
+}
+
+// notifyConnected sends a message to the vogo server to signal that this client's
+// PeerConnection with peerName is in a Connected state.
+func notifyConnected(ws *websocket.Conn, username, peerName string) error {
+	data := messages.Connected{Username: username, PeerName: peerName}
+	return websocket.JSON.Send(ws, &data)
 }
