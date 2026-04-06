@@ -17,6 +17,7 @@ import (
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
 	"golang.org/x/net/websocket"
+	"golang.org/x/sync/errgroup"
 )
 
 // TODO:
@@ -29,7 +30,10 @@ import (
 // exchanged Call deletes the signaling data from memory and returns.
 func (h *RouteHandler) Call(ws *websocket.Conn) {
 	ctx, cancel := context.WithTimeout(ws.Request().Context(), time.Second*30)
-	defer cancel()
+	defer func() {
+		cancel()
+		_ = ws.Close()
+	}()
 
 	logger := h.loggers.forRequest(ws.Request())
 
@@ -83,27 +87,28 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	defer calls.Delete(caller.Id)
 	logger.STATE.Info("call created")
 
-	var (
-		wsRecvWg                sync.WaitGroup
-		wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
-		msgChan                 = make(chan wsock.Message)
-	)
-	defer func() {
-		cancelWsRecv()
-		logger.ROUTE.Info("waiting for wsRecv to stop")
-		wsRecvWg.Wait()
-		logger.ROUTE.Info("STOPPED")
+	g, gCtx := errgroup.WithContext(ctx)
+	defer func() { // wait for listener to complete.
+		cancel()
+		if err := g.Wait(); err != nil {
+			logger.ROUTE.Error("while cancelling", "err", err)
+		}
 		_ = ws.Close()
 	}()
-	wsRecvWg.Go(func() {
-		defer cancel() // if websocket closes, end all goroutines
-		if err := wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
-			if err == io.EOF {
-				logger.ROUTE.Info("connection closed by client")
-			} else {
-				logger.ROUTE.Error("error during message loop", "err", err)
-			}
+
+	// websocket message dispatcher
+	msgChan := make(chan wsock.Message)
+	g.Go(func() error {
+		defer cancel() // cancels main goroutine
+		err := wsock.Listen(gCtx, ws, msgChan)
+		if err == io.EOF {
+			logger.ROUTE.Info("connection closed by client")
+			return nil
 		}
+		if err != nil {
+			logger.ROUTE.Error("during message loop", "err", err)
+		}
+		return err
 	})
 
 	for {
@@ -161,7 +166,10 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 // It then waits for the clients answer, where it then facilitates trickle-ICE gathering between the two clients.
 func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	ctx, cancel := context.WithTimeout(ws.Request().Context(), time.Second*15)
-	defer cancel()
+	defer func() {
+		cancel()
+		_ = ws.Close()
+	}()
 
 	logger := h.loggers.forRequest(ws.Request())
 
@@ -226,32 +234,34 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	logger.WRTC.Debug("answer received")
 	call.Answer <- answer.Sd
 
-	var (
-		wsRecvWg                sync.WaitGroup
-		wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
-		msgChan                 = make(chan wsock.Message)
-	)
-	defer func() {
-		cancelWsRecv()
-		wsRecvWg.Wait()
+	g, gCtx := errgroup.WithContext(ctx)
+	defer func() { // wait for listener to complete.
+		cancel()
+		if err := g.Wait(); err != nil {
+			logger.ROUTE.Error("while cancelling", "err", err)
+		}
 		_ = ws.Close()
 	}()
-	wsRecvWg.Go(func() {
-		defer cancel() // if websocket closes, end all goroutines
-		if err := wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
-			if err == io.EOF {
-				logger.ROUTE.Info("connection closed by client")
-			} else {
-				logger.ROUTE.Error("error during message loop", "err", err)
-			}
+
+	// websocket message dispatcher
+	msgChan := make(chan wsock.Message)
+	g.Go(func() error {
+		defer cancel() // cancels main goroutine
+		err := wsock.Listen(gCtx, ws, msgChan)
+		if err == io.EOF {
+			logger.ROUTE.Info("connection closed by client")
+			return nil
 		}
+		if err != nil {
+			logger.ROUTE.Error("during message loop", "err", err)
+		}
+		return err
 	})
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		// note: this needs to continue to run even if readchan is closed. this may always complete first tho...
 		case candidate, ok := <-call.From.Candidates:
 			if !ok {
 				call.From.Candidates = nil
