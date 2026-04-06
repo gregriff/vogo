@@ -136,10 +136,9 @@ func answerAndConnect(
 	}
 	log.Println("answer sent")
 
+	ctx, cancel := context.WithCancel(ctx)
 	g, gCtx := errgroup.WithContext(ctx)
-	defer func() {
-		_ = closeAndWait(ws, g)
-	}()
+	defer cancel()
 
 	// gather local ice candidates and write to websocket
 	g.Go(func() error {
@@ -151,11 +150,22 @@ func answerAndConnect(
 		return recvCandidates(gCtx, ws, conn.Pc)
 	})
 
-	<-conn.Connected
+	// wait for connection to be made.
+	select {
+	case <-ctx.Done():
+		return closeAndWait(ws, g)
+	case <-conn.Connected:
+		break
+	}
+
+	// let the server know that we're connected to the recipient, then start closing the websocket.
 	g.Go(func() error {
+		defer cancel()
 		return notifyConnected(ws, creds.username, caller)
 	})
-	return g.Wait()
+
+	<-ctx.Done()
+	return closeAndWait(ws, g)
 }
 
 // recvOffer reads the caller's offer from the websocket and returns it.

@@ -90,25 +90,25 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	)
 	defer func() {
 		cancelWsRecv()
+		logger.ROUTE.Info("waiting for wsRecv to stop")
 		wsRecvWg.Wait()
+		logger.ROUTE.Info("STOPPED")
+		_ = ws.Close()
 	}()
 	wsRecvWg.Go(func() {
 		defer cancel() // if websocket closes, end all goroutines
 		if err := wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
-			if err == io.EOF { // todo: may need to handle this in startMessageLoop
-				logger.ROUTE.Info("connection closed")
+			if err == io.EOF {
+				logger.ROUTE.Info("connection closed by client")
 			} else {
 				logger.ROUTE.Error("error during message loop", "err", err)
 			}
-			_ = ws.WriteClose(http.StatusInternalServerError)
 		}
 	})
 
 	for {
 		select {
 		case <-ctx.Done():
-			logger.ROUTE.Info("context cancelled", "reason", ctx.Err())
-			_ = ws.Close()
 			return
 		case answerSd := <-call.Answer:
 			if err := websocket.JSON.Send(ws, answerSd); err != nil {
@@ -128,7 +128,8 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		case msg := <-msgChan:
 			switch msg.Type {
 			case "connected":
-				cancel()
+				// when a client sends a 'connected' message, they close the WS immediately after.
+				logger.ROUTE.Info("call connected", "with", recipient.Name)
 				return
 			case "ice-offer":
 				var data messages.Candidate
@@ -233,24 +234,22 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	defer func() {
 		cancelWsRecv()
 		wsRecvWg.Wait()
+		_ = ws.Close()
 	}()
 	wsRecvWg.Go(func() {
 		defer cancel() // if websocket closes, end all goroutines
 		if err := wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
-			if err == io.EOF { // todo: may need to handle this in startMessageLoop
-				logger.ROUTE.Info("connection closed")
+			if err == io.EOF {
+				logger.ROUTE.Info("connection closed by client")
 			} else {
 				logger.ROUTE.Error("error during message loop", "err", err)
 			}
-			_ = ws.WriteClose(http.StatusInternalServerError)
 		}
 	})
 
 	for {
 		select {
 		case <-ctx.Done():
-			logger.ROUTE.Info("context cancelled", "reason", ctx.Err())
-			_ = ws.Close()
 			return
 		// note: this needs to continue to run even if readchan is closed. this may always complete first tho...
 		case candidate, ok := <-call.From.Candidates:
@@ -264,7 +263,8 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 		case msg := <-msgChan:
 			switch msg.Type {
 			case "connected":
-				cancel()
+				// when a client sends a 'connected' message, they close the WS immediately after.
+				logger.ROUTE.Info("call connected", "with", caller.Name)
 				return
 			case "ice-answer":
 				var data messages.Candidate

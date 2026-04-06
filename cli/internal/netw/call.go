@@ -113,7 +113,7 @@ func sendCallAndConnect(
 		return fmt.Errorf("error creating websocket: %w", err)
 	}
 	defer func() {
-		_ = closeAndWait(ws, nil)
+		_ = ws.Close()
 	}()
 
 	// send offer
@@ -122,8 +122,10 @@ func sendCallAndConnect(
 		return fmt.Errorf("error sending offer: %w", err)
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	g, gCtx := errgroup.WithContext(ctx)
 	defer func() {
+		cancel()
 		_ = closeAndWait(ws, g)
 	}()
 
@@ -147,9 +149,20 @@ func sendCallAndConnect(
 		return recvCandidates(gCtx, ws, conn.Pc)
 	})
 
-	<-conn.Connected
+	// wait for connection to be made.
+	select {
+	case <-ctx.Done():
+		return closeAndWait(ws, g)
+	case <-conn.Connected:
+		break
+	}
+
+	// let the server know that we're connected to the recipient, then start closing the websocket.
 	g.Go(func() error {
+		defer cancel()
 		return notifyConnected(ws, creds.username, recipient)
 	})
-	return g.Wait()
+
+	<-ctx.Done()
+	return closeAndWait(ws, g)
 }

@@ -3,6 +3,7 @@ package netw
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -19,6 +20,9 @@ func recvCandidates(ctx context.Context, ws *websocket.Conn, pc *webrtc.PeerConn
 	for {
 		err := wsock.ReceiveJSON(ctx, ws, &candidate)
 		if err != nil {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return nil
+			}
 			return fmt.Errorf("error reading from ws: %w", err)
 		}
 		if candidate.Candidate == "" {
@@ -50,7 +54,7 @@ func sendCandidates(
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		case candidate, ok := <-conn.Candidates:
 			bytes, err := json.Marshal(messages.Candidate{
 				UserId:    conn.Id,
@@ -79,5 +83,11 @@ func sendCandidates(
 // PeerConnection with peerName is in a Connected state.
 func notifyConnected(ws *websocket.Conn, username, peerName string) error {
 	data := messages.Connected{Username: username, PeerName: peerName}
-	return websocket.JSON.Send(ws, &data)
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		log.Panicf("error encoding candidate: %v", err)
+	}
+
+	msg := wsock.Message{Type: wsock.Connected, Data: bytes}
+	return websocket.JSON.Send(ws, &msg)
 }

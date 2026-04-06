@@ -67,7 +67,7 @@ func ReceiveJSON[T any](ctx context.Context, ws *websocket.Conn, v *T) error {
 	select {
 	case <-ctx.Done():
 		if err := ws.SetReadDeadline(time.Now()); err != nil { // interrupt the read
-			return fmt.Errorf("context cancelled: %w; and error setting read deadline: %w", ctx.Err(), err)
+			return fmt.Errorf("error: %w; and error setting read deadline: %w", ctx.Err(), err)
 		}
 		return ctx.Err()
 	case err := <-done:
