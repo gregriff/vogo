@@ -40,17 +40,23 @@ func (s *streams) mixAVX512(numSamples int) {
 	_ = full[numFull-1]      //nolint:gosec // G602: checked in streams.add
 	_ = summed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
+	// maybe this is needed to force simd asm?
+	if !archsimd.X86.AVX512() {
+		return
+	}
+	const simdW = 16
+
 	var i = 0
 	const int16Size = unsafe.Sizeof(int16(0))
-	for ; i+16 <= numSamples; i += 16 {
+	for ; i+simdW <= numSamples; i += simdW {
 		acc := archsimd.BroadcastInt32x16(0)
 		for j := range numFull {
 			// TODO: profile not using unsafe, and using dedicated slice/slicepart funcs.
-			ptr := (*[16]int16)(unsafe.Add(full[j], uintptr(i)*int16Size))
+			ptr := (*[simdW]int16)(unsafe.Add(full[j], uintptr(i)*int16Size))
 			v32 := archsimd.LoadInt16x16(ptr).ExtendToInt32() // extending avoids overflow
 			acc = acc.Add(v32)
 		}
-		acc.Store((*[16]int32)(summed[i:]))
+		acc.Store((*[simdW]int32)(summed[i:]))
 	}
 
 	// Scalar remainder
@@ -109,16 +115,22 @@ func (s *streams) mixAVX2(numSamples int) {
 	_ = full[numFull-1]      //nolint:gosec // G602: checked in streams.add
 	_ = summed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
+	// maybe this is needed to force simd asm?
+	if !archsimd.X86.AVX2() {
+		return
+	}
+	const simdW = 8
+
 	var i = 0
 	const int16Size = unsafe.Sizeof(int16(0))
-	for ; i+8 <= numSamples; i += 8 {
+	for ; i+simdW <= numSamples; i += simdW {
 		acc := archsimd.BroadcastInt32x8(0)
 		for j := range numFull {
-			ptr := (*[8]int16)(unsafe.Add(full[j], uintptr(i)*int16Size))
+			ptr := (*[simdW]int16)(unsafe.Add(full[j], uintptr(i)*int16Size))
 			v32 := archsimd.LoadInt16x8(ptr).ExtendToInt32()
 			acc = acc.Add(v32)
 		}
-		acc.Store((*[8]int32)(summed[i:]))
+		acc.Store((*[simdW]int32)(summed[i:]))
 	}
 
 	// Scalar remainder

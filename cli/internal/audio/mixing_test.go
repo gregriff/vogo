@@ -231,7 +231,7 @@ func (s *streams) mixIdiomatic(numSamples int) {
 	}
 
 	// avoid bounds checks
-	_, _ = full[numFull-1], s.mixed[numSamples-1]
+	// _, _ = full[numFull-1], s.mixed[numSamples-1]
 
 	// sum samples for each buffer
 	for i := range numSamples {
