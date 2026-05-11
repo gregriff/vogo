@@ -46,6 +46,19 @@ func (m *connMap) Delete(id uuid.UUID) {
 	delete(m.conns, id)
 }
 
+// func (m *connMap) PrintAll(logger *slog.Logger) {
+// 	m.mu.Lock()
+// 	defer m.mu.Unlock()
+
+// 	logger.Info("PRINTING CONNS:")
+// 	for k, v := range m.conns {
+// 		logger.Info(fmt.Sprintf("conn %v", k),
+// 			"from", v.From.User.Name,
+// 			"to", v.To.User.Name,
+// 		)
+// 	}
+// }
+
 var (
 	pendingCalls    connMap
 	createCallStore sync.Once

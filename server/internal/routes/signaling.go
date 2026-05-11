@@ -47,11 +47,10 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 
 	var offer requests.Connection
 	if err := wsock.ReceiveJSON(ctx, ws, &offer); err != nil {
-		if err == io.EOF {
-			return
+		if err != io.EOF {
+			logger.ROUTE.Error("receiving offer", "err", err)
+			_ = ws.WriteClose(http.StatusBadRequest)
 		}
-		logger.ROUTE.Error("receiving offer", "err", err)
-		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 	if offer.Sd.SDP == "" {
@@ -82,6 +81,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	// create the call in memory, delete once answered
 	call := state.CreateConnection(*caller, *recipient, offer.Sd)
 	calls := state.GetPendingCalls()
+	// defer calls.PrintAll(logger.STATE)
 	// add this call to pending map, using caller's ID since a client can only make one call at a time
 	calls.Add(caller.Id, call)
 	defer calls.Delete(caller.Id)
@@ -202,6 +202,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	}
 
 	calls := state.GetPendingCalls()
+	// defer calls.PrintAll(logger.STATE)
 	call, err := calls.Get(caller.Id)
 	if err != nil {
 		logger.STATE.Error("call not found")

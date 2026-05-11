@@ -100,13 +100,6 @@ func NewConnection(
 	return conn
 }
 
-type RTCPReadMode int
-
-const (
-	senderReportMode RTCPReadMode = iota
-	receiverReportMode
-)
-
 // NewOffer creates a webrtc offer, sets the local description and starts ice gathering.
 func (c *Connection) NewOffer(caller, recipient string) requests.Connection {
 	if recipient == "" {

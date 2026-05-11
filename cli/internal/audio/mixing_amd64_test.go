@@ -1,6 +1,10 @@
 package audio
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
+)
 
 // tests the AVX versions of mix() with more than one stream, since one stream
 // skips the actual mixing routine.
@@ -15,8 +19,8 @@ func BenchmarkMixAMD64(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
-		s2 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 
@@ -36,10 +40,10 @@ func BenchmarkMixAMD64(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
-		s2 := newRingBuffer(bufSize)
-		s3 := newRingBuffer(bufSize)
-		s4 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
+		s3 := ringbuffer.New(bufSize)
+		s4 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 		s.add("s3", &s3)
@@ -63,8 +67,8 @@ func BenchmarkMixAMD64(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
-		s2 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 
@@ -84,10 +88,10 @@ func BenchmarkMixAMD64(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
-		s2 := newRingBuffer(bufSize)
-		s3 := newRingBuffer(bufSize)
-		s4 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
+		s3 := ringbuffer.New(bufSize)
+		s4 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 		s.add("s3", &s3)

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gen2brain/malgo"
+	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 	"github.com/pion/interceptor"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
@@ -99,7 +100,7 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 
 		packetBuf := make([]byte, c.recvMTU)
 		decodeBuf := make([]int16, pcmBufferSize)
-		pcm := newRingBuffer(ringBufferSize)
+		pcm := ringbuffer.New(ringBufferSize)
 		c.streams.add(track.StreamID(), &pcm)
 
 		var (

@@ -54,7 +54,7 @@ func CalculateRTT(rr *rtcp.ReceptionReport) time.Duration {
 
 	// RTT = now - LSR - DLSR
 	rtt := nowNTP - rr.LastSenderReport - rr.Delay
-	return time.Duration(float64(rtt) / 65536.0 * float64(time.Second))
+	return time.Duration(ntp32ToSeconds(rtt) * float64(time.Second))
 }
 
 // toNTP32 computes seconds since 1900 from t, returning the middle 32 bits.
@@ -66,6 +66,11 @@ func toNTP32(t time.Time) uint32 {
 
 	// Middle 32 bits: low 16 of seconds + high 16 of fraction
 	return uint32(sec<<16) | uint32(frac>>16)
+}
+
+// ntp32ToSeconds converts a compact NTP timestamp (16.16 fixed-point) to seconds.
+func ntp32ToSeconds(ntp32 uint32) float64 {
+	return float64(ntp32) / (1 << 16)
 }
 
 // jitterToMs takes a jitter uint32 timestamp from a rtcp.ReceptionReport.Jitter value

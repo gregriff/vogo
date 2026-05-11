@@ -4,6 +4,7 @@ import (
 	"log"
 	"sync"
 
+	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 	"github.com/gregriff/vogo/shared"
 )
 
@@ -20,12 +21,12 @@ const ringBufferSize = pcmBufferSize * 6
 // the speaker writes decoded Opus to its stream, where it is then written to the malgo device.
 type stream struct {
 	mu sync.Mutex
-	rb ringBuffer
+	rb ringbuffer.RingBuffer
 }
 
 func newStream() stream {
 	return stream{
-		rb: newRingBuffer(ringBufferSize),
+		rb: ringbuffer.New(ringBufferSize),
 	}
 }
 
@@ -36,7 +37,7 @@ type streams struct {
 	mu sync.Mutex
 
 	// data stores references to the  that each TrackRemote writes data to from the network.
-	data map[string]*ringBuffer
+	data map[string]*ringbuffer.RingBuffer
 
 	// these are used during mixing to allow for easier vectorized iteration of pcm.
 	writeBufs [MaxStreams][pcmBufferSize]int16
@@ -47,7 +48,7 @@ type streams struct {
 
 func newStreams() streams {
 	return streams{
-		data:      make(map[string]*ringBuffer, MaxStreams),
+		data:      make(map[string]*ringbuffer.RingBuffer, MaxStreams),
 		writeBufs: [MaxStreams][pcmBufferSize]int16{},
 		mixed:     [pcmBufferSize]int16{},
 	}
@@ -55,7 +56,7 @@ func newStreams() streams {
 
 // add adds a newly-created empty pcm buffer to the list of buffers (bufs) being tracked. It takes its pointer,
 // so that the caller can continue modifying the original, and using this struct will always point to the same memory.
-func (s *streams) add(id string, rb *ringBuffer) {
+func (s *streams) add(id string, rb *ringbuffer.RingBuffer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.data[id]; ok {

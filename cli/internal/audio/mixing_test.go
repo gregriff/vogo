@@ -4,13 +4,15 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 )
 
 func TestMix(t *testing.T) {
 	t.Run("single full stream", func(t *testing.T) {
 		numSamples := 5
 		s := newStreams()
-		a := newRingBuffer(numSamples)
+		a := ringbuffer.New(numSamples)
 		a.Write([]int16{10, 20, 30, 40, 50})
 		s.add("a", &a)
 		s.mix(numSamples)
@@ -30,8 +32,8 @@ func TestMix(t *testing.T) {
 	t.Run("silence streams mix to silence", func(t *testing.T) {
 		s := newStreams()
 		pcm := []int16{0, 0, 0}
-		a := newRingBuffer(3)
-		b := newRingBuffer(3)
+		a := ringbuffer.New(3)
+		b := ringbuffer.New(3)
 		a.Write(pcm)
 		b.Write(pcm)
 		s.add("a", &a)
@@ -49,7 +51,7 @@ func TestMix(t *testing.T) {
 
 	t.Run("remove makes buffer unavailable", func(t *testing.T) {
 		s := newStreams()
-		a := newRingBuffer(3)
+		a := ringbuffer.New(3)
 		a.Write([]int16{1, 2, 3})
 		s.add("a", &a)
 		s.remove("a")
@@ -77,7 +79,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 
 		// NOTE: this will not give an accurate time measurement unless
@@ -97,8 +99,8 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
-		s2 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 
@@ -118,10 +120,10 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
-		s2 := newRingBuffer(bufSize)
-		s3 := newRingBuffer(bufSize)
-		s4 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
+		s3 := ringbuffer.New(bufSize)
+		s4 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 		s.add("s3", &s3)
@@ -145,7 +147,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 
 		for b.Loop() {
@@ -161,8 +163,8 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
-		s2 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 
@@ -182,10 +184,10 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := newRingBuffer(bufSize)
-		s2 := newRingBuffer(bufSize)
-		s3 := newRingBuffer(bufSize)
-		s4 := newRingBuffer(bufSize)
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
+		s3 := ringbuffer.New(bufSize)
+		s4 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
 		s.add("s2", &s2)
 		s.add("s3", &s3)
