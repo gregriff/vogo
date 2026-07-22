@@ -30,16 +30,28 @@ I used the official windows installer, then added Go dirs to Git Bash's PATH
 - create a dir for go to find C dependencies: `mkdir /c/deps`
 
 4. Build libopus (from the parent dir of where you placed opus)
-`cmake -S opus-1.6.1 -B opus-1.6.1/build -G "MinGW Makefiles" -DOPUS_BUILD_SHARED_LIBRARY=ON -DOPUS_X86_PRESUME_AVX2=ON -DOPUS_X86_PRESUME_SSE2=ON -DOPUS_X86_PRESUME_SSE4_1=ON -DOPUS_DEEP_PLC=ON -DOPUS_OSCE=ON -DCMAKE_C_FLAGS="-march=x86-64-v3 -O3" -DCMAKE_INSTALL_PREFIX=/c/deps/opus
+```sh
+cmake -S opus-1.6.1 -B opus-1.6.1/build -G "MinGW Makefiles" -DOPUS_BUILD_SHARED_LIBRARY=ON -DOPUS_X86_PRESUME_AVX2=ON -DOPUS_X86_PRESUME_SSE2=ON -DOPUS_X86_PRESUME_SSE4_1=ON -DOPUS_DEEP_PLC=ON -DOPUS_OSCE=ON -DCMAKE_C_FLAGS="-march=x86-64-v3 -O3" -DCMAKE_INSTALL_PREFIX=/c/deps/opus
 cmake --build opus-1.6.1/build -parallel
-cmake --install opus-1.6.1/build`
+cmake --install opus-1.6.1/build
+```
 - Move DLL to the same dir where you will put the vogo binary: `cp /c/deps/opus/bin/libopus.dll [path-to-vogo-cli-repo]/bin/libopus.dll`
 
-5. Build a binary
-- cd into vogo cli dir
-`GOEXPERIMENT=simd CC=gcc CGO_CFLAGS=-I/c/deps/opus/include/opus CGO_LDFLAGS="-L/c/deps/opus/lib -lopus" PKG_CONFIG=true go build -tags nolibopusfile -o bin/vogo.exe main.go`
-> Now you can run the vogo binary: `./bin/vogo.exe`
+5. Set env vars
+```sh
+export CC=gcc CGO_CFLAGS=-I/c/deps/opus/include/opus CGO_LDFLAGS="-L/c/deps/opus/lib -lopus" PKG_CONFIG=true \
+GOEXPERIMENT=simd GOARCH=amd64 GOAMD64=v3 # or v4, depending on your CPU features
+```
 
-6. Build a test binary to benchmark audio mixing: 
-`GOEXPERIMENT=simd CC=gcc CGO_CFLAGS=-I/c/deps/opus/include/opus CGO_LDFLAGS="-L/c/deps/opus/lib -lopus" PKG_CONFIG=true go test -c -o ../bin/vogotest.exe -v -bench=. -benchmem -cpu=1 -tags nolibopusfile -v ./internal/audio`
-- run the tests: `./bin/vogotest.exe -test.bench=. -test.benchmem -test.cpu=1`
+6. Build and run a binary
+- cd into vogo cli dir
+```sh
+go build -tags nolibopusfile -o bin/vogo.exe main.go
+./bin/vogo.exe
+```
+
+7. Build and run test binary to benchmark audio mixing: 
+```sh
+go test -c -o ./bin/vogotest.exe -tags nolibopusfile -v ./internal/audio
+./bin/vogotest.exe -test.bench=. -test.benchmem -test.cpu=1
+```
