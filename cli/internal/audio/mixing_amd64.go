@@ -53,10 +53,10 @@ func (s *streams) mixAVX512(numSamples int) {
 		for j := range numFull {
 			// TODO: profile not using unsafe, and using dedicated slice/slicepart funcs.
 			ptr := (*[simdW]int16)(unsafe.Add(full[j], uintptr(i)*int16Size))
-			v32 := archsimd.LoadInt16x16(ptr).ExtendToInt32() // extending avoids overflow
+			v32 := archsimd.LoadInt16x16Array(ptr).ExtendToInt32() // extending avoids overflow
 			acc = acc.Add(v32)
 		}
-		acc.Store((*[simdW]int32)(summed[i:]))
+		acc.StoreArray((*[simdW]int32)(summed[i:]))
 	}
 
 	// Scalar remainder
@@ -127,10 +127,10 @@ func (s *streams) mixAVX2(numSamples int) {
 		acc := archsimd.BroadcastInt32x8(0)
 		for j := range numFull {
 			ptr := (*[simdW]int16)(unsafe.Add(full[j], uintptr(i)*int16Size))
-			v32 := archsimd.LoadInt16x8(ptr).ExtendToInt32()
+			v32 := archsimd.LoadInt16x8Array(ptr).ExtendToInt32()
 			acc = acc.Add(v32)
 		}
-		acc.Store((*[simdW]int32)(summed[i:]))
+		acc.StoreArray((*[simdW]int32)(summed[i:]))
 	}
 
 	// Scalar remainder

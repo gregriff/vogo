@@ -1,6 +1,6 @@
 module github.com/gregriff/vogo/cli
 
-go 1.26.1
+go 1.27rc2
 
 require (
 	github.com/gen2brain/malgo v0.11.24
