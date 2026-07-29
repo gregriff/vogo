@@ -8,7 +8,7 @@ import (
 
 func (s *streams) mixAVX512(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [MaxStreams]unsafe.Pointer{}, int32(0)
+	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
 
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
@@ -22,6 +22,7 @@ func (s *streams) mixAVX512(numSamples int) {
 	}
 
 	// ensure previous mixed pcm is erased
+	// TODO: is this even needed? Just clear the tail?
 	clear(s.mixed[:])
 	if numFull == 0 || len(s.data) == 0 {
 		return
@@ -37,15 +38,11 @@ func (s *streams) mixAVX512(numSamples int) {
 	summed := [pcmBufferSize]int32{}
 
 	// avoid bounds checks
-	_ = full[numFull-1]      //nolint:gosec // G602: checked in streams.add
-	_ = summed[numSamples-1] //nolint:gosec // G602: checked in streams.add
+	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.add
+	_ = summed[numSamples-1]  //nolint:gosec // G602: checked in streams.add
+	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
-	// maybe this is needed to force simd asm?
-	if !archsimd.X86.AVX512() {
-		return
-	}
 	const simdW = 16
-
 	var i = 0
 	const int16Size = unsafe.Sizeof(int16(0))
 	for ; i+simdW <= numSamples; i += simdW {
@@ -56,7 +53,33 @@ func (s *streams) mixAVX512(numSamples int) {
 			v32 := archsimd.LoadInt16x16Array(ptr).ExtendToInt32() // extending avoids overflow
 			acc = acc.Add(v32)
 		}
-		acc.StoreArray((*[simdW]int32)(summed[i:]))
+		// TODO: may want to move the below mixing out into seperate loop like before,
+		// to inc. throughput
+
+		// TODO: should we reorder instructions so the accumulator is float32?
+		// acc.StoreArray((*[simdW]int32)(summed[i:]))
+
+		f := acc.ConvertToFloat32()
+		// TODO: div f by threshold (maxInt16), then multiply saturated by threshold?
+
+		// TODO: could try moving this out of the loops. if that does nothing,
+		// move everything incl the above line into a func 'softSaturatePadeAVX512'
+		scale := archsimd.BroadcastFloat32x16(math.MaxInt16)
+
+		// TODO: scale down before saturating if your accumulator isn't already
+		// in a sane float range for the approximant (e.g. divide by
+		// full-scale amplitude here, or bake the scale into vClampPos/neg).
+		v := f.Div(scale)
+		approx := padeTanhAVX512(v)
+
+		// scale back to int16 range and pack
+		scaled := approx.Mul(scale)
+
+		ints := scaled.ConvertToInt32()
+		saturated := ints.SaturateToInt16()
+
+		// should this be written to a temp array?
+		saturated.StoreArray((*[simdW]int16)(s.mixed[i:]))
 	}
 
 	// Scalar remainder
@@ -65,15 +88,15 @@ func (s *streams) mixAVX512(numSamples int) {
 		for j := range numFull {
 			sum += int32(*((*int16)(unsafe.Add(full[j], uintptr(i)*int16Size))))
 		}
-		summed[i] = sum
+		s.mixed[i] = softSaturatePade(sum, math.MaxInt16)
 	}
 
-	// actual mixing
-	_ = s.mixed[numSamples-1]
-	_ = summed[numSamples-1] //nolint:gosec // G602: checked in caller
-	for i := range numSamples {
-		s.mixed[i] = softSaturate(summed[i], math.MaxInt16)
-	}
+	// // actual mixing
+	// _ = s.mixed[numSamples-1]
+	// _ = summed[numSamples-1] //nolint:gosec // G602: checked in caller
+	// for i := range numSamples {
+	// 	s.mixed[i] = softSaturate(summed[i], math.MaxInt16)
+	// }
 
 	// ensure these are cleaned up
 	for i := range numFull {
@@ -153,4 +176,66 @@ func (s *streams) mixAVX2(numSamples int) {
 	for i := range numFull {
 		full[i] = nil
 	}
+}
+
+// padeTanhAVX512 applies a [3/2] Padé tanh approximant on 16 float32s
+// using tanh(x) ≈ x*(x²+15) / (6x²+15). It is used during audio mixing,
+// on an array that has been created by adding 2 or more PCM arrays together,
+// and prevents hard-clipping.
+//
+// https://mathr.co.uk/blog/2017-09-06_approximating_hyperbolic_tangent.html
+//
+// Alternative implementations:
+//
+// - LUT: https://jtomschroeder.com/blog/approximating-tanh/#k-tanh
+//
+// - FP Approx: https://jtomschroeder.com/blog/approximating-tanh/#schraudolph
+//
+// - SIMD Examples: https://yaikhom.com/2020-04-28-localised-approximation-of-hyperbolic-tangents.html
+//
+// WRITE TESTS FOR THIS AGAINST math.tanh()
+//
+// CPU Feature: AVX-512
+func padeTanhAVX512(x archsimd.Float32x16) archsimd.Float32x16 {
+	// TODO: test not instantiating these until needed.
+	var (
+		// clamps
+		vClampPos = archsimd.BroadcastFloat32x16(4.97)
+		vClampNeg = archsimd.BroadcastFloat32x16(-4.97)
+		vOne      = archsimd.BroadcastFloat32x16(1.)
+		vNegOne   = archsimd.BroadcastFloat32x16(-1.)
+
+		// terms
+		vConst = archsimd.BroadcastFloat32x16(15.)
+		vCoeff = archsimd.BroadcastFloat32x16(6.)
+		// vExp   = archsimd.BroadcastFloat32x16(2.)
+	)
+
+	// clamp input first — approximant diverges outside |x| > ~4.97
+	// consider using 3 or 4 as clamps.
+	x = x.Max(vClampNeg)
+	x = x.Min(vClampPos)
+
+	x2 := x.Mul(x)
+
+	// numerator
+	numer := x2.Add(vConst)
+	numer = numer.Mul(x) // maybe do this after denom?
+
+	// denominator
+	denom := x2.MulAdd(vCoeff, vConst)
+
+	// can try reciprocal approximation + one Newton-Raphson step instead of division
+	// r0 := denom.Reciprocal()
+	// t := denom.Mul(r0)
+	// t = vExp.Sub(t) // (2 - denom*r0)
+	// r1 := r0.Mul(t) //  refined reciprocal
+	// y := numer.Mul(r1)
+	y := numer.Div(denom)
+
+	// final safety clamp against residual approximation error
+	y = y.Max(vNegOne)
+	y = y.Min(vOne)
+
+	return y
 }

@@ -8,3 +8,5 @@ logs/
 .pprof/
 
 escape.out
+
+*prompt.txt

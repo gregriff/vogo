@@ -12,7 +12,7 @@ import (
 // Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams.
 func (s *streams) mix(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [MaxStreams]unsafe.Pointer{}, int32(0)
+	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
 
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
@@ -74,9 +74,13 @@ func (s *streams) mix(numSamples int) {
 // softSaturate takes a summed int32 value and a threshold,
 // returns a soft-saturated int16 using tanh.
 func softSaturate(sum int32, threshold float64) int16 {
-	// note: could prob reimpl math.tanh with simd.
-	saturated := math.Tanh(float64(sum)/threshold) * threshold
-	return clampInt16(saturated)
+	x := math.Tanh(float64(sum)/threshold) * threshold
+	return clampInt16(x)
+}
+
+func softSaturatePade(sum int32, threshold float64) int16 {
+	x := padeTanhScalar(float64(sum)/threshold) * threshold
+	return clampInt16(x)
 }
 
 type summedPCMSample interface {
@@ -85,4 +89,34 @@ type summedPCMSample interface {
 
 func clampInt16[S summedPCMSample](val S) int16 {
 	return int16(min(max(val, math.MinInt16), math.MaxInt16))
+}
+
+func padeTanhScalar(x float64) float64 {
+	const (
+		clampPos = 4.97
+		clampNeg = -4.97
+		coeff    = 6
+		constant = 15
+	)
+
+	if x > clampPos {
+		x = clampPos
+	} else if x < clampNeg {
+		x = clampNeg
+	}
+	// x = max(min(x, clampPos), clampNeg)
+
+	x2 := x * x
+	num := x * (x2 + constant)
+	den := coeff*x2 + constant
+	y := num / den
+
+	if y > 1 {
+		y = 1
+	} else if y < -1 {
+		y = -1
+	}
+	// y = max(min(y, 1), -1)
+
+	return y
 }
