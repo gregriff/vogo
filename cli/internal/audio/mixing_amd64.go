@@ -35,48 +35,25 @@ func (s *streams) mixAVX512(numSamples int) {
 		return
 	}
 
-	summed := [pcmBufferSize]int32{}
-
 	// avoid bounds checks
 	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.add
-	_ = summed[numSamples-1]  //nolint:gosec // G602: checked in streams.add
 	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
 	const simdW = 16
-	var i = 0
 	const int16Size = unsafe.Sizeof(int16(0))
+	scale := archsimd.BroadcastFloat32x16(math.MaxInt16)
+
+	var i = 0
 	for ; i+simdW <= numSamples; i += simdW {
 		acc := archsimd.BroadcastInt32x16(0)
 		for j := range numFull {
-			// TODO: profile not using unsafe, and using dedicated slice/slicepart funcs.
 			ptr := (*[simdW]int16)(unsafe.Add(full[j], uintptr(i)*int16Size))
 			v32 := archsimd.LoadInt16x16Array(ptr).ExtendToInt32() // extending avoids overflow
 			acc = acc.Add(v32)
 		}
-		// TODO: may want to move the below mixing out into seperate loop like before,
-		// to inc. throughput
 
 		// TODO: should we reorder instructions so the accumulator is float32?
-		// acc.StoreArray((*[simdW]int32)(summed[i:]))
-
-		f := acc.ConvertToFloat32()
-		// TODO: div f by threshold (maxInt16), then multiply saturated by threshold?
-
-		// TODO: could try moving this out of the loops. if that does nothing,
-		// move everything incl the above line into a func 'softSaturatePadeAVX512'
-		scale := archsimd.BroadcastFloat32x16(math.MaxInt16)
-
-		// TODO: scale down before saturating if your accumulator isn't already
-		// in a sane float range for the approximant (e.g. divide by
-		// full-scale amplitude here, or bake the scale into vClampPos/neg).
-		v := f.Div(scale)
-		approx := padeTanhAVX512(v)
-
-		// scale back to int16 range and pack
-		scaled := approx.Mul(scale)
-
-		ints := scaled.ConvertToInt32()
-		saturated := ints.SaturateToInt16()
+		saturated := softSaturatePadeAVX512(acc, scale)
 
 		// should this be written to a temp array?
 		saturated.StoreArray((*[simdW]int16)(s.mixed[i:]))
@@ -90,13 +67,6 @@ func (s *streams) mixAVX512(numSamples int) {
 		}
 		s.mixed[i] = softSaturatePade(sum, math.MaxInt16)
 	}
-
-	// // actual mixing
-	// _ = s.mixed[numSamples-1]
-	// _ = summed[numSamples-1] //nolint:gosec // G602: checked in caller
-	// for i := range numSamples {
-	// 	s.mixed[i] = softSaturate(summed[i], math.MaxInt16)
-	// }
 
 	// ensure these are cleaned up
 	for i := range numFull {
@@ -176,6 +146,21 @@ func (s *streams) mixAVX2(numSamples int) {
 	for i := range numFull {
 		full[i] = nil
 	}
+}
+
+// softSaturatePadeAVX512 is a SIMD version of softSaturatePade.
+//
+// CPU Feature: AVX-512
+func softSaturatePadeAVX512(acc archsimd.Int32x16, threshold archsimd.Float32x16) archsimd.Int16x16 {
+	f := acc.ConvertToFloat32()
+
+	v := f.Div(threshold)
+	approx := padeTanhAVX512(v)
+
+	// scale back to int16 range and saturate
+	scaled := approx.Mul(threshold)
+	ints := scaled.ConvertToInt32()
+	return ints.SaturateToInt16()
 }
 
 // padeTanhAVX512 applies a [3/2] Padé tanh approximant on 16 float32s
