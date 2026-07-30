@@ -10,6 +10,8 @@ func (s *streams) mixAVX512(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
 	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
 
+	// research if you could have simd kernel read straight from RB to avoid these copies
+	// to the temp arrays, and full could point to the rb itself at the right read index.
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
 			// copy the full pcm buf so we can vectorize access easily.
@@ -44,26 +46,26 @@ func (s *streams) mixAVX512(numSamples int) {
 	scale := archsimd.BroadcastFloat32x16(math.MaxInt16)
 
 	var i = 0
+	var offset uintptr
 	for ; i+simdW <= numSamples; i += simdW {
 		acc := archsimd.BroadcastInt32x16(0)
+		offset = uintptr(i) * int16Size
 		for j := range numFull {
-			ptr := (*[simdW]int16)(unsafe.Add(full[j], uintptr(i)*int16Size))
+			ptr := (*[simdW]int16)(unsafe.Add(full[j], offset))
 			v32 := archsimd.LoadInt16x16Array(ptr).ExtendToInt32() // extending avoids overflow
 			acc = acc.Add(v32)
 		}
 
-		// TODO: should we reorder instructions so the accumulator is float32?
 		saturated := softSaturatePadeAVX512(acc, scale)
-
-		// should this be written to a temp array?
 		saturated.StoreArray((*[simdW]int16)(s.mixed[i:]))
 	}
 
-	// Scalar remainder
+	// Scalar remainder. could use masked simd but prob not worth it.
 	for ; i < numSamples; i++ {
 		var sum int32
+		offset = uintptr(i) * int16Size
 		for j := range numFull {
-			sum += int32(*((*int16)(unsafe.Add(full[j], uintptr(i)*int16Size))))
+			sum += int32(*((*int16)(unsafe.Add(full[j], offset))))
 		}
 		s.mixed[i] = softSaturatePade(sum, math.MaxInt16)
 	}
@@ -154,6 +156,7 @@ func (s *streams) mixAVX2(numSamples int) {
 func softSaturatePadeAVX512(acc archsimd.Int32x16, threshold archsimd.Float32x16) archsimd.Int16x16 {
 	f := acc.ConvertToFloat32()
 
+	// todo: could approx this with a precomputed reciprocal
 	v := f.Div(threshold)
 	approx := padeTanhAVX512(v)
 

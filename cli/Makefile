@@ -1,5 +1,84 @@
-export GOEXPERIMENT=simd
-OUT_DIR=../bin
+# allow bash commands to be executed by recipes
+SHELL = /usr/bin/env bash -o pipefail
+.SHELLFLAGS = -e
+
+# =========================================================================
+# Detect machine info
+#
+# Detect OS
+ifeq ($(OS),Windows_NT)
+	DETECTED_OS := Windows
+else
+	DETECTED_OS := $(shell uname -s)
+endif
+ifeq ($(DETECTED_OS),Linux)
+	OS_NAME := linux
+else ifeq ($(DETECTED_OS),Darwin)
+	OS_NAME := darwin
+else ifeq ($(DETECTED_OS),Windows)
+	OS_NAME := windows
+else
+	OS_NAME := unknown
+endif
+
+# Detect Architecture
+ifeq ($(OS),Windows_NT)
+	DETECTED_ARCH := $(PROCESSOR_ARCHITECTURE)
+else
+	DETECTED_ARCH := $(shell uname -m)
+endif
+ifeq ($(DETECTED_ARCH),x86_64)
+	ARCH_NAME := amd64
+else ifeq ($(DETECTED_ARCH),aarch64)
+	ARCH_NAME := arm64
+else ifeq ($(DETECTED_ARCH),arm64)
+	ARCH_NAME := arm64
+else
+	ARCH_NAME := unknown
+endif
+
+# ---
+ifeq ($(OS_NAME),unknown)
+	$(error Unsupported OS detected: $(DETECTED_OS))
+endif
+ifeq ($(ARCH_NAME),unknown)
+	$(error Unsupported architecture detected: $(DETECTED_ARCH))
+endif
+# ---
+
+.PHONY: info
+info:
+	@echo "OS: $(OS_NAME)"
+	@echo "ARCH: $(ARCH_NAME)"
+
+# =========================================================================
+
+# global env vars
+GOARCH := $(ARCH_NAME)
+GOOS := $(OS_NAME)
+GOEXPERIMENT := simd
+OUT_DIR := ../bin
+
+# os env vars
+# -------------------------------
+# on windows with mingw, I didn't use a package manager to install libopus,
+# instead manually compiling it and placing the artifacts in these paths.
+# Refer to BUILDING.md for instructions.
+ifeq ($(OS_NAME),windows)
+	CC := gcc
+	CGO_CFLAGS += -I/c/deps/opus/include/opus
+	CGO_LDFLAGS += -L/c/deps/opus/lib -lopus
+	PKG_CONFIG := true
+endif
+# it is assumed on darwin and linux that libopus will have been
+# installed already with a package manager and findable.
+
+# cpu arch env vars
+ifeq ($(ARCH_NAME),amd64)
+	GOAMD64 := v4  # or v3, depending on your CPU features
+endif
+
+export CC CGO_CFLAGS CGO_LDFLAGS PKG_CONFIG GOEXPERIMENT GOARCH GOAMD64 GOOS OUT_DIR
 
 # view asm: `go tool objdump -s "func_name" bin/vogo`
 
@@ -20,9 +99,15 @@ lint:
 test:
 	go test -tags nolibopusfile -v ./...
 
-bench:
-	go test -v -bench=. -benchmem -cpu=1 -tags nolibopusfile -v ./internal/audio
+# run audio mixing tests and benchmarks
+test-mixing:
+	go test -c -o $(OUT_DIR)/vogotest -tags nolibopusfile -v ./internal/audio
+	$(OUT_DIR)/vogotest -test.bench=. -test.benchmem -test.cpu=1
 
+bench:
+	go test -bench=. -benchmem -cpu=1 -tags nolibopusfile -v ./internal/audio
+
+# shows escape analysis
 escape:
 	go build -gcflags="-m -m" ./... > escape.out 2>&1
 

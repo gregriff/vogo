@@ -1,3 +1,6 @@
+# allow bash commands to be executed by recipes
+SHELL = /usr/bin/env bash -o pipefail
+.SHELLFLAGS = -e
 
 build:
 	go build -o ../bin/vogo-server main.go

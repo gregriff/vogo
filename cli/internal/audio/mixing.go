@@ -45,7 +45,6 @@ func (s *streams) mix(numSamples int) {
 	_ = summed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
 	// sum samples for each buffer
-	// TODO: SIMD
 	const int16Size = unsafe.Sizeof(int16(0))
 	var offset uintptr
 	for i := range numSamples {
