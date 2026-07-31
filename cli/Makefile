@@ -57,7 +57,7 @@ info:
 GOARCH := $(ARCH_NAME)
 GOOS := $(OS_NAME)
 GOEXPERIMENT := simd
-OUT_DIR := ../bin
+OUT_DIR := ./bin
 
 # os env vars
 # -------------------------------
@@ -101,8 +101,8 @@ test:
 
 # run audio mixing tests and benchmarks
 test-mixing:
-	go test -c -o $(OUT_DIR)/vogotest -tags nolibopusfile -v ./internal/audio
-	$(OUT_DIR)/vogotest -test.bench=. -test.benchmem -test.cpu=1
+	go test -c -o $(OUT_DIR)/vogo-mixtest -tags nolibopusfile -v ./internal/audio
+	$(OUT_DIR)/vogo-mixtest -test.bench=. -test.benchmem -test.cpu=1
 
 bench:
 	go test -bench=. -benchmem -cpu=1 -tags nolibopusfile -v ./internal/audio
