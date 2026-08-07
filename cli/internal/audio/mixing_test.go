@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -363,5 +364,111 @@ func (s *streams) mixPade(numSamples int) {
 	// ensure these are cleaned up
 	for i := range numFull {
 		full[i] = nil
+	}
+}
+
+// TestSoftSaturate_PadeVsTanh compares softSaturate (real tanh) against
+// softSaturatePade (Padé approximant) across the realistic range of
+// summed PCM samples (2-5 int16s), using the fixed threshold math.MaxInt16.
+func TestSoftSaturate_PadeVsTanh(t *testing.T) {
+	const threshold = math.MaxInt16
+
+	// Sums of 2-5 int16 samples: range roughly [-5*32768, 5*32767].
+	const maxSum = 5 * math.MaxInt16
+
+	var (
+		maxAbsDiff    int32
+		maxDiffSum    int32
+		sumAbsDiff    int64
+		count         int64
+		diffHistogram = map[int32]int{}
+	)
+
+	// Step by a coarse amount for full sweep; refine (lower step) to
+	// hit narrow edge-case regressions.
+	step := int32(7) // coprime-ish odd step to hit varied values
+
+	for sum := int32(-maxSum); sum <= maxSum; sum += step {
+		tanh := softSaturate(sum, threshold)
+		pade := softSaturatePade(sum, threshold)
+
+		diff := int32(tanh) - int32(pade)
+		if diff < 0 {
+			diff = -diff
+		}
+
+		sumAbsDiff += int64(diff)
+		count++
+		diffHistogram[diff]++
+
+		if diff > maxAbsDiff {
+			maxAbsDiff = diff
+			maxDiffSum = sum
+		}
+	}
+
+	meanAbsDiff := float64(sumAbsDiff) / float64(count)
+
+	t.Logf("compared %d samples (threshold=%.0f)", count, float32(threshold))
+	t.Logf("mean abs diff: %.4f", meanAbsDiff)
+	t.Logf("max abs diff: %d (sum=%d)", maxAbsDiff, maxDiffSum)
+
+	// Print histogram sorted-ish for quick eyeballing.
+	for d := int32(0); d <= maxAbsDiff; d++ {
+		if c, ok := diffHistogram[d]; ok {
+			t.Logf("diff=%d count=%d", d, c)
+		}
+	}
+
+	// Adjust tolerance to whatever is acceptable for your use case.
+	const maxAllowedDiff = 50 // in int16 units
+	if maxAbsDiff > maxAllowedDiff {
+		t.Errorf("max abs diff %d exceeds allowed tolerance %d (sum=%d)",
+			maxAbsDiff, maxAllowedDiff, maxDiffSum)
+	}
+
+	const maxAllowedMeanDiff = 5.0
+	if meanAbsDiff > maxAllowedMeanDiff {
+		t.Errorf("mean abs diff %.4f exceeds allowed tolerance %.4f", meanAbsDiff, maxAllowedMeanDiff)
+	}
+}
+
+// TestSoftSaturate_PadeVsTanh_Table spot-checks specific edge and
+// typical sum values (max/min sums, 2-5 sample sums) for
+// readability/debugging when the sweep test fails. Threshold is fixed
+// at math.MaxInt16, matching production usage.
+func TestSoftSaturate_PadeVsTanh_Table(t *testing.T) {
+	const thr = float64(math.MaxInt16)
+
+	sums := []int32{
+		0,
+		32767,
+		-32768,
+		65535, // 2 samples summed near max
+		-65536,
+		98301,  // 3 samples summed near max
+		163835, // 5 samples summed near max
+		-163840,
+		1000,
+		-1000,
+		5000,
+		-5000,
+		15000,
+		-15000,
+		25000,
+		-25000,
+		30000,
+		-30000,
+		32000,
+		-32000,
+	}
+
+	for _, sum := range sums {
+		t.Run(fmt.Sprintf("sum=%d", sum), func(t *testing.T) {
+			tanh := softSaturate(sum, thr)
+			pade := softSaturatePade(sum, float32(thr))
+			diff := int32(tanh) - int32(pade)
+			t.Logf("tanh=%d pade=%d diff=%d", tanh, pade, diff)
+		})
 	}
 }

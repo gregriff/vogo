@@ -22,6 +22,11 @@
   sudo dnctl -f flush
 ```
 
+### Mixing
+- figure out the range of inputs to Pade/tanh funcs that have the most error. i think its >=1 
+  (at or above threshold)
+- consider a threshold higher than maxInt16, to allow for more mixing headroom.
+
 ### Opus:
 - Enabling BWE: 
   - comp-time and runtime flag

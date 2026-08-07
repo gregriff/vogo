@@ -99,10 +99,15 @@ lint:
 test:
 	go test -tags nolibopusfile -v ./...
 
-# run audio mixing tests and benchmarks
-test-mixing:
+build-test-mixing:
 	go test -c -o $(OUT_DIR)/vogo-mixtest -tags nolibopusfile -v ./internal/audio
-	$(OUT_DIR)/vogo-mixtest -test.bench=. -test.benchmem -test.cpu=1
+
+# run audio mixing tests and benchmarks
+test-mixing: build-test-mixing
+	$(OUT_DIR)/vogo-mixtest -test.bench=. -test.benchmem -test.cpu=1 -test.run=Mix
+
+test-pade: build-test-mixing
+	$(OUT_DIR)/vogo-mixtest -test.cpu=1 -test.v -test.run=TestSoftSaturate_PadeVsTanh
 
 bench:
 	go test -bench=. -benchmem -cpu=1 -tags nolibopusfile -v ./internal/audio
