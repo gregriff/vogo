@@ -168,8 +168,7 @@ func softSaturatePadeAVX512(acc archsimd.Int32x16, threshold archsimd.Float32x16
 
 // padeTanhAVX512 applies a [3/2] Padé tanh approximant on 16 float32s
 // using tanh(x) ≈ x*(x²+15) / (6x²+15). It is used during audio mixing,
-// on an array that has been created by adding 2 or more PCM arrays together,
-// and prevents hard-clipping.
+// where x is the ratio of the sum of PCM samples to a clipping threshold.
 //
 // https://mathr.co.uk/blog/2017-09-06_approximating_hyperbolic_tangent.html
 //
