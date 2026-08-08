@@ -36,10 +36,11 @@ func newStream() stream {
 type streams struct {
 	mu sync.Mutex
 
-	// data stores references to the  that each TrackRemote writes data to from the network.
+	// data stores references to the buffers that each TrackRemote
+	// writes data to from the network.
 	data map[string]*ringbuffer.RingBuffer
 
-	// these are used during mixing to allow for easier vectorized iteration of pcm.
+	// these are used during mixing to allow for iteration of pcm via pointer arithmetic.
 	writeBufs [MaxStreams][pcmBufferSize]int16
 
 	// this is where mixed pcm is written.

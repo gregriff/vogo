@@ -41,31 +41,30 @@ func (s *streams) mixAVX512(numSamples int) {
 	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.add
 	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
-	const simdW = 16
+	const simdWidth = 16
 	const int16Size = unsafe.Sizeof(int16(0))
-	scale := archsimd.BroadcastFloat32x16(math.MaxInt16)
+	vThreshold := archsimd.BroadcastFloat32x16(math.MaxInt16)
 
 	var i = 0
-	var offset uintptr
-	for ; i+simdW <= numSamples; i += simdW {
+	for ; i+simdWidth <= numSamples; i += simdWidth {
 		acc := archsimd.BroadcastInt32x16(0)
-		offset = uintptr(i) * int16Size
+		offset := uintptr(i) * int16Size
 		for j := range numFull {
-			ptr := (*[simdW]int16)(unsafe.Add(full[j], offset))
-			v32 := archsimd.LoadInt16x16Array(ptr).ExtendToInt32() // extending avoids overflow
-			acc = acc.Add(v32)
+			samples := (*[simdWidth]int16)(unsafe.Add(full[j], offset))
+			vSamples := archsimd.LoadInt16x16Array(samples)
+			acc = acc.Add(vSamples.ExtendToInt32())
 		}
-
-		saturated := softSaturatePadeAVX512(acc, scale)
-		saturated.StoreArray((*[simdW]int16)(s.mixed[i:]))
+		saturated := softSaturatePadeAVX512(acc, vThreshold)
+		saturated.StoreArray((*[simdWidth]int16)(s.mixed[i:]))
 	}
 
 	// Scalar remainder. could use masked simd but prob not worth it.
 	for ; i < numSamples; i++ {
 		var sum int32
-		offset = uintptr(i) * int16Size
+		offset := uintptr(i) * int16Size
 		for j := range numFull {
-			sum += int32(*((*int16)(unsafe.Add(full[j], offset))))
+			sample := (*int16)(unsafe.Add(full[j], offset))
+			sum += int32(*(sample))
 		}
 		s.mixed[i] = softSaturatePade(sum, math.MaxInt16)
 	}
@@ -110,10 +109,6 @@ func (s *streams) mixAVX2(numSamples int) {
 	_ = full[numFull-1]      //nolint:gosec // G602: checked in streams.add
 	_ = summed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
-	// maybe this is needed to force simd asm?
-	if !archsimd.X86.AVX2() {
-		return
-	}
 	const simdW = 8
 
 	var i = 0
@@ -152,6 +147,8 @@ func (s *streams) mixAVX2(numSamples int) {
 
 // softSaturatePadeAVX512 is a SIMD version of softSaturatePade.
 //
+// try passing in threshold as a float32
+//
 // CPU Feature: AVX-512
 func softSaturatePadeAVX512(acc archsimd.Int32x16, threshold archsimd.Float32x16) archsimd.Int16x16 {
 	f := acc.ConvertToFloat32()
@@ -186,15 +183,10 @@ func softSaturatePadeAVX512(acc archsimd.Int32x16, threshold archsimd.Float32x16
 func padeTanhAVX512(x archsimd.Float32x16) archsimd.Float32x16 {
 	// TODO: test not instantiating these until needed.
 	var (
-		// clamps
 		vClampPos = archsimd.BroadcastFloat32x16(4.97)
 		vClampNeg = archsimd.BroadcastFloat32x16(-4.97)
-		vOne      = archsimd.BroadcastFloat32x16(1.)
-		vNegOne   = archsimd.BroadcastFloat32x16(-1.)
-
-		// terms
-		vConst = archsimd.BroadcastFloat32x16(15.)
-		vCoeff = archsimd.BroadcastFloat32x16(6.)
+		vConst    = archsimd.BroadcastFloat32x16(15.)
+		vCoeff    = archsimd.BroadcastFloat32x16(6.)
 		// vExp   = archsimd.BroadcastFloat32x16(2.)
 	)
 
@@ -218,11 +210,8 @@ func padeTanhAVX512(x archsimd.Float32x16) archsimd.Float32x16 {
 	// t = vExp.Sub(t) // (2 - denom*r0)
 	// r1 := r0.Mul(t) //  refined reciprocal
 	// y := numer.Mul(r1)
-	y := numer.Div(denom)
 
-	// final safety clamp against residual approximation error
-	y = y.Max(vNegOne)
-	y = y.Min(vOne)
-
-	return y
+	// clamping to [-1,1] is not needed here because the caller will
+	// always convert to int16 with signed saturation
+	return numer.Div(denom)
 }

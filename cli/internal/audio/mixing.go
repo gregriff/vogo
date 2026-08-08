@@ -41,15 +41,15 @@ func (s *streams) mix(numSamples int) {
 	// avoid bounds checks
 	_ = full[numFull-1] //nolint:gosec // G602: checked in streams.add
 
-	// sum samples for each buffer
+	// sum the samples across all pcm streams. Uses pointer arithmetic
+	// to access each element to avoid bounds checks.
 	const int16Size = unsafe.Sizeof(int16(0))
-	var offset uintptr
 	for i := range numSamples {
 		var sum int32
-		offset = uintptr(i) * int16Size
+		offset := uintptr(i) * int16Size
 		for j := range numFull {
-			// use ptr arithmetic for no bounds checks for branchless SIMD.
-			sum += int32(*((*int16)(unsafe.Add(full[j], offset))))
+			sample := (*int16)(unsafe.Add(full[j], offset))
+			sum += int32(*(sample))
 		}
 		s.mixed[i] = softSaturate(sum, math.MaxInt16)
 	}
@@ -80,6 +80,7 @@ type summedPCMSample interface {
 	int32 | float64 | float32
 }
 
+// clampInt16 converts its input to int16 with signed saturation.
 func clampInt16[S summedPCMSample](val S) int16 {
 	return int16(min(max(val, math.MinInt16), math.MaxInt16))
 }
@@ -97,8 +98,10 @@ func padeTanhScalar(x float32) float32 {
 	)
 	x = max(min(x, clampPos), clampNeg)
 	x2 := x * x
-	num := x * (x2 + constant)
-	den := coeff*x2 + constant
-	y := num / den
-	return max(min(y, 1), -1)
+	numer := x * (x2 + constant)
+	denom := coeff*x2 + constant
+
+	// clamping to [-1,1] is not needed here because the caller will
+	// always convert to int16 with signed saturation
+	return numer / denom
 }

@@ -352,11 +352,13 @@ func (s *streams) mixPade(numSamples int) {
 	// sum samples for each buffer
 	const int16Size = unsafe.Sizeof(int16(0))
 	var offset uintptr
+	var sample *int16
 	for i := range numSamples {
 		var sum int32
 		offset = uintptr(i) * int16Size
 		for j := range numFull {
-			sum += int32(*((*int16)(unsafe.Add(full[j], offset))))
+			sample = (*int16)(unsafe.Add(full[j], offset))
+			sum += int32(*(sample))
 		}
 		s.mixed[i] = softSaturatePade(sum, math.MaxInt16)
 	}
@@ -438,7 +440,7 @@ func TestSoftSaturate_PadeVsTanh(t *testing.T) {
 // readability/debugging when the sweep test fails. Threshold is fixed
 // at math.MaxInt16, matching production usage.
 func TestSoftSaturate_PadeVsTanh_Table(t *testing.T) {
-	const thr = float64(math.MaxInt16)
+	const threshold = math.MaxInt16
 
 	sums := []int32{
 		0,
@@ -465,8 +467,8 @@ func TestSoftSaturate_PadeVsTanh_Table(t *testing.T) {
 
 	for _, sum := range sums {
 		t.Run(fmt.Sprintf("sum=%d", sum), func(t *testing.T) {
-			tanh := softSaturate(sum, thr)
-			pade := softSaturatePade(sum, float32(thr))
+			tanh := softSaturate(sum, threshold)
+			pade := softSaturatePade(sum, threshold)
 			diff := int32(tanh) - int32(pade)
 			t.Logf("tanh=%d pade=%d diff=%d", tanh, pade, diff)
 		})
