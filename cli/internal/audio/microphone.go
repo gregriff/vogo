@@ -13,7 +13,8 @@ import (
 	"github.com/gregriff/vogo/shared"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
-	"gopkg.in/hraban/opus.v2"
+
+	"github.com/hraban/opus"
 )
 
 // microphone provides access to the device's

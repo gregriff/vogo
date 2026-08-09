@@ -28,6 +28,7 @@
 - consider a threshold higher than maxInt16, to allow for more mixing headroom.
 
 ### Opus:
+DOUBLE CHECK ON HRABAN OPUS THAT YOU CAN REMOVE RUNTIME DEP ON LIBOPUS DYLIB
 - Enabling BWE: 
   - comp-time and runtime flag
   - 48khz sample rate

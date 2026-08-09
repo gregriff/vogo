@@ -18,7 +18,8 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
-	"gopkg.in/hraban/opus.v2"
+
+	"github.com/hraban/opus"
 )
 
 // devices contains the microphone and speaker.
@@ -97,6 +98,7 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 		if err != nil {
 			log.Panicf("decoder init error: %v", err)
 		}
+		decoder.SetComplexity(5) // TODO: what is its default?
 
 		packetBuf := make([]byte, c.recvMTU)
 		decodeBuf := make([]int16, pcmBufferSize)

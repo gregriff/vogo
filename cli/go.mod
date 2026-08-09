@@ -6,6 +6,7 @@ require (
 	github.com/gen2brain/malgo v0.11.24
 	github.com/google/uuid v1.6.0
 	github.com/gregriff/vogo/shared v0.0.0
+	github.com/hraban/opus v0.0.0-20260708213942-bde8e4304501
 	github.com/pion/interceptor v0.1.44
 	github.com/pion/rtcp v1.2.16
 	github.com/pion/rtp v1.10.1
@@ -14,7 +15,6 @@ require (
 	github.com/spf13/viper v1.21.0
 	golang.org/x/net v0.50.0
 	golang.org/x/sync v0.19.0
-	gopkg.in/hraban/opus.v2 v2.0.0-20230925203106-0188a62cb302
 )
 
 require (
