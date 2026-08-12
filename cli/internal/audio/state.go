@@ -180,18 +180,25 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 func (c *Channel) DataProc() malgo.DataProc {
 
 	// use simd if able
-	var mix = c.streams.mixPade // TODO: opt for using tanh impl.
+	// TODO: opt for using tanh impl.
+	var mix func(int)
+
 	if archsimd.X86.AVX512() {
-		log.Println("using mixAVX512()")
-		mix = c.streams.mixAVX512
+		log.Println("using AVX512")
+		mix = func(n int) {
+			c.streams.mixAVX(n, true)
+		}
 	} else if archsimd.X86.AVX2() {
-		log.Println("using mixAVX2()")
-		mix = c.streams.mixAVX2
+		log.Println("using AVX2")
+		mix = func(n int) {
+			c.streams.mixAVX(n, false)
+		}
 	} else if archsimd.ARM64.PMULL() {
-		log.Println("using mixNEON()")
+		log.Println("using NEON")
 		mix = c.streams.mixNEON
 	} else {
-		log.Println("using scalar mix()")
+		log.Println("using scalar")
+		mix = c.streams.mixPade
 	}
 
 	// read into output sample buf, for output to speaker device.

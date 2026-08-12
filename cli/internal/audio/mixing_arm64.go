@@ -6,12 +6,8 @@ import (
 	"unsafe"
 )
 
-// stubs for compilation on arm64
-
-func (s *streams) mixAVX512(int) {
-	panic("not implemented")
-}
-func (s *streams) mixAVX2(int) {
+// stub for compilation on arm64
+func (s *streams) mixAVX(int, bool) {
 	panic("not implemented")
 }
 

@@ -11,7 +11,7 @@ func (s *streams) mixNEON(int) {
 	panic("not implemented")
 }
 
-func (s *streams) mixAVX512(numSamples int) {
+func (s *streams) mixAVX(numSamples int, avx512 bool) {
 	// get pointers to bufs with at least [numSamples] samples
 	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
 
@@ -42,28 +42,15 @@ func (s *streams) mixAVX512(numSamples int) {
 		return
 	}
 
-	// avoid bounds checks
-	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.add
-	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.add
-
-	const simdWidth = 16
 	const int16Size = unsafe.Sizeof(int16(0))
-	vThreshold := archsimd.BroadcastFloat32x16(math.MaxInt16)
-
-	var i = 0
-	for ; i+simdWidth <= numSamples; i += simdWidth {
-		acc := archsimd.BroadcastInt32x16(0)
-		offset := uintptr(i) * int16Size
-		for j := range numFull {
-			samples := (*[simdWidth]int16)(unsafe.Add(full[j], offset))
-			vSamples := archsimd.LoadInt16x16Array(samples)
-			acc = acc.Add(vSamples.ExtendToInt32())
-		}
-		saturated := softSaturatePadeAVX512(acc, vThreshold)
-		saturated.StoreArray((*[simdWidth]int16)(s.mixed[i:]))
+	var i int
+	if avx512 {
+		i = s.doMixAVX512(i, numFull, numSamples, int16Size, full)
+	} else {
+		i = s.doMixAVX2(i, numFull, numSamples, int16Size, full)
 	}
 
-	// Scalar remainder. could use masked simd but prob not worth it.
+	// Scalar remainder.
 	for ; i < numSamples; i++ {
 		var sum int32
 		offset := uintptr(i) * int16Size
@@ -80,73 +67,56 @@ func (s *streams) mixAVX512(numSamples int) {
 	}
 }
 
-func (s *streams) mixAVX2(numSamples int) {
-	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
-
-	// research if you could have simd kernel read straight from RB to avoid these copies
-	// to the temp arrays, and full could point to the rb itself at the right read index.
-	for _, rb := range s.data {
-		if rb.Len() >= numSamples {
-			// copy the full pcm buf so we can vectorize access easily.
-			_ = rb.Read(s.writeBufs[numFull][:])
-
-			// since we're in the lock and ensured length, we can use unsafe access.
-			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
-			numFull++
-		}
-	}
-
-	// ensure previous mixed pcm is erased
-	// TODO: is this even needed? Just clear the tail?
-	clear(s.mixed[:])
-	if numFull == 0 || len(s.data) == 0 {
-		return
-	}
-
-	// if only one other person in the room, don't mix, just write their pcm
-	if numFull == 1 {
-		copy(s.mixed[:], s.writeBufs[0][:numSamples])
-		full[0] = nil
-		return
-	}
+func (s *streams) doMixAVX512(
+	i, numFull, count int,
+	int16Size uintptr,
+	full [MaxStreams]unsafe.Pointer,
+) int {
+	const w = 16 // AVX512 int16 width
+	vThreshold := archsimd.BroadcastFloat32x16(math.MaxInt16)
 
 	// avoid bounds checks
-	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.add
-	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.add
+	_ = full[numFull-1]  //nolint:gosec // G602: checked in streams.add
+	_ = s.mixed[count-1] //nolint:gosec // G602: checked in streams.add
 
-	const simdWidth = 8
-	const int16Size = unsafe.Sizeof(int16(0))
+	for ; i+w <= count; i += w {
+		acc := archsimd.BroadcastInt32x16(0)
+		offset := uintptr(i) * int16Size
+		for j := range numFull {
+			samples := (*[w]int16)(unsafe.Add(full[j], offset))
+			vSamples := archsimd.LoadInt16x16Array(samples)
+			acc = acc.Add(vSamples.ExtendToInt32())
+		}
+		saturated := softSaturatePadeAVX512(acc, vThreshold)
+		saturated.StoreArray((*[w]int16)(s.mixed[i:]))
+	}
+	return i
+}
+
+func (s *streams) doMixAVX2(
+	i, numFull, count int,
+	int16Size uintptr,
+	full [MaxStreams]unsafe.Pointer,
+) int {
+	const w = 8 // AVX2 int16 width
 	vThreshold := archsimd.BroadcastFloat32x8(math.MaxInt16)
 
-	var i = 0
-	for ; i+simdWidth <= numSamples; i += simdWidth {
+	// avoid bounds checks
+	_ = full[numFull-1]  //nolint:gosec // G602: checked in streams.add
+	_ = s.mixed[count-1] //nolint:gosec // G602: checked in streams.add
+
+	for ; i+w <= count; i += w {
 		acc := archsimd.BroadcastInt32x8(0)
 		offset := uintptr(i) * int16Size
 		for j := range numFull {
-			samples := (*[simdWidth]int16)(unsafe.Add(full[j], offset))
+			samples := (*[w]int16)(unsafe.Add(full[j], offset))
 			vSamples := archsimd.LoadInt16x8Array(samples)
 			acc = acc.Add(vSamples.ExtendToInt32())
 		}
 		saturated := softSaturatePadeAVX2(acc, vThreshold)
-		saturated.StoreArray((*[simdWidth]int16)(s.mixed[i:]))
+		saturated.StoreArray((*[w]int16)(s.mixed[i:]))
 	}
-
-	// Scalar remainder. could use masked simd but prob not worth it.
-	for ; i < numSamples; i++ {
-		var sum int32
-		offset := uintptr(i) * int16Size
-		for j := range numFull {
-			sample := (*int16)(unsafe.Add(full[j], offset))
-			sum += int32(*(sample))
-		}
-		s.mixed[i] = softSaturatePade(sum, math.MaxInt16)
-	}
-
-	// ensure these are cleaned up
-	for i := range numFull {
-		full[i] = nil
-	}
+	return i
 }
 
 // softSaturatePadeAVX512 is a SIMD version of softSaturatePade.

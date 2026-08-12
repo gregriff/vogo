@@ -29,7 +29,8 @@ func BenchmarkMixAMD64(b *testing.B) {
 			s1.Write(samples)
 			s2.Write(samples)
 			b.StartTimer()
-			s.mixAVX2(pcmBufferSize)
+			// s.mixAVX2(pcmBufferSize)
+			s.mixAVX(pcmBufferSize, false)
 		}
 	})
 
@@ -56,7 +57,8 @@ func BenchmarkMixAMD64(b *testing.B) {
 			s3.Write(samples)
 			s4.Write(samples)
 			b.StartTimer()
-			s.mixAVX2(pcmBufferSize)
+			// s.mixAVX2(pcmBufferSize)
+			s.mixAVX(pcmBufferSize, false)
 		}
 	})
 
@@ -77,7 +79,8 @@ func BenchmarkMixAMD64(b *testing.B) {
 			s1.Write(samples)
 			s2.Write(samples)
 			b.StartTimer()
-			s.mixAVX512(pcmBufferSize)
+			// s.mixAVX2(pcmBufferSize)
+			s.mixAVX(pcmBufferSize, true)
 		}
 	})
 
@@ -104,7 +107,8 @@ func BenchmarkMixAMD64(b *testing.B) {
 			s3.Write(samples)
 			s4.Write(samples)
 			b.StartTimer()
-			s.mixAVX512(pcmBufferSize)
+			// s.mixAVX2(pcmBufferSize)
+			s.mixAVX(pcmBufferSize, true)
 		}
 	})
 }
