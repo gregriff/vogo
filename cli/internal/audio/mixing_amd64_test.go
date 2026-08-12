@@ -12,7 +12,7 @@ import (
 func BenchmarkMixAMD64(b *testing.B) {
 	const bufSize = pcmBufferSize * 8
 
-	b.Run("AVX2_n=2", func(b *testing.B) {
+	b.Run("pade_AVX2_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -33,7 +33,7 @@ func BenchmarkMixAMD64(b *testing.B) {
 		}
 	})
 
-	b.Run("AVX2_n=4", func(b *testing.B) {
+	b.Run("pade_AVX2_n=4", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -60,7 +60,7 @@ func BenchmarkMixAMD64(b *testing.B) {
 		}
 	})
 
-	b.Run("AVX512_n=2", func(b *testing.B) {
+	b.Run("pade_AVX512_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -81,7 +81,7 @@ func BenchmarkMixAMD64(b *testing.B) {
 		}
 	})
 
-	b.Run("AVX512_n=4", func(b *testing.B) {
+	b.Run("pade_AVX512_n=4", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)

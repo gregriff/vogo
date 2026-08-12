@@ -68,80 +68,14 @@ func randomPCMSample(amplitude float64) int16 {
 	return clampInt16(sample)
 }
 
-const pcmAmplitude = 3000 // can be up to math.MaxInt16
+// for generating normally distributed numbers that mock PCM data.
+// don't do more than like 15k
+const pcmAmplitude = 12_000
 
 func BenchmarkMix(b *testing.B) {
 	const bufSize = pcmBufferSize * 8
 
-	b.Run("branchless_n=1", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
-		for i := range samples {
-			samples[i] = randomPCMSample(pcmAmplitude)
-		}
-
-		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-
-		// NOTE: this will not give an accurate time measurement unless
-		// you uncomment the timer calls, but doing that will make it run extremely slow.
-		for b.Loop() {
-			// b.StopTimer()
-			s1.Write(samples)
-			// b.StartTimer()
-			s.mix(pcmBufferSize)
-		}
-	})
-
-	b.Run("branchless_n=2", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
-		for i := range samples {
-			samples[i] = randomPCMSample(pcmAmplitude)
-		}
-
-		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s2 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
-
-		for b.Loop() {
-			b.StopTimer()
-			s1.Write(samples)
-			s2.Write(samples)
-			b.StartTimer()
-			s.mix(pcmBufferSize)
-		}
-	})
-
-	b.Run("branchless_n=4", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
-		for i := range samples {
-			samples[i] = randomPCMSample(pcmAmplitude)
-		}
-
-		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s2 := ringbuffer.New(bufSize)
-		s3 := ringbuffer.New(bufSize)
-		s4 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
-		s.add("s3", &s3)
-		s.add("s4", &s4)
-
-		for b.Loop() {
-			b.StopTimer()
-			s1.Write(samples)
-			s2.Write(samples)
-			s3.Write(samples)
-			s4.Write(samples)
-			b.StartTimer()
-			s.mix(pcmBufferSize)
-		}
-	})
-
-	b.Run("pade_n=1", func(b *testing.B) {
+	b.Run("pade_scalr_n=1", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -161,7 +95,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("pade_n=2", func(b *testing.B) {
+	b.Run("pade_scalr_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -182,7 +116,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("pade_n=4", func(b *testing.B) {
+	b.Run("pade_scalr_n=4", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -209,7 +143,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("idiomatic_n=1", func(b *testing.B) {
+	b.Run("tanh_optim_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -217,15 +151,47 @@ func BenchmarkMix(b *testing.B) {
 
 		s := newStreams()
 		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
 		s.add("s1", &s1)
+		s.add("s2", &s2)
 
 		for b.Loop() {
+			b.StopTimer()
 			s1.Write(samples)
-			s.mixIdiomatic(pcmBufferSize)
+			s2.Write(samples)
+			b.StartTimer()
+			s.mix(pcmBufferSize)
 		}
 	})
 
-	b.Run("idiomatic_n=2", func(b *testing.B) {
+	b.Run("tanh_optim_n=4", func(b *testing.B) {
+		samples := make([]int16, pcmBufferSize)
+		for i := range samples {
+			samples[i] = randomPCMSample(pcmAmplitude)
+		}
+
+		s := newStreams()
+		s1 := ringbuffer.New(bufSize)
+		s2 := ringbuffer.New(bufSize)
+		s3 := ringbuffer.New(bufSize)
+		s4 := ringbuffer.New(bufSize)
+		s.add("s1", &s1)
+		s.add("s2", &s2)
+		s.add("s3", &s3)
+		s.add("s4", &s4)
+
+		for b.Loop() {
+			b.StopTimer()
+			s1.Write(samples)
+			s2.Write(samples)
+			s3.Write(samples)
+			s4.Write(samples)
+			b.StartTimer()
+			s.mix(pcmBufferSize)
+		}
+	})
+
+	b.Run("tanh_clean_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -246,7 +212,7 @@ func BenchmarkMix(b *testing.B) {
 		}
 	})
 
-	b.Run("idiomatic_n=4", func(b *testing.B) {
+	b.Run("tanh_clean_n=4", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -277,7 +243,7 @@ func BenchmarkMix(b *testing.B) {
 
 func (s *streams) mixIdiomatic(numSamples int) {
 	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [MaxStreams]*[pcmBufferSize]int16{}, int32(0)
+	full, numFull := [MaxStreams]*[pcmBufferSize]int16{}, 0
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
 			_ = rb.Read(s.writeBufs[numFull][:])

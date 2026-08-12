@@ -12,7 +12,7 @@ import (
 func BenchmarkMixARM64(b *testing.B) {
 	const bufSize = pcmBufferSize * 8
 
-	b.Run("NEON_n=2", func(b *testing.B) {
+	b.Run("pade_NEON_n=2", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
@@ -33,7 +33,7 @@ func BenchmarkMixARM64(b *testing.B) {
 		}
 	})
 
-	b.Run("NEON_n=4", func(b *testing.B) {
+	b.Run("pade_NEON_n=4", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
