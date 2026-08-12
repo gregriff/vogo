@@ -5,7 +5,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
-	"unsafe"
 
 	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 )
@@ -310,57 +309,6 @@ func (s *streams) mixIdiomatic(numSamples int) {
 			sum += int32(full[j][i])
 		}
 		s.mixed[i] = softSaturate(sum, math.MaxInt16)
-	}
-
-	// ensure these are cleaned up
-	for i := range numFull {
-		full[i] = nil
-	}
-}
-
-func (s *streams) mixPade(numSamples int) {
-	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
-
-	for _, rb := range s.data {
-		if rb.Len() >= numSamples {
-			// copy the full pcm buf so we can vectorize access easily.
-			_ = rb.Read(s.writeBufs[numFull][:])
-
-			// since we're in the lock and ensured length, we can use unsafe access.
-			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
-			numFull++
-		}
-	}
-
-	// ensure previous mixed pcm is erased
-	clear(s.mixed[:])
-	if numFull == 0 || len(s.data) == 0 {
-		return
-	}
-
-	// if only one other person in the room, don't mix, just write their pcm
-	if numFull == 1 {
-		copy(s.mixed[:], s.writeBufs[0][:numSamples])
-		full[0] = nil
-		return
-	}
-
-	// avoid bounds checks
-	_ = full[numFull-1] //nolint:gosec // G602: checked in streams.add
-
-	// sum samples for each buffer
-	const int16Size = unsafe.Sizeof(int16(0))
-	var offset uintptr
-	var sample *int16
-	for i := range numSamples {
-		var sum int32
-		offset = uintptr(i) * int16Size
-		for j := range numFull {
-			sample = (*int16)(unsafe.Add(full[j], offset))
-			sum += int32(*(sample))
-		}
-		s.mixed[i] = softSaturatePade(sum, math.MaxInt16)
 	}
 
 	// ensure these are cleaned up

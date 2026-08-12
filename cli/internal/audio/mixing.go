@@ -60,6 +60,57 @@ func (s *streams) mix(numSamples int) {
 	}
 }
 
+func (s *streams) mixPade(numSamples int) {
+	// get pointers to bufs with at least [numSamples] samples
+	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
+
+	for _, rb := range s.data {
+		if rb.Len() >= numSamples {
+			// copy the full pcm buf so we can vectorize access easily.
+			_ = rb.Read(s.writeBufs[numFull][:])
+
+			// since we're in the lock and ensured length, we can use unsafe access.
+			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
+			numFull++
+		}
+	}
+
+	// ensure previous mixed pcm is erased
+	clear(s.mixed[:])
+	if numFull == 0 || len(s.data) == 0 {
+		return
+	}
+
+	// if only one other person in the room, don't mix, just write their pcm
+	if numFull == 1 {
+		copy(s.mixed[:], s.writeBufs[0][:numSamples])
+		full[0] = nil
+		return
+	}
+
+	// avoid bounds checks
+	_ = full[numFull-1] //nolint:gosec // G602: checked in streams.add
+
+	// sum samples for each buffer
+	const int16Size = unsafe.Sizeof(int16(0))
+	var offset uintptr
+	var sample *int16
+	for i := range numSamples {
+		var sum int32
+		offset = uintptr(i) * int16Size
+		for j := range numFull {
+			sample = (*int16)(unsafe.Add(full[j], offset))
+			sum += int32(*(sample))
+		}
+		s.mixed[i] = softSaturatePade(sum, math.MaxInt16)
+	}
+
+	// ensure these are cleaned up
+	for i := range numFull {
+		full[i] = nil
+	}
+}
+
 // softSaturate takes a sum of multiple int16s and returns
 // a value saturated to threshold using tanh. Used to mix
 // PCM samples and prevent hard clipping.
@@ -89,14 +140,27 @@ func clampInt16[S summedPCMSample](val S) int16 {
 // float32 using tanh(x) ≈ x*(x²+15) / (6x²+15). It is used
 // during audio mixing, where x is the ratio of the sum of
 // multiple PCM samples to a clipping threshold.
+//
+// Notes:
+//   - if this hard-clips too much when there are many pcm streams,
+//     consider a [5/4] approximant, or custom-fitting a rational
+//     function with least-squares. (minimax, use scipy for this)
+//
+// https://mathr.co.uk/blog/2017-09-06_approximating_hyperbolic_tangent.html
+//
+// Alternative implementations:
+//
+// - LUT: https://jtomschroeder.com/blog/approximating-tanh/#k-tanh
+//
+// - FP Approx: https://jtomschroeder.com/blog/approximating-tanh/#schraudolph
+//
+// - SIMD Examples: https://yaikhom.com/2020-04-28-localised-approximation-of-hyperbolic-tangents.html
 func padeTanhScalar(x float32) float32 {
 	const (
-		clampPos = 4.97
-		clampNeg = -4.97
 		coeff    = 6.
 		constant = 15.
 	)
-	x = max(min(x, clampPos), clampNeg)
+	x = max(min(x, padeMaxInput), padeMinInput)
 	x2 := x * x
 	numer := x * (x2 + constant)
 	denom := coeff*x2 + constant

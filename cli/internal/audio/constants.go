@@ -44,3 +44,11 @@ const (
 	// size of buffer to hold decoded PCM from the network.
 	pcmBufferSize = frameSize * (playbackPeriodMs / capturePeriodMs)
 )
+
+// for mixing
+const (
+	// [3/2] approximant diverges from tanh by 5% at x=3.
+	// clamp inputs to +/- 3. Note: it exceeds 1.0 at x=2.32.
+	padeMaxInput = 3.
+	padeMinInput = -3.
+)

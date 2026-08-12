@@ -179,14 +179,17 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 // DataProc returns a callback that mixes multiple user's audio and sends it to the speaker.
 func (c *Channel) DataProc() malgo.DataProc {
 
-	// use simd versions of streams.mix if able
-	var mix = c.streams.mix
+	// use simd if able
+	var mix = c.streams.mixPade // TODO: opt for using tanh impl.
 	if archsimd.X86.AVX512() {
 		log.Println("using mixAVX512()")
 		mix = c.streams.mixAVX512
 	} else if archsimd.X86.AVX2() {
 		log.Println("using mixAVX2()")
 		mix = c.streams.mixAVX2
+	} else if archsimd.ARM64.PMULL() {
+		log.Println("using mixNEON()")
+		mix = c.streams.mixNEON
 	} else {
 		log.Println("using scalar mix()")
 	}
