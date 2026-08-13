@@ -46,43 +46,92 @@ func (s *streams) mixNEON(numSamples int) {
 	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.add
 	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
-	const simdWidth = 4
+	const w = 8             // NEON int16 width
+	const increment = w * 4 // unroll factor of 4
 	const int16Size = unsafe.Sizeof(int16(0))
 	vThreshold := archsimd.BroadcastFloat32x4(math.MaxInt16)
 
+	// Loop is unrolled to improve ILP.
 	var i = 0
-	for ; i+simdWidth <= numSamples; i += simdWidth {
-		acc := archsimd.BroadcastInt32x4(0)
+	for ; i+increment <= numSamples; i += increment {
+		// Accumulators. NEON has 8 lanes of int16, but we are doing
+		// operations in int32, so we need to accumulate with 4 lanes.
+		// But since we can pull out 8 int16s at a time, by using two
+		// accumulators and duplicating the math logic, we can double-pump
+		// the operations and iterate over the source arrays half as often.
+		accLo := archsimd.BroadcastInt32x4(0)
+		accHi := archsimd.BroadcastInt32x4(0)
+		accLo2 := archsimd.BroadcastInt32x4(0)
+		accHi2 := archsimd.BroadcastInt32x4(0)
+		accLo3 := archsimd.BroadcastInt32x4(0)
+		accHi3 := archsimd.BroadcastInt32x4(0)
+		accLo4 := archsimd.BroadcastInt32x4(0)
+		accHi4 := archsimd.BroadcastInt32x4(0)
 		offset := uintptr(i) * int16Size
+		offset2 := uintptr(i+8) * int16Size  // i+w for 2x unroll
+		offset3 := uintptr(i+16) * int16Size // i+w*2 for 3x unroll
+		offset4 := uintptr(i+24) * int16Size // i+w*2 for 3x unroll
+
+		// for each pcm array, grab 24 samples and add to the accumulators.
 		for j := range numFull {
-			// we are only processing 4 nums at a time, but
-			// we can't load only 4 int16s into NEON registers.
-			samples := (*[8]int16)(unsafe.Add(full[j], offset))
-			vSamples := archsimd.LoadInt16x8Array(samples)
-			acc = acc.Add(vSamples.ExtendLo4ToInt32())
-		}
-		saturated := softSaturatePadeNEON(acc, vThreshold)
+			p := (*[w]int16)(unsafe.Add(full[j], offset))
+			v := archsimd.LoadInt16x8Array(p)
+			accLo = accLo.Add(v.ExtendLo4ToInt32())
+			accHi = accHi.Add(v.HiToLo().ExtendLo4ToInt32())
 
-		dst := s.mixed[i:]
-		if len(dst) > 4 {
-			// fast path, true until the last iteration.
-			// this writes 8 elems, only 4 are pcm, rest are zeroes.
-			// next iter overwrites those zeroes.
-			saturated.StoreArray((*[8]int16)(dst))
-		} else {
-			saturated.StorePart(dst)
+			p2 := (*[w]int16)(unsafe.Add(full[j], offset2))
+			v2 := archsimd.LoadInt16x8Array(p2)
+			accLo2 = accLo2.Add(v2.ExtendLo4ToInt32())
+			accHi2 = accHi2.Add(v2.HiToLo().ExtendLo4ToInt32())
+
+			p3 := (*[w]int16)(unsafe.Add(full[j], offset3))
+			v3 := archsimd.LoadInt16x8Array(p3)
+			accLo3 = accLo3.Add(v3.ExtendLo4ToInt32())
+			accHi3 = accHi3.Add(v3.HiToLo().ExtendLo4ToInt32())
+
+			p4 := (*[w]int16)(unsafe.Add(full[j], offset4))
+			v4 := archsimd.LoadInt16x8Array(p4)
+			accLo4 = accLo4.Add(v4.ExtendLo4ToInt32())
+			accHi4 = accHi4.Add(v4.HiToLo().ExtendLo4ToInt32())
 		}
 
-		// this is copied from archsimd.Int16x8.StorePart. This should
-		// only store 4 elems into dst.
-		// t := unsafe.Slice((*uint16)(unsafe.Pointer(&dst[0])), len(dst))
-		// uints := saturated.ToBits()
-		// ptr := (*uint64)(unsafe.Pointer(&t[0]))
-		// *ptr = uints.ReshapeToUint64s().GetElem(0)
-		// uints.StorePart(t)
+		// After saturating, pack the two result vectors by
+		// reinterpreting as int64 and zipping.
+		// Ops are ordered as to improve ILP.
+		satHi := softSaturatePadeNEON(accHi, vThreshold)
+		hi := satHi.ToBits().ReshapeToUint64s().BitsToInt64()
+		satLo := softSaturatePadeNEON(accLo, vThreshold)
+		lo := satLo.ToBits().ReshapeToUint64s().BitsToInt64()
+		packed := lo.InterleaveLo(hi) // [lo, hi]
+		mixed := packed.ToBits().ReshapeToUint16s().BitsToInt16()
+		mixed.StoreArray((*[w]int16)(s.mixed[i:]))
+
+		satHi2 := softSaturatePadeNEON(accHi2, vThreshold)
+		hi2 := satHi2.ToBits().ReshapeToUint64s().BitsToInt64()
+		satLo2 := softSaturatePadeNEON(accLo2, vThreshold)
+		lo2 := satLo2.ToBits().ReshapeToUint64s().BitsToInt64()
+		packed2 := lo2.InterleaveLo(hi2)
+		mixed2 := packed2.ToBits().ReshapeToUint16s().BitsToInt16()
+		mixed2.StoreArray((*[w]int16)(s.mixed[i+8:]))
+
+		satHi3 := softSaturatePadeNEON(accHi3, vThreshold)
+		hi3 := satHi3.ToBits().ReshapeToUint64s().BitsToInt64()
+		satLo3 := softSaturatePadeNEON(accLo3, vThreshold)
+		lo3 := satLo3.ToBits().ReshapeToUint64s().BitsToInt64()
+		packed3 := lo3.InterleaveLo(hi3)
+		mixed3 := packed3.ToBits().ReshapeToUint16s().BitsToInt16()
+		mixed3.StoreArray((*[w]int16)(s.mixed[i+16:]))
+
+		satHi4 := softSaturatePadeNEON(accHi4, vThreshold)
+		hi4 := satHi4.ToBits().ReshapeToUint64s().BitsToInt64()
+		satLo4 := softSaturatePadeNEON(accLo4, vThreshold)
+		lo4 := satLo4.ToBits().ReshapeToUint64s().BitsToInt64()
+		packed4 := lo4.InterleaveLo(hi4)
+		mixed4 := packed4.ToBits().ReshapeToUint16s().BitsToInt16()
+		mixed4.StoreArray((*[w]int16)(s.mixed[i+24:]))
 	}
 
-	// Scalar remainder. could use masked simd but prob not worth it.
+	// Scalar remainder.
 	for ; i < numSamples; i++ {
 		var sum int32
 		offset := uintptr(i) * int16Size
@@ -105,11 +154,8 @@ func (s *streams) mixNEON(numSamples int) {
 //
 // CPU Feature: NEON
 func softSaturatePadeNEON(acc archsimd.Int32x4, threshold archsimd.Float32x4) archsimd.Int16x8 {
-	f := acc.ConvertToFloat32()
-
-	// todo: could approx this with a precomputed reciprocal
-	v := f.Div(threshold)
-	approx := padeTanhNEON(v)
+	x := acc.ConvertToFloat32().Div(threshold)
+	approx := padeTanhNEON(x)
 
 	// scale back to int16 range and saturate
 	scaled := approx.Mul(threshold)
@@ -121,25 +167,15 @@ func softSaturatePadeNEON(acc archsimd.Int32x4, threshold archsimd.Float32x4) ar
 //
 // CPU Feature: NEON
 func padeTanhNEON(x archsimd.Float32x4) archsimd.Float32x4 {
-	var (
-		vClampPos = archsimd.BroadcastFloat32x4(padeMaxInput)
-		vClampNeg = archsimd.BroadcastFloat32x4(padeMinInput)
-		vConst    = archsimd.BroadcastFloat32x4(15.)
-		vCoeff    = archsimd.BroadcastFloat32x4(6.)
-	)
-
 	// clamp before divergence from tanh.
-	x = x.Max(vClampNeg)
-	x = x.Min(vClampPos)
-
+	x = x.Max(archsimd.BroadcastFloat32x4(padeMinInput))
+	x = x.Min(archsimd.BroadcastFloat32x4(padeMaxInput))
 	x2 := x.Mul(x)
 
-	// numerator
-	numer := x2.Add(vConst)
-	numer = numer.Mul(x) // maybe do this after denom?
+	vConst := archsimd.BroadcastFloat32x4(15.)
 
-	// denominator
-	denom := x2.MulAdd(vCoeff, vConst)
+	numer := x2.MulAdd(x, x.Mul(vConst)) // x^3 + 15x
+	denom := x2.MulAdd(archsimd.BroadcastFloat32x4(6.), vConst)
 
 	// clamping to [-1,1] is not needed here because the caller will
 	// always convert to int16 with signed saturation

@@ -8,5 +8,6 @@ logs/
 .pprof/
 
 escape.out
+ops*.test
 
 *prompt.txt
