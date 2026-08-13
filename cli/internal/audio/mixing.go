@@ -59,7 +59,8 @@ func (s *streams) mix(numSamples int) {
 	}
 
 	// avoid bounds checks
-	_ = full[numFull-1] //nolint:gosec // G602: checked in streams.add
+	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.add
+	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.add
 
 	// sum samples for each buffer
 	const int16Size = unsafe.Sizeof(int16(0))
