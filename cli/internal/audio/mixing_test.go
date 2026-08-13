@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+	"unsafe"
 
 	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 )
@@ -16,7 +17,7 @@ func TestMix(t *testing.T) {
 		a := ringbuffer.New(numSamples)
 		a.Write([]int16{10, 20, 30, 40, 50})
 		s.add("a", &a)
-		s.mix(numSamples)
+		s.mixTanh(numSamples)
 
 		count := 0
 		for _, v := range s.mixed {
@@ -39,7 +40,7 @@ func TestMix(t *testing.T) {
 		b.Write(pcm)
 		s.add("a", &a)
 		s.add("b", &b)
-		s.mix(3)
+		s.mixTanh(3)
 		if s.mixed[0] != 0 {
 			t.Errorf("expected sample[0]==0, got %d", s.mixed[0])
 		}
@@ -56,7 +57,7 @@ func TestMix(t *testing.T) {
 		a.Write([]int16{1, 2, 3})
 		s.add("a", &a)
 		s.remove("a")
-		s.mix(3)
+		s.mixTanh(3)
 		if s.mixed[0] == 1 {
 			t.Error("expected s.mix to not use removed buffer")
 		}
@@ -91,7 +92,7 @@ func BenchmarkMix(b *testing.B) {
 			// b.StopTimer()
 			s1.Write(samples)
 			// b.StartTimer()
-			s.mixPade(pcmBufferSize)
+			s.mix(pcmBufferSize)
 		}
 	})
 
@@ -112,7 +113,7 @@ func BenchmarkMix(b *testing.B) {
 			s1.Write(samples)
 			s2.Write(samples)
 			b.StartTimer()
-			s.mixPade(pcmBufferSize)
+			s.mix(pcmBufferSize)
 		}
 	})
 
@@ -139,7 +140,7 @@ func BenchmarkMix(b *testing.B) {
 			s3.Write(samples)
 			s4.Write(samples)
 			b.StartTimer()
-			s.mixPade(pcmBufferSize)
+			s.mix(pcmBufferSize)
 		}
 	})
 
@@ -160,7 +161,7 @@ func BenchmarkMix(b *testing.B) {
 			s1.Write(samples)
 			s2.Write(samples)
 			b.StartTimer()
-			s.mix(pcmBufferSize)
+			s.mixTanh(pcmBufferSize)
 		}
 	})
 
@@ -187,7 +188,7 @@ func BenchmarkMix(b *testing.B) {
 			s3.Write(samples)
 			s4.Write(samples)
 			b.StartTimer()
-			s.mix(pcmBufferSize)
+			s.mixTanh(pcmBufferSize)
 		}
 	})
 
@@ -238,10 +239,52 @@ func BenchmarkMix(b *testing.B) {
 			s.mixIdiomatic(pcmBufferSize)
 		}
 	})
+}
 
+// mixTanh is a legacy scalar mixing pcm mixing algorithm that has since been replaced
+// by simd implementations that use approximations for improved speed. This func, now
+// used a control for testing the newer variants, uses math.Tanh to soft-saturate
+// the mixed PCM.
+func (s *streams) mixTanh(numSamples int) {
+	full, numFull, done := s.preMix(numSamples)
+	if done {
+		return
+	}
+
+	// avoid bounds checks
+	_ = full[numFull-1] //nolint:gosec // G602: checked in streams.add
+
+	// sum the samples across all pcm streams. Uses pointer arithmetic
+	// to access each element to avoid bounds checks.
+	const int16Size = unsafe.Sizeof(int16(0))
+	for i := range numSamples {
+		var sum int32
+		offset := uintptr(i) * int16Size
+		for j := range numFull {
+			sample := (*int16)(unsafe.Add(full[j], offset))
+			sum += int32(*(sample))
+		}
+		s.mixed[i] = softSaturateTanh(sum, math.MaxInt16)
+	}
+
+	// ensure these are cleaned up
+	for i := range numFull {
+		full[i] = nil
+	}
+}
+
+// softSaturateTanh takes a sum of multiple int16s and returns
+// a value saturated to threshold using tanh. Used to mix
+// PCM samples and prevent hard clipping.
+func softSaturateTanh(sum int32, threshold float64) int16 {
+	x := math.Tanh(float64(sum)/threshold) * threshold
+	return clampInt16(x)
 }
 
 func (s *streams) mixIdiomatic(numSamples int) {
+	// ensure previous mixed pcm is erased
+	clear(s.mixed[:])
+
 	// get pointers to bufs with at least [numSamples] samples
 	full, numFull := [MaxStreams]*[pcmBufferSize]int16{}, 0
 	for _, rb := range s.data {
@@ -252,8 +295,6 @@ func (s *streams) mixIdiomatic(numSamples int) {
 		}
 	}
 
-	// ensure previous mixed pcm is erased
-	clear(s.mixed[:])
 	if numFull == 0 || len(s.data) == 0 {
 		return
 	}
@@ -274,7 +315,7 @@ func (s *streams) mixIdiomatic(numSamples int) {
 		for j := range numFull {
 			sum += int32(full[j][i])
 		}
-		s.mixed[i] = softSaturate(sum, math.MaxInt16)
+		s.mixed[i] = softSaturateTanh(sum, math.MaxInt16)
 	}
 
 	// ensure these are cleaned up
@@ -284,7 +325,7 @@ func (s *streams) mixIdiomatic(numSamples int) {
 }
 
 // TestSoftSaturate_PadeVsTanh compares softSaturate (real tanh) against
-// softSaturatePade (Padé approximant) across the realistic range of
+// softSaturate (Padé approximant) across the realistic range of
 // summed PCM samples (2-5 int16s), using the fixed threshold math.MaxInt16.
 func TestSoftSaturate_PadeVsTanh(t *testing.T) {
 	const threshold = math.MaxInt16
@@ -305,8 +346,8 @@ func TestSoftSaturate_PadeVsTanh(t *testing.T) {
 	step := int32(7) // coprime-ish odd step to hit varied values
 
 	for sum := int32(-maxSum); sum <= maxSum; sum += step {
-		tanh := softSaturate(sum, threshold)
-		pade := softSaturatePade(sum, threshold)
+		tanh := softSaturateTanh(sum, threshold)
+		pade := softSaturate(sum, threshold)
 
 		diff := int32(tanh) - int32(pade)
 		if diff < 0 {
@@ -381,8 +422,8 @@ func TestSoftSaturate_PadeVsTanh_Table(t *testing.T) {
 
 	for _, sum := range sums {
 		t.Run(fmt.Sprintf("sum=%d", sum), func(t *testing.T) {
-			tanh := softSaturate(sum, threshold)
-			pade := softSaturatePade(sum, threshold)
+			tanh := softSaturateTanh(sum, threshold)
+			pade := softSaturate(sum, threshold)
 			diff := int32(tanh) - int32(pade)
 			t.Logf("tanh=%d pade=%d diff=%d", tanh, pade, diff)
 		})

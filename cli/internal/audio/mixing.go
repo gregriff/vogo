@@ -5,15 +5,21 @@ import (
 	"unsafe"
 )
 
-// mix takes all [s.bufs] that have at least [numSamples] samples and mixes their pcm data, writing the result to
-// [s.mixed]. It must be run within a mutex lock. If [full] is empty due to network conditions,
-// or [s.bufs] is empty due to none being added, the caller can still write [s.mixed]
-// to the speaker because it is zeroed, and the speaker will play silence.
-// Assumes numSamples <= cap(s.mixed) and len(s.bufs) <= maxStreams.
-func (s *streams) mix(numSamples int) {
-	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
+// preMix is the first step of the mixing routine. It returns an array where
+// each element points to a pcm buffer that contains at least numSamples samples.
+// If zero or only one have enough samples, it stops the mixing routine, because
+// there is none to do. preMix is also responsible for zeroing the mixing sink,
+// since miniaudio has been configured to not do it itself.
+func (s *streams) preMix(numSamples int) ([MaxStreams]unsafe.Pointer, int, bool) {
+	full, numFull, done := [MaxStreams]unsafe.Pointer{}, 0, false
 
+	// ensure previous mixed pcm is erased
+	// TODO: is this even needed? Just clear the tail?
+	clear(s.mixed[:])
+
+	// get pointers to bufs with at least [numSamples] samples
+	// TODO: research if you could have simd kernel read straight from RB to avoid these copies
+	// to the temp arrays, and full could point to the rb itself at the right read index.
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
 			// copy the full pcm buf so we can vectorize access easily.
@@ -25,66 +31,30 @@ func (s *streams) mix(numSamples int) {
 		}
 	}
 
-	// ensure previous mixed pcm is erased
-	clear(s.mixed[:])
 	if numFull == 0 || len(s.data) == 0 {
-		return
+		done = true
+		return full, numFull, done
 	}
 
 	// if only one other person in the room, don't mix, just write their pcm
 	if numFull == 1 {
 		copy(s.mixed[:], s.writeBufs[0][:numSamples])
 		full[0] = nil
-		return
+		done = true
 	}
-
-	// avoid bounds checks
-	_ = full[numFull-1] //nolint:gosec // G602: checked in streams.add
-
-	// sum the samples across all pcm streams. Uses pointer arithmetic
-	// to access each element to avoid bounds checks.
-	const int16Size = unsafe.Sizeof(int16(0))
-	for i := range numSamples {
-		var sum int32
-		offset := uintptr(i) * int16Size
-		for j := range numFull {
-			sample := (*int16)(unsafe.Add(full[j], offset))
-			sum += int32(*(sample))
-		}
-		s.mixed[i] = softSaturate(sum, math.MaxInt16)
-	}
-
-	// ensure these are cleaned up
-	for i := range numFull {
-		full[i] = nil
-	}
+	return full, numFull, done
 }
 
-func (s *streams) mixPade(numSamples int) {
-	// get pointers to bufs with at least [numSamples] samples
-	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
-
-	for _, rb := range s.data {
-		if rb.Len() >= numSamples {
-			// copy the full pcm buf so we can vectorize access easily.
-			_ = rb.Read(s.writeBufs[numFull][:])
-
-			// since we're in the lock and ensured length, we can use unsafe access.
-			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
-			numFull++
-		}
-	}
-
-	// ensure previous mixed pcm is erased
-	clear(s.mixed[:])
-	if numFull == 0 || len(s.data) == 0 {
-		return
-	}
-
-	// if only one other person in the room, don't mix, just write their pcm
-	if numFull == 1 {
-		copy(s.mixed[:], s.writeBufs[0][:numSamples])
-		full[0] = nil
+// mix takes all [s.bufs] that have at least [numSamples] samples and mixes their pcm data
+// using a Pade tanh approximant, writing the result to [s.mixed]. It must be run within
+// a mutex lock. If [full] is empty due to network conditions, or [s.bufs] is empty due
+// to none being added, the caller can still write [s.mixed] to the speaker because it
+// is zeroed, and the speaker will play silence. Assumes numSamples <= cap(s.mixed)
+// and len(s.bufs) <= maxStreams. This function is the reference spec for Pade mixing
+// functions and is not used outside of testing due to faster SIMD variants.
+func (s *streams) mix(numSamples int) {
+	full, numFull, done := s.preMix(numSamples)
+	if done {
 		return
 	}
 
@@ -102,7 +72,7 @@ func (s *streams) mixPade(numSamples int) {
 			sample = (*int16)(unsafe.Add(full[j], offset))
 			sum += int32(*(sample))
 		}
-		s.mixed[i] = softSaturatePade(sum, math.MaxInt16)
+		s.mixed[i] = softSaturate(sum, math.MaxInt16)
 	}
 
 	// ensure these are cleaned up
@@ -111,18 +81,10 @@ func (s *streams) mixPade(numSamples int) {
 	}
 }
 
-// softSaturate takes a sum of multiple int16s and returns
-// a value saturated to threshold using tanh. Used to mix
-// PCM samples and prevent hard clipping.
-func softSaturate(sum int32, threshold float64) int16 {
-	x := math.Tanh(float64(sum)/threshold) * threshold
-	return clampInt16(x)
-}
-
-// softSaturatePade takes the sum of multiple int16s and returns
+// softSaturate takes the sum of multiple int16s and returns
 // a value saturated to threshold using a Padé tanh approximant.
 // Used to mix PCM samples and prevent hard clipping.
-func softSaturatePade(sum int32, threshold float32) int16 {
+func softSaturate(sum int32, threshold float32) int16 {
 	x := padeTanhScalar(float32(sum)/threshold) * threshold
 	return clampInt16(x)
 }

@@ -198,7 +198,7 @@ func (c *Channel) DataProc() malgo.DataProc {
 		mix = c.streams.mixNEON
 	} else {
 		log.Println("using scalar")
-		mix = c.streams.mixPade
+		mix = c.streams.mix
 	}
 
 	// read into output sample buf, for output to speaker device.
