@@ -102,23 +102,30 @@ func (s *streams) doMixAVX2(
 
 		for j := range numFull {
 			p := (*[w16]int16)(unsafe.Add(full[j], offset))
+			p2 := (*[w16]int16)(unsafe.Add(full[j], offset2))
 			v := archsimd.LoadInt16x16Array(p)
+			v2 := archsimd.LoadInt16x16Array(p2)
+
 			accLo = accLo.Add(v.GetLo().ExtendToInt32())
 			accHi = accHi.Add(v.GetHi().ExtendToInt32())
-
-			p2 := (*[w16]int16)(unsafe.Add(full[j], offset2))
-			v2 := archsimd.LoadInt16x16Array(p2)
 			accLo2 = accLo2.Add(v2.GetLo().ExtendToInt32())
 			accHi2 = accHi2.Add(v2.GetHi().ExtendToInt32())
 		}
 
-		satLo := softSaturateAVX2(accLo, vThreshold)
-		satHi := softSaturateAVX2(accHi, vThreshold)
+		// double pump soft saturate and do the saturation in there
+		scaledLo := softSaturateAVX2(accLo, vThreshold)
+		scaledHi := softSaturateAVX2(accHi, vThreshold)
+		satLo := scaledLo.ConvertToInt32().SaturateToInt16()
+		satHi := scaledHi.ConvertToInt32().SaturateToInt16()
 		satLo.StoreArray((*[w32]int16)(s.mixed[i:]))
 		satHi.StoreArray((*[w32]int16)(s.mixed[i+8:]))
 
-		satLo2 := softSaturateAVX2(accLo2, vThreshold)
-		satHi2 := softSaturateAVX2(accHi2, vThreshold)
+		// satLo2 := softSaturateAVX2(accLo2, vThreshold)
+		// satHi2 := softSaturateAVX2(accHi2, vThreshold)
+		scaledLo2 := softSaturateAVX2(accLo2, vThreshold)
+		scaledHi2 := softSaturateAVX2(accHi2, vThreshold)
+		satLo2 := scaledLo2.ConvertToInt32().SaturateToInt16()
+		satHi2 := scaledHi2.ConvertToInt32().SaturateToInt16()
 		satLo2.StoreArray((*[w32]int16)(s.mixed[i+16:]))
 		satHi2.StoreArray((*[w32]int16)(s.mixed[i+24:]))
 	}
@@ -144,7 +151,7 @@ func softSaturateAVX512(acc archsimd.Int32x16, threshold archsimd.Float32x16) ar
 // softSaturateAVX2 is a SIMD version of softSaturate.
 //
 // CPU Feature: AVX2
-func softSaturateAVX2(acc archsimd.Int32x8, threshold archsimd.Float32x8) archsimd.Int16x8 {
+func softSaturateAVX2(acc archsimd.Int32x8, threshold archsimd.Float32x8) archsimd.Float32x8 {
 	f := acc.ConvertToFloat32()
 
 	// todo: could approx this with a precomputed reciprocal
@@ -152,9 +159,7 @@ func softSaturateAVX2(acc archsimd.Int32x8, threshold archsimd.Float32x8) archsi
 	approx := padeTanhAVX2(v)
 
 	// scale back to int16 range and saturate
-	scaled := approx.Mul(threshold)
-	ints := scaled.ConvertToInt32()
-	return ints.SaturateToInt16()
+	return approx.Mul(threshold)
 }
 
 // padeTanhAVX512 is a simd version of `padeTanhScalar`
