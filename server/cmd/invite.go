@@ -7,7 +7,6 @@ import (
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/server/internal/db"
 	"github.com/spf13/cobra"
-	// _ "net/http/pprof".
 )
 
 // inviteCmd represents the invite command.

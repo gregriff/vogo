@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	// _ "net/http/pprof".
 	"github.com/gregriff/vogo/shared/validation"
 )
 

@@ -181,7 +181,7 @@ answer: build
 # using VOGOENV, join the channel created by `make channel`.
 join: announce build
 	@echo "joining $(USER_ONE)/$(CHANNEL_NAME)..."
-	$(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH) --pprof=localhost:6060
+	$(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH) --pprof=localhost:6080
 
 PPROF_DIR = ../.pprof/vogo
 PROFILE_DIR ?= ${PPROF_DIR}/$(shell date +"%m-%d_%H:%M")
@@ -190,16 +190,25 @@ PPROF_PORT ?= 6061
 
 pprof-cpu:
 	mkdir -p $(PROFILE_DIR)
-	go tool pprof -proto http://localhost:6060/debug/pprof/profile\?seconds\=$(PPROF_SECONDS) > $(PROFILE_DIR)/cpu.prof
+	go tool pprof -proto http://localhost:6080/debug/pprof/profile\?seconds\=$(PPROF_SECONDS) > $(PROFILE_DIR)/cpu.prof
 
 pprof-heap:
 	mkdir -p $(PROFILE_DIR)
-	go tool pprof -proto http://localhost:6060/debug/pprof/heap?gc=1 > $(PROFILE_DIR)/heap.prof
+	go tool pprof -proto http://localhost:6080/debug/pprof/heap?gc=1 > $(PROFILE_DIR)/heap.prof
+
+pprof-trace:
+	mkdir -p $(PROFILE_DIR)
+	curl -s "http://localhost:6080/debug/pprof/trace?seconds=10" -o $(PROFILE_DIR)/trace.out
+	go tool trace $(PROFILE_DIR)/trace.out
+	# go tool pprof -proto http://localhost:6080/debug/pprof/trace?seconds=10 > $(PROFILE_DIR)/trace.out
 
 # Opens an existing pprof file in the web browser
 pprof-view:
 	@echo "Viewing \$PPROF_FILE: $${PPROF_FILE:?PPROF_FILE is not set}"
 	go tool pprof -http=:$(PPROF_PORT) $${PPROF_FILE}
+
+trace-view:
+
 
 
 .PHONY: format lint build install answer join call invite friends channel status register test escape

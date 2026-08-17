@@ -5,7 +5,6 @@ import (
 	"github.com/gregriff/vogo/server/internal/logging"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	// _ "net/http/pprof".
 )
 
 // runCmd represents the run command.

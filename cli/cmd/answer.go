@@ -13,7 +13,6 @@ import (
 	"github.com/gregriff/vogo/cli/internal/netw"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	// _ "net/http/pprof".
 )
 
 var answerCmd = &cobra.Command{
