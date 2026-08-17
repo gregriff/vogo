@@ -20,6 +20,9 @@ func (s *streams) preMix(numSamples int) ([MaxStreams]unsafe.Pointer, int, bool)
 	// get pointers to bufs with at least [numSamples] samples
 	// TODO: research if you could have simd kernel read straight from RB to avoid these copies
 	// to the temp arrays, and full could point to the rb itself at the right read index.
+	// Also s.data could be a []*ringbuffer. but if you do that you need to write tests to ensure that
+	// removing/replacing one of them (someone leaves/joins a call) works properly. would need to add a
+	// uuid field to ringbuffer struct, and remove/replaceRB() methods to streams.
 	for _, rb := range s.data {
 		if rb.Len() >= numSamples {
 			// copy the full pcm buf so we can vectorize access easily.
@@ -31,13 +34,12 @@ func (s *streams) preMix(numSamples int) ([MaxStreams]unsafe.Pointer, int, bool)
 		}
 	}
 
-	if numFull == 0 || len(s.data) == 0 {
+	switch numFull {
+	case 0:
 		done = true
 		return full, numFull, done
-	}
-
-	// if only one other person in the room, don't mix, just write their pcm
-	if numFull == 1 {
+	case 1:
+		// if only one other person in the room, don't mix, just write their pcm
 		copy(s.mixed[:], s.writeBufs[0][:numSamples])
 		full[0] = nil
 		done = true

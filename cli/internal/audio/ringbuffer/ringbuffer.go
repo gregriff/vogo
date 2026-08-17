@@ -77,6 +77,11 @@ func (r *RingBuffer) Read(dst []int16) int {
 	}
 
 	r.head = (r.head + n) % r.size
+	// r.head += n
+	// if r.head >= r.size {
+	// 	r.head -= r.size
+	// }
+
 	r.count -= n
 	return n
 }

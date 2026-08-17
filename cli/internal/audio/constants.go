@@ -51,4 +51,7 @@ const (
 	// clamp inputs to +/- 3. Note: it exceeds 1.0 at x=2.32.
 	padeMaxInput = 3.
 	padeMinInput = -3.
+
+	padeConst = 15.
+	padeCoeff = 6.
 )
