@@ -113,19 +113,18 @@ func (s *streams) doMixAVX2(
 		}
 
 		// double pump soft saturate and do the saturation in there
-		scaledLo := softSaturateAVX2(accLo, vThreshold)
-		scaledHi := softSaturateAVX2(accHi, vThreshold)
+		scaledLo := padeNormalizeAVX2(accLo, vThreshold)
+		scaledHi := padeNormalizeAVX2(accHi, vThreshold)
 		satLo := scaledLo.ConvertToInt32().SaturateToInt16()
 		satHi := scaledHi.ConvertToInt32().SaturateToInt16()
-		satLo.StoreArray((*[w32]int16)(s.mixed[i:]))
-		satHi.StoreArray((*[w32]int16)(s.mixed[i+8:]))
 
-		// satLo2 := softSaturateAVX2(accLo2, vThreshold)
-		// satHi2 := softSaturateAVX2(accHi2, vThreshold)
-		scaledLo2 := softSaturateAVX2(accLo2, vThreshold)
-		scaledHi2 := softSaturateAVX2(accHi2, vThreshold)
+		scaledLo2 := padeNormalizeAVX2(accLo2, vThreshold)
+		scaledHi2 := padeNormalizeAVX2(accHi2, vThreshold)
 		satLo2 := scaledLo2.ConvertToInt32().SaturateToInt16()
 		satHi2 := scaledHi2.ConvertToInt32().SaturateToInt16()
+
+		satLo.StoreArray((*[w32]int16)(s.mixed[i:]))
+		satHi.StoreArray((*[w32]int16)(s.mixed[i+8:]))
 		satLo2.StoreArray((*[w32]int16)(s.mixed[i+16:]))
 		satHi2.StoreArray((*[w32]int16)(s.mixed[i+24:]))
 	}
@@ -148,17 +147,17 @@ func softSaturateAVX512(acc archsimd.Int32x16, threshold archsimd.Float32x16) ar
 	return ints.SaturateToInt16()
 }
 
-// softSaturateAVX2 is a SIMD version of softSaturate.
+// padeNormalizeAVX2 normalizes x to threshold using a Pade approximation of tanh.
 //
 // CPU Feature: AVX2
-func softSaturateAVX2(acc archsimd.Int32x8, threshold archsimd.Float32x8) archsimd.Float32x8 {
-	f := acc.ConvertToFloat32()
+func padeNormalizeAVX2(x archsimd.Int32x8, threshold archsimd.Float32x8) archsimd.Float32x8 {
+	f := x.ConvertToFloat32()
 
 	// todo: could approx this with a precomputed reciprocal
 	v := f.Div(threshold)
 	approx := padeTanhAVX2(v)
 
-	// scale back to int16 range and saturate
+	// scale back to int16 range
 	return approx.Mul(threshold)
 }
 
@@ -175,16 +174,6 @@ func padeTanhAVX512(x archsimd.Float32x16) archsimd.Float32x16 {
 
 	denom := x2.MulAdd(archsimd.BroadcastFloat32x16(6.), vConst)
 	numer := x2.MulAdd(x, x.Mul(vConst)) // x^3 + 15x
-	// numer := x2.Add(vConst)
-	// numer = numer.Mul(x) // maybe do this after denom?
-	//
-	// can try reciprocal approximation + one Newton-Raphson step instead of division
-	// r0 := denom.Reciprocal()
-	// t := denom.Mul(r0)
-	// t = archsimd.BroadcastFloat32x16(2.).Sub(t) // (2 - denom*r0)
-	// r1 := r0.Mul(t)                             //  refined reciprocal
-	// y := numer.Mul(r1)
-	// return y
 
 	// clamping to [-1,1] is not needed here because the caller will
 	// always convert to int16 with signed saturation
@@ -204,14 +193,6 @@ func padeTanhAVX2(x archsimd.Float32x8) archsimd.Float32x8 {
 
 	denom := x2.MulAdd(archsimd.BroadcastFloat32x8(6.), vConst)
 	numer := x2.MulAdd(x, x.Mul(vConst)) // x^3 + 15x
-	// numer := x2.Add(vConst)
-	// numer = numer.Mul(x)
-	//
-	// r0 := denom.Reciprocal()
-	// t := denom.Mul(r0)
-	// t = archsimd.BroadcastFloat32x8(2.).Sub(t) // (2 - denom*r0)
-	// r1 := r0.Mul(t)                            //  refined reciprocal
-	// return numer.Mul(r1)
 
 	// clamping to [-1,1] is not needed here because the caller will
 	// always convert to int16 with signed saturation
