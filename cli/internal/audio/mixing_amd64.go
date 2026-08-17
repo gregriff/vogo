@@ -72,6 +72,7 @@ func (s *streams) doMixAVX512(
 
 		satLo := softSaturateAVX512(accLo, vThreshold)
 		satHi := softSaturateAVX512(accHi, vThreshold)
+
 		satLo.StoreArray((*[w32]int16)(s.mixed[i:]))
 		satHi.StoreArray((*[w32]int16)(s.mixed[i+16:]))
 	}
@@ -85,7 +86,7 @@ func (s *streams) doMixAVX2(
 ) int {
 	const w32 = 8 // AVX2 int32 width
 	const w16 = w32 * 2
-	const increment = w16 * 2
+	const increment = w16 * 2 // unroll factor of 2
 	vThreshold := archsimd.BroadcastFloat32x8(math.MaxInt16)
 
 	// avoid bounds checks
@@ -112,16 +113,10 @@ func (s *streams) doMixAVX2(
 			accHi2 = accHi2.Add(v2.GetHi().ExtendToInt32())
 		}
 
-		// double pump soft saturate and do the saturation in there
-		scaledLo := padeNormalizeAVX2(accLo, vThreshold)
-		scaledHi := padeNormalizeAVX2(accHi, vThreshold)
-		satLo := scaledLo.ConvertToInt32().SaturateToInt16()
-		satHi := scaledHi.ConvertToInt32().SaturateToInt16()
-
-		scaledLo2 := padeNormalizeAVX2(accLo2, vThreshold)
-		scaledHi2 := padeNormalizeAVX2(accHi2, vThreshold)
-		satLo2 := scaledLo2.ConvertToInt32().SaturateToInt16()
-		satHi2 := scaledHi2.ConvertToInt32().SaturateToInt16()
+		satLo := softSaturateAVX2(accLo, vThreshold)
+		satHi := softSaturateAVX2(accHi, vThreshold)
+		satLo2 := softSaturateAVX2(accLo2, vThreshold)
+		satHi2 := softSaturateAVX2(accHi2, vThreshold)
 
 		satLo.StoreArray((*[w32]int16)(s.mixed[i:]))
 		satHi.StoreArray((*[w32]int16)(s.mixed[i+8:]))
@@ -135,30 +130,24 @@ func (s *streams) doMixAVX2(
 //
 // CPU Feature: AVX512
 func softSaturateAVX512(acc archsimd.Int32x16, threshold archsimd.Float32x16) archsimd.Int16x16 {
-	f := acc.ConvertToFloat32()
-
-	// todo: could approx this with a precomputed reciprocal
-	v := f.Div(threshold)
-	approx := padeTanhAVX512(v)
+	x := acc.ConvertToFloat32().Div(threshold)
+	approx := padeTanhAVX512(x)
 
 	// scale back to int16 range and saturate
 	scaled := approx.Mul(threshold)
-	ints := scaled.ConvertToInt32()
-	return ints.SaturateToInt16()
+	return scaled.ConvertToInt32().SaturateToInt16()
 }
 
-// padeNormalizeAVX2 normalizes x to threshold using a Pade approximation of tanh.
+// softSaturateAVX2 is a SIMD version of softSaturate.
 //
 // CPU Feature: AVX2
-func padeNormalizeAVX2(x archsimd.Int32x8, threshold archsimd.Float32x8) archsimd.Float32x8 {
-	f := x.ConvertToFloat32()
+func softSaturateAVX2(acc archsimd.Int32x8, threshold archsimd.Float32x8) archsimd.Int16x8 {
+	x := acc.ConvertToFloat32().Div(threshold)
+	approx := padeTanhAVX2(x)
 
-	// todo: could approx this with a precomputed reciprocal
-	v := f.Div(threshold)
-	approx := padeTanhAVX2(v)
-
-	// scale back to int16 range
-	return approx.Mul(threshold)
+	// scale back to int16 range and saturate
+	scaled := approx.Mul(threshold)
+	return scaled.ConvertToInt32().SaturateToInt16()
 }
 
 // padeTanhAVX512 is a simd version of `padeTanhScalar`
@@ -170,9 +159,9 @@ func padeTanhAVX512(x archsimd.Float32x16) archsimd.Float32x16 {
 	x = x.Min(archsimd.BroadcastFloat32x16(padeMaxInput))
 	x2 := x.Mul(x)
 
-	vConst := archsimd.BroadcastFloat32x16(15.)
+	vConst := archsimd.BroadcastFloat32x16(padeConst)
 
-	denom := x2.MulAdd(archsimd.BroadcastFloat32x16(6.), vConst)
+	denom := x2.MulAdd(archsimd.BroadcastFloat32x16(padeCoeff), vConst)
 	numer := x2.MulAdd(x, x.Mul(vConst)) // x^3 + 15x
 
 	// clamping to [-1,1] is not needed here because the caller will
@@ -189,9 +178,9 @@ func padeTanhAVX2(x archsimd.Float32x8) archsimd.Float32x8 {
 	x = x.Min(archsimd.BroadcastFloat32x8(padeMaxInput))
 	x2 := x.Mul(x)
 
-	vConst := archsimd.BroadcastFloat32x8(15.)
+	vConst := archsimd.BroadcastFloat32x8(padeConst)
 
-	denom := x2.MulAdd(archsimd.BroadcastFloat32x8(6.), vConst)
+	denom := x2.MulAdd(archsimd.BroadcastFloat32x8(padeCoeff), vConst)
 	numer := x2.MulAdd(x, x.Mul(vConst)) // x^3 + 15x
 
 	// clamping to [-1,1] is not needed here because the caller will
