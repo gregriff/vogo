@@ -3,7 +3,7 @@ module github.com/gregriff/vogo/cli
 go 1.27rc2
 
 require (
-	github.com/gen2brain/malgo v0.11.24
+	github.com/gen2brain/malgo v0.11.25
 	github.com/google/uuid v1.6.0
 	github.com/gregriff/vogo/shared v0.0.0
 	github.com/hraban/opus v0.0.0-20260708213942-bde8e4304501

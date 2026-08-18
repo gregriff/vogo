@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/viper"
 
 	_ "net/http/pprof"
+	// only works on amd64 linux. add to enable cgo tracebacks in pprof
+	// _ "github.com/ianlancetaylor/cgosymbolizer"
 )
 
 var ConfigFile string
