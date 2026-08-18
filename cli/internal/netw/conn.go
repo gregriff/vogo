@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -148,6 +150,9 @@ func (c *Connection) CreateAnswer(offer *webrtc.SessionDescription) error {
 // which must be explicitally called somewhere.
 func (c *Connection) CollectReceiverReports() error {
 	buf := make([]byte, wrtc.RecvMTU)
+	sb := strings.Builder{}
+	sb.Grow(70)
+
 	for {
 		packets, _, err := wrtc.ReadSenderRTCP(c.sender, buf)
 		if err != nil {
@@ -164,12 +169,19 @@ func (c *Connection) CollectReceiverReports() error {
 				for _, block := range report.Reports {
 					rtt := wrtc.CalculateRTT(&block)
 					lossPercent := float64(block.FractionLost) / 256.0 * 100
-					log.Printf("RR -- SSRC: %d | Loss: %.1f%% | Jitter: %.2f ms | RTT: %v",
-						block.SSRC,
-						lossPercent,
-						wrtc.JitterToMs(block.Jitter),
-						rtt,
-					)
+					jitterMs := wrtc.JitterToMs(block.Jitter)
+
+					sb.WriteString("RR -- SSRC: ")
+					sb.WriteString(strconv.FormatUint(uint64(block.SSRC), 10))
+					sb.WriteString(" | Loss: ")
+					sb.WriteString(strconv.FormatFloat(lossPercent, 'f', 1, 64))
+					sb.WriteString("% | Jitter: ")
+					sb.WriteString(strconv.FormatFloat(jitterMs, 'f', 2, 64))
+					sb.WriteString(" ms | RTT: ")
+					sb.WriteString(strconv.FormatInt(rtt.Milliseconds(), 10))
+					sb.WriteString(" ms")
+					log.Print(sb.String())
+					sb.Reset()
 				}
 			default:
 				log.Printf("Got RTCP packet: %T", pkt)

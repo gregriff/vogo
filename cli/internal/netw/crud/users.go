@@ -49,7 +49,7 @@ func Register(ctx context.Context, client *http.Client, username, password, invi
 
 // Status fetches friends, channels, and incoming calls.
 func Status(ctx context.Context, client *http.Client) (status *responses.Status, err error) {
-	req, err := http.NewRequestWithContext(ctx, "post", "/status", nil)
+	req, err := http.NewRequestWithContext(ctx, "get", "/status", nil)
 	if err != nil {
 		err = fmt.Errorf("error creating request: %w", err)
 		return

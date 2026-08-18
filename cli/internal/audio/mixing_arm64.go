@@ -50,60 +50,45 @@ func (s *streams) mixNEON(numSamples int) {
 		offset3 := uintptr(i+16) * int16Size
 		offset4 := uintptr(i+24) * int16Size
 
-		// for each pcm array, grab 24 samples and add to the accumulators.
+		// for each pcm array, grab 32 samples and add to the accumulators.
 		for j := range numFull {
-			p := (*[w16]int16)(unsafe.Add(full[j], offset))
-			v := archsimd.LoadInt16x8Array(p)
-			accLo = accLo.Add(v.ExtendLo4ToInt32())
-			accHi = accHi.Add(v.HiToLo().ExtendLo4ToInt32())
-
-			p2 := (*[w16]int16)(unsafe.Add(full[j], offset2))
-			v2 := archsimd.LoadInt16x8Array(p2)
-			accLo2 = accLo2.Add(v2.ExtendLo4ToInt32())
-			accHi2 = accHi2.Add(v2.HiToLo().ExtendLo4ToInt32())
-
-			p3 := (*[w16]int16)(unsafe.Add(full[j], offset3))
-			v3 := archsimd.LoadInt16x8Array(p3)
-			accLo3 = accLo3.Add(v3.ExtendLo4ToInt32())
-			accHi3 = accHi3.Add(v3.HiToLo().ExtendLo4ToInt32())
-
-			p4 := (*[w16]int16)(unsafe.Add(full[j], offset4))
-			v4 := archsimd.LoadInt16x8Array(p4)
-			accLo4 = accLo4.Add(v4.ExtendLo4ToInt32())
-			accHi4 = accHi4.Add(v4.HiToLo().ExtendLo4ToInt32())
+			accLo, accHi = loadAndAccInt16x8(accLo, accHi, full[j], offset)
+			accLo2, accHi2 = loadAndAccInt16x8(accLo2, accHi2, full[j], offset2)
+			accLo3, accHi3 = loadAndAccInt16x8(accLo3, accHi3, full[j], offset3)
+			accLo4, accHi4 = loadAndAccInt16x8(accLo4, accHi4, full[j], offset4)
 		}
 
 		// After saturating, pack the two result vectors by
 		// reinterpreting as int64 and zipping.
 		// Ops are ordered as to improve ILP.
-		satHi := softSaturateNEON(accHi, vThreshold)
-		hi := satHi.ToBits().ReshapeToUint64s().BitsToInt64()
 		satLo := softSaturateNEON(accLo, vThreshold)
+		satHi := softSaturateNEON(accHi, vThreshold)
 		lo := satLo.ToBits().ReshapeToUint64s().BitsToInt64()
+		hi := satHi.ToBits().ReshapeToUint64s().BitsToInt64()
 		packed := lo.InterleaveLo(hi) // [lo, hi]
 		mixed := packed.ToBits().ReshapeToUint16s().BitsToInt16()
 		mixed.StoreArray((*[w16]int16)(s.mixed[i:]))
 
-		satHi2 := softSaturateNEON(accHi2, vThreshold)
-		hi2 := satHi2.ToBits().ReshapeToUint64s().BitsToInt64()
 		satLo2 := softSaturateNEON(accLo2, vThreshold)
+		satHi2 := softSaturateNEON(accHi2, vThreshold)
 		lo2 := satLo2.ToBits().ReshapeToUint64s().BitsToInt64()
+		hi2 := satHi2.ToBits().ReshapeToUint64s().BitsToInt64()
 		packed2 := lo2.InterleaveLo(hi2)
 		mixed2 := packed2.ToBits().ReshapeToUint16s().BitsToInt16()
 		mixed2.StoreArray((*[w16]int16)(s.mixed[i+8:]))
 
-		satHi3 := softSaturateNEON(accHi3, vThreshold)
-		hi3 := satHi3.ToBits().ReshapeToUint64s().BitsToInt64()
 		satLo3 := softSaturateNEON(accLo3, vThreshold)
+		satHi3 := softSaturateNEON(accHi3, vThreshold)
 		lo3 := satLo3.ToBits().ReshapeToUint64s().BitsToInt64()
+		hi3 := satHi3.ToBits().ReshapeToUint64s().BitsToInt64()
 		packed3 := lo3.InterleaveLo(hi3)
 		mixed3 := packed3.ToBits().ReshapeToUint16s().BitsToInt16()
 		mixed3.StoreArray((*[w16]int16)(s.mixed[i+16:]))
 
-		satHi4 := softSaturateNEON(accHi4, vThreshold)
-		hi4 := satHi4.ToBits().ReshapeToUint64s().BitsToInt64()
 		satLo4 := softSaturateNEON(accLo4, vThreshold)
+		satHi4 := softSaturateNEON(accHi4, vThreshold)
 		lo4 := satLo4.ToBits().ReshapeToUint64s().BitsToInt64()
+		hi4 := satHi4.ToBits().ReshapeToUint64s().BitsToInt64()
 		packed4 := lo4.InterleaveLo(hi4)
 		mixed4 := packed4.ToBits().ReshapeToUint16s().BitsToInt16()
 		mixed4.StoreArray((*[w16]int16)(s.mixed[i+24:]))
@@ -124,6 +109,22 @@ func (s *streams) mixNEON(numSamples int) {
 	for i := range numFull {
 		full[i] = nil
 	}
+}
+
+// loadAndAccInt16x8 loads 8 int16s using ptr and offset and adds
+// them to two accumulator vectors.
+//
+// CPU Feature: NEON
+func loadAndAccInt16x8(
+	lo, hi archsimd.Int32x4,
+	ptr unsafe.Pointer,
+	offset uintptr,
+) (archsimd.Int32x4, archsimd.Int32x4) {
+	p := (*[8]int16)(unsafe.Add(ptr, offset))
+	v := archsimd.LoadInt16x8Array(p)
+	lo = lo.Add(v.ExtendLo4ToInt32())
+	hi = hi.Add(v.HiToLo().ExtendLo4ToInt32())
+	return lo, hi
 }
 
 // softSaturateNEON is a SIMD version of softSaturate.

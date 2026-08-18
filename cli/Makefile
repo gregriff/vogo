@@ -185,8 +185,8 @@ join: announce build
 
 PPROF_DIR = ../.pprof/vogo
 PROFILE_DIR ?= ${PPROF_DIR}/$(shell date +"%m-%d_%H:%M")
-PPROF_SECONDS ?= 60
-PPROF_PORT ?= 6061
+PPROF_SECONDS ?= 30
+PPROF_PORT ?= 6040
 
 pprof-cpu:
 	mkdir -p $(PROFILE_DIR)
