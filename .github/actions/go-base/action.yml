@@ -11,4 +11,4 @@ runs:
         # go-version-file: <subrepo>/go.mod
         # cache: true
         # cache-dependency-path: <subrepo>/go.sum
-        go-version: '1.27rc2'
+        go-version: '1.27'
