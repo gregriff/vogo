@@ -20,7 +20,7 @@ var rootCmd = &cobra.Command{
 	Use:   "vogo-server",
 	Short: "Facilitates WebRTC signaling and persists call/channel state for Vogo clients",
 	Long:  ``,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+	PersistentPreRun: func(_ *cobra.Command, _ []string) {
 		if pprofAddr != "" {
 			log.Printf("starting pprof server at %s", pprofAddr)
 			go func() {

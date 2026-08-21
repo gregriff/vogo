@@ -210,7 +210,7 @@ func (cm *connectionMap) handleOfferMessage(ctx context.Context, msg wsock.Messa
 		log.Panicf("error encoding answer: %v", err)
 	}
 
-	aMsg := wsock.Message{Type: "answer", Data: bytes}
+	aMsg := wsock.Message{Type: wsock.Answer, Data: bytes}
 	if err := websocket.JSON.Send(cm.server.ws, aMsg); err != nil {
 		log.Printf("error sending answer: %v", err)
 		conn.Close()

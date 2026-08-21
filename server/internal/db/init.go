@@ -8,7 +8,7 @@ import (
 	"log"
 	"sync"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/jackc/pgx/v5/stdlib" // sql side effects
 )
 
 //go:embed schema.sql

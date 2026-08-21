@@ -132,11 +132,11 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 			}
 		case msg := <-msgChan:
 			switch msg.Type {
-			case "connected":
+			case wsock.Connected:
 				// when a client sends a 'connected' message, they close the WS immediately after.
 				logger.ROUTE.Info("call connected", "with", recipient.Name)
 				return
-			case "ice-offer":
+			case wsock.ICEOffer:
 				var data messages.Candidate
 				if err := json.Unmarshal(msg.Data, &data); err != nil {
 					logger.ROUTE.Error("unmarshalling ice-offer candidate", "err", err)
@@ -157,6 +157,10 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 				}
 				call.From.Candidates <- data.Candidate
 				logger.WRTC.Debug("caller candidate sent")
+			case wsock.Offer, wsock.Answer, wsock.ICEAnswer:
+				logger.ROUTE.Error("unexpected message", "type", msg.Type, "data", msg.Data)
+				_ = ws.WriteClose(http.StatusBadRequest)
+				return
 			}
 		}
 	}
@@ -273,11 +277,11 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 			}
 		case msg := <-msgChan:
 			switch msg.Type {
-			case "connected":
+			case wsock.Connected:
 				// when a client sends a 'connected' message, they close the WS immediately after.
 				logger.ROUTE.Info("call connected", "with", caller.Name)
 				return
-			case "ice-answer":
+			case wsock.ICEAnswer:
 				var data messages.Candidate
 				if err := json.Unmarshal(msg.Data, &data); err != nil {
 					logger.ROUTE.Error("unmarshalling ice-answer candidate", "err", err)
@@ -298,6 +302,10 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 				}
 				call.To.Candidates <- data.Candidate
 				logger.WRTC.Debug("answer candidate sent")
+			case wsock.Offer, wsock.Answer, wsock.ICEOffer:
+				logger.ROUTE.Error("unexpected message", "type", msg.Type, "data", msg.Data)
+				_ = ws.WriteClose(http.StatusBadRequest)
+				return
 			}
 		}
 	}
@@ -451,7 +459,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 						return
 					}
 
-					msg := wsock.Message{Type: "answer", Data: bytes}
+					msg := wsock.Message{Type: wsock.Answer, Data: bytes}
 					if err := websocket.JSON.Send(ws, msg); err != nil {
 						logger.ROUTE.Error("writing answer", "err", err)
 						return
@@ -468,7 +476,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 						return
 					}
 
-					msg := wsock.Message{Type: "ice-answer", Data: bytes}
+					msg := wsock.Message{Type: wsock.ICEAnswer, Data: bytes}
 					if err := websocket.JSON.Send(ws, msg); err != nil {
 						logger.ROUTE.Error("writing answer candidate", "err", err)
 						return
@@ -527,7 +535,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				return
 			}
 
-			msg := wsock.Message{Type: "offer", Data: bytes}
+			msg := wsock.Message{Type: wsock.Offer, Data: bytes}
 			if err := websocket.JSON.Send(ws, msg); err != nil {
 				logger.ROUTE.Error("sending new offer to existing user", "to", offer.To, "err", err)
 			}
@@ -538,7 +546,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			// event loop "msgHandlerWg". 'tick' will report the wg's counter (manually increment a top level int).
 			switch msg.Type {
 			// TODO: try to combine offer and answer handlers with additional property in messages.Candidate
-			case "ice-offer":
+			case wsock.ICEOffer:
 				var data messages.Candidate
 				if err := json.Unmarshal(msg.Data, &data); err != nil {
 					logger.ROUTE.Error("unmarshalling ice-offer candidate", "err", err)
@@ -558,7 +566,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					break
 				}
 				conn.From.Candidates <- data.Candidate
-			case "ice-answer":
+			case wsock.ICEAnswer:
 				var data messages.Candidate
 				if err := json.Unmarshal(msg.Data, &data); err != nil {
 					logger.ROUTE.Error("unmarshaling ice-answer candidate", "err", err)
@@ -585,7 +593,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				}
 				conn.To.Candidates <- data.Candidate
 			// this is when the client answers a new user's offer
-			case "answer":
+			case wsock.Answer:
 				var answer requests.ConnectionWithId
 				if err := json.Unmarshal(msg.Data, &answer); err != nil {
 					logger.ROUTE.Error("unmarshalling answer", "err", err)
@@ -637,7 +645,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 								return
 							}
 
-							msg := wsock.Message{Type: "ice-offer", Data: bytes}
+							msg := wsock.Message{Type: wsock.ICEOffer, Data: bytes}
 							if err := websocket.JSON.Send(ws, msg); err != nil {
 								logger.ROUTE.Error("writing caller candidate to answerer ws", "err", err)
 								return
@@ -650,8 +658,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 						}
 					}
 				})
-			default:
-				logger.ROUTE.Error("unknown message", "message", msg)
+			case wsock.Offer, wsock.Connected:
+				logger.ROUTE.Error("unexpected message", "type", msg.Type, "data", msg.Data)
 			}
 		}
 	}

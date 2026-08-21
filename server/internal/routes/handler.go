@@ -13,16 +13,16 @@ import (
 type routeLoggers struct {
 	// root is the parent logger for all other route loggers. If any new loggers
 	// need to be made during a request, they should use this as their parent.
-	root,
+	root *slog.Logger
 
 	// ROUTE is the standard logger for a route. Errors that end the request
 	// and logic information should be written here.
-	ROUTE,
+	ROUTE *slog.Logger
 
 	// STATE is the logger for events related to code in the state package.
 	// callMap, roomMap, and call/room-related state, pertaining to the
 	// data structures found in those files should be logged here.
-	STATE,
+	STATE *slog.Logger
 
 	// WRTC is the logger used for keeping track of webrtc state.
 	WRTC *slog.Logger
