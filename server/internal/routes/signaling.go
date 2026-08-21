@@ -464,7 +464,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 						logger.ROUTE.Error("writing answer", "err", err)
 						return
 					}
-					logger.WRTC.Debug("answer sent to self", "answer_from", req.To)
+					logger.WRTC.Debug("answer relayed", "from", req.To)
 				case answerCandidate, ok := <-conn.To.Candidates:
 					bytes, err := json.Marshal(messages.Candidate{
 						UserId:    recipientId,
@@ -481,7 +481,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 						logger.ROUTE.Error("writing answer candidate", "err", err)
 						return
 					}
-					logger.WRTC.Debug("recipient candidate read and sent to self", "recipient", req.To)
+					logger.WRTC.Debug("candidate relayed", "from", req.To)
 					// we've sent the caller the recipient's last candidate. nothing left to do
 					if !ok {
 						conn.To.Candidates = nil // unness
@@ -529,6 +529,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		case <-ctx.Done():
 			return
 		case offer := <-roomUser.Offers:
+			// when we get an offer from a new joiner, it must be relayed to self.
 			bytes, err := json.Marshal(offer)
 			if err != nil {
 				logger.ROUTE.Error("encoding candidate", "err", err)
@@ -537,9 +538,9 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 			msg := wsock.Message{Type: wsock.Offer, Data: bytes}
 			if err := websocket.JSON.Send(ws, msg); err != nil {
-				logger.ROUTE.Error("sending new offer to existing user", "to", offer.To, "err", err)
+				logger.ROUTE.Error("relaying new offer", "from", offer.From, "to", offer.To, "err", err)
 			}
-			logger.WRTC.Debug("offer received, written to answerer's ws", "offerer", offer.From)
+			logger.WRTC.Debug("offer relayed", "from", offer.From)
 		// NOTE: all funcs in this need to run async, since chan is unbuffered and blocks on sends
 		case msg := <-msgChan:
 			// TODO: put this switch into its own func. run it in its own goroutine. it should use a waitgroup defined before this
@@ -556,6 +557,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 				conn, err := roomUser.PendingConnections.Get(data.UserId)
 				if err != nil {
+					// this probably means signalling has completed. should be able to figure this out with sync primitives
 					logger.ROUTE.Error("unable to get conn in ice-offer handler", "conn-owner", data.Username)
 					_ = ws.WriteClose(http.StatusInternalServerError)
 					return

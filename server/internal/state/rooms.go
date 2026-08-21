@@ -23,7 +23,9 @@ type RoomUser struct {
 	// user first joins the channel and is connecting to the other users. It maps the recipient's uuid
 	// to their connection struct.
 	PendingConnections *connMap
-	Offers             chan requests.ConnectionWithId
+
+	// Offers is a channel that receives offers from users that join the room after RoomUser.
+	Offers chan requests.ConnectionWithId
 }
 
 // NewRoomUser creates a user struct for sending and receiving data to and from the room and its users.
