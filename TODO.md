@@ -40,8 +40,9 @@ DOUBLE CHECK ON HRABAN OPUS THAT YOU CAN REMOVE RUNTIME DEP ON LIBOPUS DYLIB
 ##### CI:
 
 ##### Windows:
-- help menu shows double back slashes for each dir step
 - get create-shortcut to run by double clicking it
+
+##### AMD64
 - test out ASAN/MSAN
 
 ##### Client:
@@ -83,4 +84,3 @@ DOUBLE CHECK ON HRABAN OPUS THAT YOU CAN REMOVE RUNTIME DEP ON LIBOPUS DYLIB
 
 ### PRs:
 - opus: OPUS_SET_SIGNAL binding on the encoder
-- opus: add decoder complexity binding to enable DNN features on opus 1.5

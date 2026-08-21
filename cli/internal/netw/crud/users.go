@@ -23,7 +23,7 @@ func Register(ctx context.Context, client *http.Client, username, password, invi
 		return "", fmt.Errorf("json marshal error: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "post", "/register", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", "/register", bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
@@ -49,7 +49,7 @@ func Register(ctx context.Context, client *http.Client, username, password, invi
 
 // Status fetches friends, channels, and incoming calls.
 func Status(ctx context.Context, client *http.Client) (status *responses.Status, err error) {
-	req, err := http.NewRequestWithContext(ctx, "get", "/status", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", "/status", nil)
 	if err != nil {
 		err = fmt.Errorf("error creating request: %w", err)
 		return
@@ -86,7 +86,7 @@ func AddFriend(ctx context.Context, client *http.Client, friendName string) (fri
 		return friend, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "post", "/friend", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", "/friend", bytes.NewReader(payload))
 	if err != nil {
 		err = fmt.Errorf("error creating request: %w", err)
 		return friend, err
@@ -123,7 +123,7 @@ func CreateChannel(ctx context.Context, client *http.Client, name, desc string, 
 		return channel, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "post", "/channel", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", "/channel", bytes.NewReader(payload))
 	if err != nil {
 		err = fmt.Errorf("error creating request: %w", err)
 		return channel, err
@@ -160,7 +160,7 @@ func InviteFriend(ctx context.Context, client *http.Client, channelName, friendN
 		return friend, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "post", "/channel/invite", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", "/channel/invite", bytes.NewReader(payload))
 	if err != nil {
 		err = fmt.Errorf("error creating request: %w", err)
 		return friend, err
