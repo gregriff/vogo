@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
+	"github.com/gregriff/vogo/cli/internal/audio/pcm"
 	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
@@ -184,7 +185,7 @@ func (cm *connectionMap) handleOfferMessage(ctx context.Context, msg wsock.Messa
 		conn.Close()
 		log.Printf("recreating connection to %s", offer.From)
 	}
-	if cm.Len() >= audio.MaxStreams {
+	if cm.Len() >= pcm.MaxStreams {
 		// TODO: send err on chan for UI to pick up.
 		log.Printf("could not accept offer from %s: already have max audio streams. num conns=%d", offer.From, cm.Len())
 		return

@@ -1,4 +1,4 @@
-package audio
+package pcm
 
 import (
 	"math"
@@ -7,14 +7,14 @@ import (
 )
 
 // stub for compilation on amd64
-func (s *streams) mixNEON(int) {
+func (s *Streams) mixNEON(int) {
 	panic("not implemented")
 }
 
 // mixAVX is a SIMD implementation of [s.mix].
 //
 // CPU Feature: AVX2
-func (s *streams) mixAVX(numSamples int, avx512 bool) {
+func (s *Streams) mixAVX(numSamples int, avx512 bool) {
 	full, numFull, done := s.preMix(numSamples)
 	if done {
 		return
@@ -45,7 +45,7 @@ func (s *streams) mixAVX(numSamples int, avx512 bool) {
 	}
 }
 
-func (s *streams) doMixAVX512(
+func (s *Streams) doMixAVX512(
 	i, numFull, count int,
 	int16Size uintptr,
 	full [MaxStreams]unsafe.Pointer,
@@ -79,7 +79,7 @@ func (s *streams) doMixAVX512(
 	return i
 }
 
-func (s *streams) doMixAVX2(
+func (s *Streams) doMixAVX2(
 	i, numFull, count int,
 	int16Size uintptr,
 	full [MaxStreams]unsafe.Pointer,

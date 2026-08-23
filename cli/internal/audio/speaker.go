@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	"github.com/gen2brain/malgo"
+	"github.com/gregriff/vogo/cli/internal/audio/pcm"
 )
 
 // speaker provides access to the client's speaker in order
@@ -51,12 +52,12 @@ func (s *speaker) Init(ctx context.Context, onSendFrames malgo.DataProc) error {
 	}()
 
 	config := malgo.DefaultDeviceConfig(malgo.Playback)
-	config.Playback.Format = AudioFormat
-	config.Playback.Channels = NumChannels
-	config.SampleRate = SampleRate
+	config.Playback.Format = pcm.AudioFormat
+	config.Playback.Channels = pcm.NumChannels
+	config.SampleRate = pcm.SampleRate
 	config.NoClip = 1
 	config.NoPreSilencedOutputBuffer = 1
-	config.PeriodSizeInMilliseconds = playbackPeriodMs
+	config.PeriodSizeInMilliseconds = pcm.PlaybackPeriodMs
 
 	device, err := malgo.InitDevice(s.ctx.Context, config, malgo.DeviceCallbacks{
 		Data: onSendFrames, // note: could also include a stop callback

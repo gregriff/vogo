@@ -5,7 +5,7 @@ package wrtc
 import (
 	"log"
 
-	"github.com/gregriff/vogo/cli/internal/audio"
+	"github.com/gregriff/vogo/cli/internal/audio/pcm"
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/stats"
 	"github.com/pion/webrtc/v4"
@@ -15,8 +15,8 @@ const RecvMTU = 1_200
 
 var opusCodec = webrtc.RTPCodecCapability{
 	MimeType:     webrtc.MimeTypeOpus,
-	ClockRate:    audio.SampleRate,
-	Channels:     audio.NumChannels,
+	ClockRate:    pcm.SampleRate,
+	Channels:     pcm.NumChannels,
 	SDPFmtpLine:  "", // "minptime=10",
 	RTCPFeedback: nil,
 }

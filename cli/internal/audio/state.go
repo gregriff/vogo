@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gen2brain/malgo"
-	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
+	"github.com/gregriff/vogo/cli/internal/audio/pcm"
 	"github.com/pion/interceptor"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
@@ -78,12 +78,12 @@ func (d *devices) Uninit() error {
 
 type Channel struct {
 	devices
-	streams streams
+	streams pcm.Streams
 }
 
 // NewChannel creates a new audio channel struct.
 func NewChannel(track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
-	return &Channel{newDevices(track, recvMTU), newStreams()}
+	return &Channel{newDevices(track, recvMTU), pcm.NewStreams()}
 }
 
 // AddPeer sets an event handler on pc that decodes incoming audio.
@@ -94,16 +94,16 @@ func NewChannel(track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
 func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 	// note: this callback should not panic
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
+		decoder, err := opus.NewDecoder(pcm.SampleRate, pcm.NumChannels)
 		if err != nil {
 			log.Panicf("decoder init error: %v", err)
 		}
 		decoder.SetComplexity(5) // TODO: what is its default?
+		trackID := track.StreamID()
 
 		packetBuf := make([]byte, c.recvMTU)
-		decodeBuf := make([]int16, pcmBufferSize)
-		pcm := ringbuffer.New(ringBufferSize)
-		if err = c.streams.add(track.StreamID(), &pcm); err != nil {
+		decodeBuf := make([]int16, pcm.BufferSize)
+		if err := c.streams.AddNew(trackID); err != nil {
 			log.Panicf("error adding stream: %v", err)
 		}
 
@@ -112,19 +112,13 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 			initialized bool
 		)
 
-		writePCM := func(buf []int16) {
-			c.streams.mu.Lock()
-			pcm.Write(buf)
-			c.streams.mu.Unlock()
-		}
-
 		for {
 			r := &rtp.Packet{}
 
 			_, err := ReadRTP(r, packetBuf, track)
 			if err != nil {
 				if err == io.EOF {
-					rErr := c.streams.remove(track.StreamID())
+					rErr := c.streams.Remove(trackID)
 					if rErr != nil {
 						log.Printf("error removing stream: %s", rErr.Error())
 					}
@@ -154,14 +148,16 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 				if err != nil {
 					log.Printf("PLC: could not get last packet duration: %v", err)
 				} else {
-					lost := min(int(diff-1), maxPLCFrames)
-					plcBuf := make([]int16, lastDuration*NumChannels)
+					lost := min(int(diff-1), pcm.MaxPLCFrames)
+					plcBuf := make([]int16, lastDuration*pcm.NumChannels)
 					for range lost {
 						if err := decoder.DecodePLC(plcBuf); err != nil {
 							log.Printf("PLC ERROR: %v", err)
 							continue
 						}
-						writePCM(plcBuf)
+						if err = c.streams.WriteFrame(trackID, plcBuf); err != nil {
+							log.Printf("error writing PLC frame: %v", err)
+						}
 					}
 				}
 			}
@@ -174,8 +170,10 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 				continue
 			}
 
-			framesDecoded := samplesDecoded * NumChannels
-			writePCM(decodeBuf[:framesDecoded])
+			framesDecoded := samplesDecoded * pcm.NumChannels
+			if err = c.streams.WriteFrame(trackID, decodeBuf[:framesDecoded]); err != nil {
+				log.Printf("error writing frame: %v", err)
+			}
 			lastSeqNum = r.SequenceNumber
 		}
 	})
@@ -209,7 +207,7 @@ func (c *Channel) DataProc() malgo.DataProc {
 	// read into output sample buf, for output to speaker device.
 	// this fires every [frameDurationMs]
 	return func(pOutputSample, _ []byte, framecount uint32) {
-		samplesToRead := int(framecount) * NumChannels
+		samplesToRead := int(framecount) * pcm.NumChannels
 		c.streams.mu.Lock()
 
 		if samplesToRead > len(c.streams.mixed) {
@@ -225,12 +223,12 @@ func (c *Channel) DataProc() malgo.DataProc {
 
 type Call struct {
 	devices
-	stream stream
+	stream pcm.Stream
 }
 
 // NewCall creates the state for a 1:1 voice call.
 func NewCall(track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
-	return &Call{newDevices(track, recvMTU), newStream()}
+	return &Call{newDevices(track, recvMTU), pcm.NewStream()}
 }
 
 // AddPeer sets an event handler on pc that writes incoming audio data to the speaker.
@@ -239,13 +237,13 @@ func NewCall(track *webrtc.TrackLocalStaticSample, recvMTU int) *Call {
 // from which the speaker goroutine reads for playback.
 func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		decoder, err := opus.NewDecoder(SampleRate, NumChannels)
+		decoder, err := opus.NewDecoder(pcm.SampleRate, pcm.NumChannels)
 		if err != nil {
 			log.Panicf("decoder init error: %v", err)
 		}
 
 		packetBuf := make([]byte, c.recvMTU)
-		decodeBuf := make([]int16, pcmBufferSize)
+		decodeBuf := make([]int16, pcm.BufferSize)
 		for {
 			r := &rtp.Packet{}
 
@@ -266,11 +264,9 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 				continue
 			}
 
-			framesDecoded := samplesDecoded * NumChannels
+			framesDecoded := samplesDecoded * pcm.NumChannels
 			// Write decoded PCM to playback buffer, which malgo will pull from for playback
-			c.stream.mu.Lock()
-			c.stream.rb.Write(decodeBuf[:framesDecoded])
-			c.stream.mu.Unlock()
+			c.stream.WriteFrame(decodeBuf[:framesDecoded])
 
 			// TODO: ensure capacity doesnt continue to grow??
 			// decodeBuf = decodeBuf[framesDecoded:]
@@ -281,20 +277,15 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 // DataProc returns a callback that sends audio data to the speaker.
 // https://github.com/gen2brain/malgo/blob/master/_examples/playback/playback.go
 func (c *Call) DataProc() malgo.DataProc {
-	writeBuffer := make([]int16, pcmBufferSize)
+	writeBuffer := make([]int16, pcm.BufferSize)
 	return func(pOutputSample, _ []byte, framecount uint32) {
-		samplesToRead := int(framecount) * NumChannels
-		c.stream.mu.Lock()
-		defer c.stream.mu.Unlock()
+		samplesToRead := int(framecount) * pcm.NumChannels
 
-		// if there isn't yet a full sample in the pcmBuffer sent from the network
-		if c.stream.rb.Len() < samplesToRead {
+		// TODO: ensure ONLY samplesToRead is read??
+		if n := c.stream.Read(writeBuffer, samplesToRead); n == 0 {
 			return
 		}
-
-		// write a full sample to the speaker buffer
-		_ = c.stream.rb.Read(writeBuffer)
-		copy(pOutputSample, int16ToBytes(writeBuffer))
+		copy(pOutputSample, int16ToBytes(writeBuffer)) // send to speaker buffer
 	}
 }
 

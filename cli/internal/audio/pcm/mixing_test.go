@@ -1,4 +1,4 @@
-package audio
+package pcm
 
 import (
 	"fmt"
@@ -13,10 +13,11 @@ import (
 func TestMix(t *testing.T) {
 	t.Run("single full stream", func(t *testing.T) {
 		numSamples := 5
-		s := newStreams()
+		s := NewStreams()
 		a := ringbuffer.New(numSamples)
 		a.Write([]int16{10, 20, 30, 40, 50})
-		_ = s.add("a", &a)
+		s.ids[0] = "a"
+		s.data[0] = &a
 		s.mixTanh(numSamples)
 
 		count := 0
@@ -32,14 +33,18 @@ func TestMix(t *testing.T) {
 	})
 
 	t.Run("silence streams mix to silence", func(t *testing.T) {
-		s := newStreams()
+		s := NewStreams()
 		pcm := []int16{0, 0, 0}
 		a := ringbuffer.New(3)
 		b := ringbuffer.New(3)
 		a.Write(pcm)
 		b.Write(pcm)
-		_ = s.add("a", &a)
-		_ = s.add("b", &b)
+
+		s.ids[0] = "a"
+		s.data[0] = &a
+		s.ids[1] = "b"
+		s.data[1] = &b
+
 		s.mixTanh(3)
 		if s.mixed[0] != 0 {
 			t.Errorf("expected sample[0]==0, got %d", s.mixed[0])
@@ -52,11 +57,12 @@ func TestMix(t *testing.T) {
 	})
 
 	t.Run("remove makes buffer unavailable", func(t *testing.T) {
-		s := newStreams()
+		s := NewStreams()
 		a := ringbuffer.New(3)
 		a.Write([]int16{1, 2, 3})
-		_ = s.add("a", &a)
-		_ = s.remove("a")
+		s.ids[0] = "a"
+		s.data[0] = &a
+		_ = s.Remove("a")
 		s.mixTanh(3)
 		if s.mixed[0] == 1 {
 			t.Error("expected s.mix to not use removed buffer")
@@ -75,166 +81,147 @@ const pcmAmplitude = 12_000
 
 func BenchmarkMix(b *testing.B) {
 	b.Run("pade_scalar_n=1", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
+		samples := make([]int16, BufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
-		s := newStreams()
-		s1 := ringbuffer.New(ringBufferSize)
-		_ = s.add("s1", &s1)
+		s := NewStreams()
+		s.AddNew("s1")
 
 		// NOTE: this will not give an accurate time measurement unless
 		// you uncomment the timer calls, but doing that will make it run extremely slow.
 		for b.Loop() {
 			// b.StopTimer()
-			s1.Write(samples)
+			s.WriteFrame("s1", samples)
 			// b.StartTimer()
-			s.mix(pcmBufferSize)
+			s.mix(BufferSize)
 		}
 	})
 
 	b.Run("pade_scalar_n=2", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
+		samples := make([]int16, BufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
-		s := newStreams()
-		s1 := ringbuffer.New(ringBufferSize)
-		s2 := ringbuffer.New(ringBufferSize)
-		_ = s.add("s1", &s1)
-		_ = s.add("s2", &s2)
+		s := NewStreams()
+		_ = s.AddNew("s1")
+		_ = s.AddNew("s2")
 
 		for b.Loop() {
 			b.StopTimer()
-			s1.Write(samples)
-			s2.Write(samples)
+			s.WriteFrame("s1", samples)
+			s.WriteFrame("s2", samples)
 			b.StartTimer()
-			s.mix(pcmBufferSize)
+			s.mix(BufferSize)
 		}
 	})
 
 	b.Run("pade_scalar_n=4", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
+		samples := make([]int16, BufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
-		s := newStreams()
-		s1 := ringbuffer.New(ringBufferSize)
-		s2 := ringbuffer.New(ringBufferSize)
-		s3 := ringbuffer.New(ringBufferSize)
-		s4 := ringbuffer.New(ringBufferSize)
-		_ = s.add("s1", &s1)
-		_ = s.add("s2", &s2)
-		_ = s.add("s3", &s3)
-		_ = s.add("s4", &s4)
+		s := NewStreams()
+		_ = s.AddNew("s1")
+		_ = s.AddNew("s2")
+		_ = s.AddNew("s3")
+		_ = s.AddNew("s4")
 
 		for b.Loop() {
 			b.StopTimer()
-			s1.Write(samples)
-			s2.Write(samples)
-			s3.Write(samples)
-			s4.Write(samples)
+			s.WriteFrame("s1", samples)
+			s.WriteFrame("s2", samples)
+			s.WriteFrame("s3", samples)
+			s.WriteFrame("s4", samples)
 			b.StartTimer()
-			s.mix(pcmBufferSize)
+			s.mix(BufferSize)
 		}
 	})
 
 	b.Run("pade_clean_n=2", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
+		samples := make([]int16, BufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
-		s := newStreams()
-		s1 := ringbuffer.New(ringBufferSize)
-		s2 := ringbuffer.New(ringBufferSize)
-		_ = s.add("s1", &s1)
-		_ = s.add("s2", &s2)
+		s := NewStreams()
+		_ = s.AddNew("s1")
+		_ = s.AddNew("s2")
 
 		for b.Loop() {
 			b.StopTimer()
-			s1.Write(samples)
-			s2.Write(samples)
+			s.WriteFrame("s1", samples)
+			s.WriteFrame("s2", samples)
 			b.StartTimer()
-			s.mixIdiomatic(pcmBufferSize)
+			s.mixIdiomatic(BufferSize)
 		}
 	})
 
 	b.Run("pade_clean_n=4", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
+		samples := make([]int16, BufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
-		s := newStreams()
-		s1 := ringbuffer.New(ringBufferSize)
-		s2 := ringbuffer.New(ringBufferSize)
-		s3 := ringbuffer.New(ringBufferSize)
-		s4 := ringbuffer.New(ringBufferSize)
-		_ = s.add("s1", &s1)
-		_ = s.add("s2", &s2)
-		_ = s.add("s3", &s3)
-		_ = s.add("s4", &s4)
+		s := NewStreams()
+		_ = s.AddNew("s1")
+		_ = s.AddNew("s2")
+		_ = s.AddNew("s3")
+		_ = s.AddNew("s4")
 
 		for b.Loop() {
 			b.StopTimer()
-			s1.Write(samples)
-			s2.Write(samples)
-			s3.Write(samples)
-			s4.Write(samples)
+			s.WriteFrame("s1", samples)
+			s.WriteFrame("s2", samples)
+			s.WriteFrame("s3", samples)
+			s.WriteFrame("s4", samples)
 			b.StartTimer()
-			s.mixIdiomatic(pcmBufferSize)
+			s.mixIdiomatic(BufferSize)
 		}
 	})
 
 	b.Run("tanh_n=2", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
+		samples := make([]int16, BufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
-		s := newStreams()
-		s1 := ringbuffer.New(ringBufferSize)
-		s2 := ringbuffer.New(ringBufferSize)
-		_ = s.add("s1", &s1)
-		_ = s.add("s2", &s2)
+		s := NewStreams()
+		_ = s.AddNew("s1")
+		_ = s.AddNew("s2")
 
 		for b.Loop() {
 			b.StopTimer()
-			s1.Write(samples)
-			s2.Write(samples)
+			s.WriteFrame("s1", samples)
+			s.WriteFrame("s2", samples)
 			b.StartTimer()
-			s.mixTanh(pcmBufferSize)
+			s.mixTanh(BufferSize)
 		}
 	})
 
 	b.Run("tanh_n=4", func(b *testing.B) {
-		samples := make([]int16, pcmBufferSize)
+		samples := make([]int16, BufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
-		s := newStreams()
-		s1 := ringbuffer.New(ringBufferSize)
-		s2 := ringbuffer.New(ringBufferSize)
-		s3 := ringbuffer.New(ringBufferSize)
-		s4 := ringbuffer.New(ringBufferSize)
-		_ = s.add("s1", &s1)
-		_ = s.add("s2", &s2)
-		_ = s.add("s3", &s3)
-		_ = s.add("s4", &s4)
+		s := NewStreams()
+		_ = s.AddNew("s1")
+		_ = s.AddNew("s2")
+		_ = s.AddNew("s3")
+		_ = s.AddNew("s4")
 
 		for b.Loop() {
 			b.StopTimer()
-			s1.Write(samples)
-			s2.Write(samples)
-			s3.Write(samples)
-			s4.Write(samples)
+			s.WriteFrame("s1", samples)
+			s.WriteFrame("s2", samples)
+			s.WriteFrame("s3", samples)
+			s.WriteFrame("s4", samples)
 			b.StartTimer()
-			s.mixTanh(pcmBufferSize)
+			s.mixTanh(BufferSize)
 		}
 	})
 }
@@ -243,7 +230,7 @@ func BenchmarkMix(b *testing.B) {
 // by simd implementations that use approximations for improved speed. This func, now
 // used a control for testing the newer variants, uses math.Tanh to soft-saturate
 // the mixed PCM.
-func (s *streams) mixTanh(numSamples int) {
+func (s *Streams) mixTanh(numSamples int) {
 	full, numFull, done := s.preMix(numSamples)
 	if done {
 		return
@@ -280,8 +267,8 @@ func softSaturateTanh(sum int32, threshold float64) int16 {
 }
 
 // preMixIdiomatic performs the pre-mix logic without using unsafe.
-func (s *streams) preMixIdiomatic(numSamples int) ([MaxStreams]*[pcmBufferSize]int16, int, bool) {
-	full, numFull, done := [MaxStreams]*[pcmBufferSize]int16{}, 0, false
+func (s *Streams) preMixIdiomatic(numSamples int) ([MaxStreams]*[BufferSize]int16, int, bool) {
+	full, numFull, done := [MaxStreams]*[BufferSize]int16{}, 0, false
 
 	// ensure previous mixed pcm is erased
 	clear(s.mixed[:])
@@ -310,7 +297,7 @@ func (s *streams) preMixIdiomatic(numSamples int) ([MaxStreams]*[pcmBufferSize]i
 
 // mixIdiomatic mixes pcm streams with a Pade approximant without using unsafe, pointer
 // arithmetic or other things that are not go idiomatic. Used as a control in benchmarks.
-func (s *streams) mixIdiomatic(numSamples int) {
+func (s *Streams) mixIdiomatic(numSamples int) {
 	full, numFull, done := s.preMixIdiomatic(numSamples)
 	if done {
 		return

@@ -1,8 +1,18 @@
-package audio
+package pcm
 
 import (
 	"math"
 	"unsafe"
+)
+
+const (
+	// [3/2] approximant diverges from tanh by 5% at x=3.
+	// clamp inputs to +/- 3. Note: it exceeds 1.0 at x=2.32.
+	padeMaxInput = 3.
+	padeMinInput = -3.
+
+	padeConst = 15.
+	padeCoeff = 6.
 )
 
 // preMix is the first step of the mixing routine. It returns an array where
@@ -10,7 +20,7 @@ import (
 // If zero or only one have enough samples, it stops the mixing routine, because
 // there is none to do. preMix is also responsible for zeroing the mixing sink,
 // since miniaudio has been configured to not do it itself.
-func (s *streams) preMix(numSamples int) ([MaxStreams]unsafe.Pointer, int, bool) {
+func (s *Streams) preMix(numSamples int) ([MaxStreams]unsafe.Pointer, int, bool) {
 	full, numFull, done := [MaxStreams]unsafe.Pointer{}, 0, false
 
 	// ensure previous mixed pcm is erased
@@ -54,7 +64,7 @@ func (s *streams) preMix(numSamples int) ([MaxStreams]unsafe.Pointer, int, bool)
 // is zeroed, and the speaker will play silence. Assumes numSamples <= cap(s.mixed)
 // and len(s.bufs) <= maxStreams. This function is the reference spec for Pade mixing
 // functions and is not used outside of testing due to faster SIMD variants.
-func (s *streams) mix(numSamples int) {
+func (s *Streams) mix(numSamples int) {
 	full, numFull, done := s.preMix(numSamples)
 	if done {
 		return

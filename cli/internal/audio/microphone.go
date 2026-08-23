@@ -1,5 +1,8 @@
 //go:build cgo
 
+// package audio contains abstractions over microphone and speaker hardware, PCM buffer manipulation routines,
+// and higher-level, voice-call and voice-channel structs for controlling audio in those configurations.
+// package audio
 package audio
 
 import (
@@ -10,11 +13,20 @@ import (
 	"unsafe"
 
 	"github.com/gen2brain/malgo"
+	"github.com/gregriff/vogo/cli/internal/audio/pcm"
 	"github.com/gregriff/vogo/shared"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
 	"github.com/hraban/opus"
+)
+
+const (
+	// size of buffer to hold opus encoded from mic, to be written to packets.
+	opusBufferSize = pcm.FrameSize
+
+	// opusBitrate sets the bitrate of the opus encoder.
+	opusBitrate = 64_000
 )
 
 // microphone provides access to the device's
@@ -24,7 +36,7 @@ type microphone struct {
 	device *malgo.Device
 
 	// this is where malgo writes microphone pcm data
-	pcm stream
+	pcm pcm.Stream
 
 	// the webrtc track that we use write opus to
 	track *webrtc.TrackLocalStaticSample
@@ -44,7 +56,7 @@ func newMicrophone(track *webrtc.TrackLocalStaticSample) microphone {
 		ctx:         &malgo.AllocatedContext{},
 		device:      &malgo.Device{},
 		track:       track,
-		pcm:         newStream(),
+		pcm:         pcm.NewStream(),
 		initialized: make(chan struct{}),
 		failedPeers: make(chan error, shared.ChannelCapacity-1),
 		ctxChan:     make(chan *malgo.AllocatedContext),
@@ -65,20 +77,18 @@ func (m *microphone) Init(ctx context.Context) error {
 	}()
 
 	deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
-	deviceConfig.Capture.Format = AudioFormat
-	deviceConfig.Capture.Channels = NumChannels
-	deviceConfig.SampleRate = SampleRate
-	deviceConfig.PeriodSizeInMilliseconds = capturePeriodMs
+	deviceConfig.Capture.Format = pcm.AudioFormat
+	deviceConfig.Capture.Channels = pcm.NumChannels
+	deviceConfig.SampleRate = pcm.SampleRate
+	deviceConfig.PeriodSizeInMilliseconds = pcm.CapturePeriodMs
 
 	// this controls quality?
 	// deviceConfig.Resampling.Linear.LpfOrder = ?
 	// deviceConfig.Resampling.Algorithm = malgo.ResampleAlgorithmSpeex
 
-	// read into capture buffer, to write to network. this fires every X milliseconds
+	// write mic pcm to capture buffer, to send to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, _ uint32) { // uint32 is framecount
-		m.pcm.mu.Lock()
-		m.pcm.rb.Write(bytesToInt16(pInputSample))
-		m.pcm.mu.Unlock()
+		m.pcm.WriteFrame(bytesToInt16(pInputSample))
 	}
 
 	// init playback device
@@ -100,9 +110,10 @@ func (m *microphone) Start(ctx context.Context) error {
 		return err
 	}
 
-	frameBuffer := make([]int16, frameSize)
+	// TODO: this should prob be an array
+	frameBuffer := make([]int16, pcm.FrameSize)
 	opusBuffer := make([]byte, opusBufferSize)
-	encoder, err := opus.NewEncoder(SampleRate, NumChannels, opus.AppVoIP)
+	encoder, err := opus.NewEncoder(pcm.SampleRate, pcm.NumChannels, opus.AppVoIP)
 	if err != nil {
 		return fmt.Errorf("encoder error: %w", err)
 	}
@@ -117,8 +128,7 @@ func (m *microphone) Start(ctx context.Context) error {
 	}
 	// complexity, _ := encoder.Complexity()  // currently it's == 9, 10 max
 
-	// TODO: shorten this?
-	ticker := time.NewTicker(frameDuration)
+	ticker := time.NewTicker(pcm.FrameDuration)
 	defer ticker.Stop()
 
 	// loop to encode buffered PCM into opus and send to network
@@ -127,17 +137,9 @@ func (m *microphone) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			m.pcm.mu.Lock()
-
-			// Need at least one frame worth of data
-			if m.pcm.rb.Len() < frameSize {
-				m.pcm.mu.Unlock()
-				continue // wait for more data
+			if n := m.pcm.ReadFrame(frameBuffer); n == 0 {
+				continue
 			}
-
-			// Extract one frame and remove it from the buffer
-			_ = m.pcm.rb.Read(frameBuffer) // overwrites whatever's in there
-			m.pcm.mu.Unlock()
 
 			// encode to opus
 			bytesEncoded, err := encoder.Encode(frameBuffer, opusBuffer)
@@ -149,7 +151,7 @@ func (m *microphone) Start(ctx context.Context) error {
 			// write to webrtc track
 			failed := m.track.WriteSample(media.Sample{
 				Data:     opusBuffer[:bytesEncoded], // only the first N bytes are opus data.
-				Duration: frameDuration,
+				Duration: pcm.FrameDuration,
 			})
 
 			if failed != nil {

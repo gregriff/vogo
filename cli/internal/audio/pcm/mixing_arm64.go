@@ -1,4 +1,4 @@
-package audio
+package pcm
 
 import (
 	"math"
@@ -7,14 +7,14 @@ import (
 )
 
 // stub for compilation on arm64
-func (s *streams) mixAVX(int, bool) {
+func (s *Streams) mixAVX(int, bool) {
 	panic("not implemented")
 }
 
 // mixNEON is a SIMD implementation of [s.mix].
 //
 // CPU Feature: NEON
-func (s *streams) mixNEON(numSamples int) {
+func (s *Streams) mixNEON(numSamples int) {
 	// slowdown prob related to numfull and full... scalar 1 stream no slowdown bc of early return
 	full, numFull, done := s.preMix(numSamples)
 	if done {
@@ -29,9 +29,6 @@ func (s *streams) mixNEON(numSamples int) {
 	// // get pointers to bufs with at least [numSamples] samples
 	// // TODO: research if you could have simd kernel read straight from RB to avoid these copies
 	// // to the temp arrays, and full could point to the rb itself at the right read index.
-	// // Also s.data could be a []*ringbuffer. but if you do that you need to write tests to ensure that
-	// // removing/replacing one of them (someone leaves/joins a call) works properly. would need to add a
-	// // uuid field to ringbuffer struct, and remove/replaceRB() methods to streams.
 	// for _, rb := range s.data {
 	// 	if rb != nil && rb.Len() >= numSamples {
 	// 		// copy the full pcm buf so we can vectorize access easily.
