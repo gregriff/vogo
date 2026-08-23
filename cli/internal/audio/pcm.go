@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"fmt"
 	"log"
 	"slices"
 	"sync"
@@ -60,61 +61,61 @@ func newStreams() streams {
 	}
 }
 
-// add adds a newly-created empty pcm buffer to the list of buffers (bufs) being tracked. It takes its pointer,
-// so that the caller can continue modifying the original, and using this struct will always point to the same memory.
-func (s *streams) add(id string, rb *ringbuffer.RingBuffer) {
+// add adds a newly-created empty pcm buffer to the list of
+// buffers (bufs) being tracked. It takes its pointer, so that
+// the caller can continue modifying the original, and using this
+// struct will always point to the same memory. id must be unique.
+func (s *streams) add(id string, rb *ringbuffer.RingBuffer) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// see if a stream with id is already being tracked.
 	if idx := slices.Index(s.ids[:], id); idx >= 0 {
 		// this should not happen and tests should ensure that.
-		log.Printf("WARN: stream with id: %s has already been added", id)
 		if s.data[idx] == nil {
-			log.Panicf("stream %s is tracked at streams.ids[%d], but streams.data[%d] is nil", id, idx, idx)
+			return fmt.Errorf("desync between s.ids and s.data. s.ids[%d]==%s but s.data[%d] is nil", idx, id, idx)
 		}
 
-		// this code shound never run.
-		log.Printf("WARN: overwriting stream with id %s", id)
-		// overwrite old rb, since it was tracked by the same stream id.
-		s.data[idx] = rb
+		return fmt.Errorf("stream with id %s already exists at index %d", id, idx)
 	}
 
 	// add &rb to first empty slot
 	for i := range len(s.data) {
-		if s.data[i] == nil {
-			if s.ids[i] != "" {
-				log.Panicf("desync between s.ids and s.data. s.ids[%d]==%s but s.data[%d] is nil", i, id, i)
-			}
-			s.ids[i] = id
-			s.data[i] = rb
-			break
+		if s.data[i] != nil {
+			continue
 		}
 
-		// vogo server and streams.remove should guard against this.
-		if i == len(s.data)-1 {
-			log.Panicf("cannot add stream %s. there are already %d streams (max)", id, MaxStreams)
+		// slot found
+		if s.ids[i] != "" {
+			return fmt.Errorf("desync between s.ids and s.data. s.ids[%d]==%s but s.data[%d] is nil", i, id, i)
 		}
+		s.ids[i] = id
+		s.data[i] = rb
+		return nil
 	}
+
+	// vogo server and streams.remove should guard against this.
+	return fmt.Errorf("cannot add stream %s. there are already %d streams (max)", id, MaxStreams)
 }
 
 // remove removes a stream. This should be called when a PeerConnection fails.
-// It takes the user's name as the id.
-func (s *streams) remove(id string) {
+// It takes the user's name as the id. No-op if the stream is not found.
+func (s *streams) remove(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	idx := slices.Index(s.ids[:], id)
 	if idx == -1 {
 		log.Printf("WARN: stream with id %s has already been removed", id)
-		return
+		return nil
 	}
 
 	if s.data[idx] == nil {
-		log.Panicf("desync between s.ids and s.data. s.ids[%d]==%s but s.data[%d] is nil", idx, id, idx)
+		return fmt.Errorf("desync between s.ids and s.data. s.ids[%d]==%s but s.data[%d] is nil", idx, id, idx)
 	}
 
 	s.ids[idx] = ""
 	s.data[idx] = nil
 	log.Printf("INFO: removed stream %s at index %d", id, idx)
+	return nil
 }

@@ -15,42 +15,43 @@ func (s *streams) mixAVX(int, bool) {
 //
 // CPU Feature: NEON
 func (s *streams) mixNEON(numSamples int) {
-	// full, numFull, done := s.preMix(numSamples)
-	// if done {
+	// slowdown prob related to numfull and full... scalar 1 stream no slowdown bc of early return
+	full, numFull, done := s.preMix(numSamples)
+	if done {
+		return
+	}
+	// full, numFull := [MaxStreams]unsafe.Pointer{}, 0
+
+	// // ensure previous mixed pcm is erased
+	// // TODO: is this even needed? Just clear the tail?
+	// clear(s.mixed[:])
+
+	// // get pointers to bufs with at least [numSamples] samples
+	// // TODO: research if you could have simd kernel read straight from RB to avoid these copies
+	// // to the temp arrays, and full could point to the rb itself at the right read index.
+	// // Also s.data could be a []*ringbuffer. but if you do that you need to write tests to ensure that
+	// // removing/replacing one of them (someone leaves/joins a call) works properly. would need to add a
+	// // uuid field to ringbuffer struct, and remove/replaceRB() methods to streams.
+	// for _, rb := range s.data {
+	// 	if rb != nil && rb.Len() >= numSamples {
+	// 		// copy the full pcm buf so we can vectorize access easily.
+	// 		_ = rb.Read(s.writeBufs[numFull][:])
+
+	// 		// since we're in the lock and ensured length, we can use unsafe access.
+	// 		full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
+	// 		numFull++
+	// 	}
+	// }
+
+	// switch numFull {
+	// case 0:
+	// 	return
+	// case 1:
+	// 	// if only one other person in the room, don't mix, just write their pcm
+	// 	copy(s.mixed[:], s.writeBufs[0][:numSamples])
+	// 	full[0] = nil
 	// 	return
 	// }
-	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
-
-	// ensure previous mixed pcm is erased
-	// TODO: is this even needed? Just clear the tail?
-	clear(s.mixed[:])
-
-	// get pointers to bufs with at least [numSamples] samples
-	// TODO: research if you could have simd kernel read straight from RB to avoid these copies
-	// to the temp arrays, and full could point to the rb itself at the right read index.
-	// Also s.data could be a []*ringbuffer. but if you do that you need to write tests to ensure that
-	// removing/replacing one of them (someone leaves/joins a call) works properly. would need to add a
-	// uuid field to ringbuffer struct, and remove/replaceRB() methods to streams.
-	for _, rb := range s.data {
-		if rb != nil && rb.Len() >= numSamples {
-			// copy the full pcm buf so we can vectorize access easily.
-			_ = rb.Read(s.writeBufs[numFull][:])
-
-			// since we're in the lock and ensured length, we can use unsafe access.
-			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
-			numFull++
-		}
-	}
-
-	switch numFull {
-	case 0:
-		return
-	case 1:
-		// if only one other person in the room, don't mix, just write their pcm
-		copy(s.mixed[:], s.writeBufs[0][:numSamples])
-		full[0] = nil
-		return
-	}
 
 	// avoid bounds checks
 	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.add

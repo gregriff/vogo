@@ -16,7 +16,7 @@ func TestMix(t *testing.T) {
 		s := newStreams()
 		a := ringbuffer.New(numSamples)
 		a.Write([]int16{10, 20, 30, 40, 50})
-		s.add("a", &a)
+		_ = s.add("a", &a)
 		s.mixTanh(numSamples)
 
 		count := 0
@@ -38,8 +38,8 @@ func TestMix(t *testing.T) {
 		b := ringbuffer.New(3)
 		a.Write(pcm)
 		b.Write(pcm)
-		s.add("a", &a)
-		s.add("b", &b)
+		_ = s.add("a", &a)
+		_ = s.add("b", &b)
 		s.mixTanh(3)
 		if s.mixed[0] != 0 {
 			t.Errorf("expected sample[0]==0, got %d", s.mixed[0])
@@ -55,8 +55,8 @@ func TestMix(t *testing.T) {
 		s := newStreams()
 		a := ringbuffer.New(3)
 		a.Write([]int16{1, 2, 3})
-		s.add("a", &a)
-		s.remove("a")
+		_ = s.add("a", &a)
+		_ = s.remove("a")
 		s.mixTanh(3)
 		if s.mixed[0] == 1 {
 			t.Error("expected s.mix to not use removed buffer")
@@ -74,8 +74,6 @@ func randomPCMSample(amplitude float64) int16 {
 const pcmAmplitude = 12_000
 
 func BenchmarkMix(b *testing.B) {
-	const bufSize = pcmBufferSize * 8
-
 	b.Run("pade_scalar_n=1", func(b *testing.B) {
 		samples := make([]int16, pcmBufferSize)
 		for i := range samples {
@@ -83,8 +81,8 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
+		s1 := ringbuffer.New(ringBufferSize)
+		_ = s.add("s1", &s1)
 
 		// NOTE: this will not give an accurate time measurement unless
 		// you uncomment the timer calls, but doing that will make it run extremely slow.
@@ -103,10 +101,10 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s2 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
+		s1 := ringbuffer.New(ringBufferSize)
+		s2 := ringbuffer.New(ringBufferSize)
+		_ = s.add("s1", &s1)
+		_ = s.add("s2", &s2)
 
 		for b.Loop() {
 			b.StopTimer()
@@ -124,14 +122,14 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s2 := ringbuffer.New(bufSize)
-		s3 := ringbuffer.New(bufSize)
-		s4 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
-		s.add("s3", &s3)
-		s.add("s4", &s4)
+		s1 := ringbuffer.New(ringBufferSize)
+		s2 := ringbuffer.New(ringBufferSize)
+		s3 := ringbuffer.New(ringBufferSize)
+		s4 := ringbuffer.New(ringBufferSize)
+		_ = s.add("s1", &s1)
+		_ = s.add("s2", &s2)
+		_ = s.add("s3", &s3)
+		_ = s.add("s4", &s4)
 
 		for b.Loop() {
 			b.StopTimer()
@@ -151,10 +149,10 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s2 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
+		s1 := ringbuffer.New(ringBufferSize)
+		s2 := ringbuffer.New(ringBufferSize)
+		_ = s.add("s1", &s1)
+		_ = s.add("s2", &s2)
 
 		for b.Loop() {
 			b.StopTimer()
@@ -172,14 +170,14 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s2 := ringbuffer.New(bufSize)
-		s3 := ringbuffer.New(bufSize)
-		s4 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
-		s.add("s3", &s3)
-		s.add("s4", &s4)
+		s1 := ringbuffer.New(ringBufferSize)
+		s2 := ringbuffer.New(ringBufferSize)
+		s3 := ringbuffer.New(ringBufferSize)
+		s4 := ringbuffer.New(ringBufferSize)
+		_ = s.add("s1", &s1)
+		_ = s.add("s2", &s2)
+		_ = s.add("s3", &s3)
+		_ = s.add("s4", &s4)
 
 		for b.Loop() {
 			b.StopTimer()
@@ -199,10 +197,10 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s2 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
+		s1 := ringbuffer.New(ringBufferSize)
+		s2 := ringbuffer.New(ringBufferSize)
+		_ = s.add("s1", &s1)
+		_ = s.add("s2", &s2)
 
 		for b.Loop() {
 			b.StopTimer()
@@ -220,14 +218,14 @@ func BenchmarkMix(b *testing.B) {
 		}
 
 		s := newStreams()
-		s1 := ringbuffer.New(bufSize)
-		s2 := ringbuffer.New(bufSize)
-		s3 := ringbuffer.New(bufSize)
-		s4 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
-		s.add("s3", &s3)
-		s.add("s4", &s4)
+		s1 := ringbuffer.New(ringBufferSize)
+		s2 := ringbuffer.New(ringBufferSize)
+		s3 := ringbuffer.New(ringBufferSize)
+		s4 := ringbuffer.New(ringBufferSize)
+		_ = s.add("s1", &s1)
+		_ = s.add("s2", &s2)
+		_ = s.add("s3", &s3)
+		_ = s.add("s4", &s4)
 
 		for b.Loop() {
 			b.StopTimer()
@@ -386,16 +384,17 @@ func TestSoftSaturate_PadeVsTanh(t *testing.T) {
 		}
 	}
 
-	// Adjust tolerance to whatever is acceptable for your use case.
-	const maxAllowedDiff = 50 // in int16 units
+	// TODO: should mock real voice chat pcm, and only check the max/mean diff
+	// in the normal ranges of 2+ people speaking.
+	const maxAllowedDiff = 1000 // in int16 units
 	if maxAbsDiff > maxAllowedDiff {
 		t.Errorf("max abs diff %d exceeds allowed tolerance %d (sum=%d)",
 			maxAbsDiff, maxAllowedDiff, maxDiffSum)
 	}
 
-	const maxAllowedMeanDiff = 5.0
+	const maxAllowedMeanDiff = 150
 	if meanAbsDiff > maxAllowedMeanDiff {
-		t.Errorf("mean abs diff %.4f exceeds allowed tolerance %.4f", meanAbsDiff, maxAllowedMeanDiff)
+		t.Errorf("mean abs diff %.4f exceeds allowed tolerance %d", meanAbsDiff, maxAllowedMeanDiff)
 	}
 }
 

@@ -103,7 +103,9 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 		packetBuf := make([]byte, c.recvMTU)
 		decodeBuf := make([]int16, pcmBufferSize)
 		pcm := ringbuffer.New(ringBufferSize)
-		c.streams.add(track.StreamID(), &pcm)
+		if err = c.streams.add(track.StreamID(), &pcm); err != nil {
+			log.Panicf("error adding stream: %v", err)
+		}
 
 		var (
 			lastSeqNum  uint16
@@ -122,7 +124,10 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 			_, err := ReadRTP(r, packetBuf, track)
 			if err != nil {
 				if err == io.EOF {
-					c.streams.remove(track.StreamID())
+					rErr := c.streams.remove(track.StreamID())
+					if rErr != nil {
+						log.Printf("error removing stream: %s", rErr.Error())
+					}
 					return
 				}
 				log.Printf("PACKET READ ERR: %v", err)

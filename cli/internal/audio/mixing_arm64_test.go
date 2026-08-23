@@ -21,8 +21,8 @@ func BenchmarkMixARM64(b *testing.B) {
 		s := newStreams()
 		s1 := ringbuffer.New(bufSize)
 		s2 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
+		_ = s.add("s1", &s1)
+		_ = s.add("s2", &s2)
 
 		for b.Loop() {
 			b.StopTimer()
@@ -44,10 +44,10 @@ func BenchmarkMixARM64(b *testing.B) {
 		s2 := ringbuffer.New(bufSize)
 		s3 := ringbuffer.New(bufSize)
 		s4 := ringbuffer.New(bufSize)
-		s.add("s1", &s1)
-		s.add("s2", &s2)
-		s.add("s3", &s3)
-		s.add("s4", &s4)
+		_ = s.add("s1", &s1)
+		_ = s.add("s2", &s2)
+		_ = s.add("s3", &s3)
+		_ = s.add("s4", &s4)
 
 		for b.Loop() {
 			b.StopTimer()
