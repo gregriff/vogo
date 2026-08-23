@@ -24,7 +24,7 @@ func (s *streams) preMix(numSamples int) ([MaxStreams]unsafe.Pointer, int, bool)
 	// removing/replacing one of them (someone leaves/joins a call) works properly. would need to add a
 	// uuid field to ringbuffer struct, and remove/replaceRB() methods to streams.
 	for _, rb := range s.data {
-		if rb.Len() >= numSamples {
+		if rb != nil && rb.Len() >= numSamples {
 			// copy the full pcm buf so we can vectorize access easily.
 			_ = rb.Read(s.writeBufs[numFull][:])
 

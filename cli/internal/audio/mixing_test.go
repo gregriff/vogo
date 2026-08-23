@@ -290,20 +290,19 @@ func (s *streams) preMixIdiomatic(numSamples int) ([MaxStreams]*[pcmBufferSize]i
 
 	// get pointers to bufs with at least [numSamples] samples
 	for _, rb := range s.data {
-		if rb.Len() >= numSamples {
+		if rb != nil && rb.Len() >= numSamples {
 			_ = rb.Read(s.writeBufs[numFull][:])
 			full[numFull] = &s.writeBufs[numFull]
 			numFull++
 		}
 	}
 
-	if numFull == 0 || len(s.data) == 0 {
+	switch numFull {
+	case 0:
 		done = true
 		return full, numFull, done
-	}
-
-	// if only one other person in the room, don't mix, just write their pcm
-	if numFull == 1 {
+	case 1:
+		// if only one other person in the room, don't mix, just write their pcm
 		copy(s.mixed[:], s.writeBufs[0][:numSamples])
 		full[0] = nil
 		done = true

@@ -2,6 +2,7 @@ package audio
 
 import (
 	"log"
+	"slices"
 	"sync"
 
 	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
@@ -38,18 +39,22 @@ type streams struct {
 
 	// data stores references to the buffers that each TrackRemote
 	// writes data to from the network.
-	data map[string]*ringbuffer.RingBuffer
+	data [MaxStreams]*ringbuffer.RingBuffer
 
 	// these are used during mixing to allow for iteration of pcm via pointer arithmetic.
 	writeBufs [MaxStreams][pcmBufferSize]int16
 
 	// this is where mixed pcm is written.
 	mixed [pcmBufferSize]int16
+
+	// ids[n] is the stream ID of data[n]. Used when someone leaves a room,
+	// in order to delete the correct stream.
+	ids [MaxStreams]string
 }
 
 func newStreams() streams {
 	return streams{
-		data:      make(map[string]*ringbuffer.RingBuffer, MaxStreams),
+		data:      [MaxStreams]*ringbuffer.RingBuffer{},
 		writeBufs: [MaxStreams][pcmBufferSize]int16{},
 		mixed:     [pcmBufferSize]int16{},
 	}
@@ -60,15 +65,36 @@ func newStreams() streams {
 func (s *streams) add(id string, rb *ringbuffer.RingBuffer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.data[id]; ok {
-		log.Printf("WARN stream with id: %s has already been added", id)
+
+	// see if a stream with id is already being tracked.
+	if idx := slices.Index(s.ids[:], id); idx >= 0 {
+		// this should not happen and tests should ensure that.
+		log.Printf("WARN: stream with id: %s has already been added", id)
+		if s.data[idx] == nil {
+			log.Panicf("stream %s is tracked at streams.ids[%d], but streams.data[%d] is nil", id, idx, idx)
+		}
+
+		// this code shound never run.
+		log.Printf("WARN: overwriting stream with id %s", id)
+		// overwrite old rb, since it was tracked by the same stream id.
+		s.data[idx] = rb
 	}
-	if len(s.data) == MaxStreams {
-		log.Printf("WARN there are %d streams", MaxStreams)
-	}
-	s.data[id] = rb
-	if len(s.data) > MaxStreams {
-		log.Panicf("len(streams.bufs): %d, > maxStreams", len(s.data))
+
+	// add &rb to first empty slot
+	for i := range len(s.data) {
+		if s.data[i] == nil {
+			if s.ids[i] != "" {
+				log.Panicf("desync between s.ids and s.data. s.ids[%d]==%s but s.data[%d] is nil", i, id, i)
+			}
+			s.ids[i] = id
+			s.data[i] = rb
+			break
+		}
+
+		// vogo server and streams.remove should guard against this.
+		if i == len(s.data)-1 {
+			log.Panicf("cannot add stream %s. there are already %d streams (max)", id, MaxStreams)
+		}
 	}
 }
 
@@ -77,6 +103,18 @@ func (s *streams) add(id string, rb *ringbuffer.RingBuffer) {
 func (s *streams) remove(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.data, id)
-	log.Printf("INFO: removed %s's stream", id)
+
+	idx := slices.Index(s.ids[:], id)
+	if idx == -1 {
+		log.Printf("WARN: stream with id %s has already been removed", id)
+		return
+	}
+
+	if s.data[idx] == nil {
+		log.Panicf("desync between s.ids and s.data. s.ids[%d]==%s but s.data[%d] is nil", idx, id, idx)
+	}
+
+	s.ids[idx] = ""
+	s.data[idx] = nil
+	log.Printf("INFO: removed stream %s at index %d", id, idx)
 }
