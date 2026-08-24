@@ -101,6 +101,7 @@ func NewStreams() Streams {
 // If this returns an error, the caller used s.AddNew or s.Remove incorrectly.
 func (s *Streams) WriteFrame(id string, src []int16) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	idx := slices.Index(s.ids[:], id)
 	if idx == -1 {
@@ -112,7 +113,6 @@ func (s *Streams) WriteFrame(id string, src []int16) error {
 	}
 
 	s.data[idx].Write(src)
-	s.mu.Unlock()
 	return nil
 }
 
@@ -196,6 +196,7 @@ func (s *Streams) MixAndWrite(dst []byte, numSamples int) {
 	// 	log.Panicf("samplesToRead > cap(mixed)")
 	// }
 
+	// todo: try storing full as a streams field
 	full, numFull := s.fullStreams(numSamples)
 	defer clear(full[:])
 
