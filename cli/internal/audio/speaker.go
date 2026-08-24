@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"time"
-	"unsafe"
 
 	"github.com/gen2brain/malgo"
 	"github.com/gregriff/vogo/cli/internal/audio/pcm"
@@ -51,15 +50,15 @@ func (s *speaker) Init(ctx context.Context, onSendFrames malgo.DataProc) error {
 		log.Printf("speaker initialized in %v", time.Since(start))
 	}()
 
-	config := malgo.DefaultDeviceConfig(malgo.Playback)
-	config.Playback.Format = pcm.AudioFormat
-	config.Playback.Channels = pcm.NumChannels
-	config.SampleRate = pcm.SampleRate
-	config.NoClip = 1
-	config.NoPreSilencedOutputBuffer = 1
-	config.PeriodSizeInMilliseconds = pcm.PlaybackPeriodMs
+	cfg := malgo.DefaultDeviceConfig(malgo.Playback)
+	cfg.Playback.Format = pcm.AudioFormat
+	cfg.Playback.Channels = pcm.NumChannels
+	cfg.SampleRate = pcm.SampleRate
+	cfg.NoClip = 1
+	cfg.NoPreSilencedOutputBuffer = 1
+	cfg.PeriodSizeInMilliseconds = pcm.PlaybackPeriodMs
 
-	device, err := malgo.InitDevice(s.ctx.Context, config, malgo.DeviceCallbacks{
+	device, err := malgo.InitDevice(s.ctx.Context, cfg, malgo.DeviceCallbacks{
 		Data: onSendFrames, // note: could also include a stop callback
 	})
 	s.device = device
@@ -89,12 +88,4 @@ func (s *speaker) Uninit() {
 // it asynchronously and wait for its completion.
 func (s *speaker) Initialized() <-chan struct{} {
 	return s.initialized
-}
-
-// int16ToBytes reinterprets an int16 slice to a byte slice of PCM audio.
-func int16ToBytes(s []int16) []byte {
-	if len(s) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(&s[0])), len(s)*2)
 }

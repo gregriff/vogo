@@ -1,5 +1,7 @@
 package ringbuffer
 
+import "unsafe"
+
 // RingBuffer is a circular buffer of pcm data that allows for reading and writing without
 // reslicing, preventing allocations and GC pressure. RingBuffer is meant to be shared
 // by pointer between the writer and reader, but all methods assume they are using a mutex
@@ -86,6 +88,28 @@ func (r *RingBuffer) Read(dst []int16) int {
 	return n
 }
 
+// Read consumes up to min(n, len(dst)) samples, reinterpreted as bytes
+// and returns how many were read.
+func (r *RingBuffer) ReadNBytes(dst []byte, count int) int {
+	n := min(r.count, len(dst))
+	n = min(n, count)
+	if n == 0 {
+		return 0
+	}
+
+	space := r.size - r.head
+	if n <= space {
+		copy(dst, Int16ToBytes(r.buf[r.head:r.head+n]))
+	} else {
+		copy(dst, Int16ToBytes(r.buf[r.head:]))
+		copy(dst[space:], Int16ToBytes(r.buf[:n-space]))
+	}
+
+	r.head = (r.head + n) % r.size
+	r.count -= n
+	return n
+}
+
 // Len returns the logical length: the number of unread samples in the ringbuffer
 func (r *RingBuffer) Len() int    { return r.count }
 func (r *RingBuffer) Full() bool  { return r.count == r.size }
@@ -106,3 +130,11 @@ func (r *RingBuffer) Empty() bool { return r.count == 0 }
 // 	r.tail = 0
 // 	r.count = 0
 // }
+
+// Int16ToBytes reinterprets an int16 slice to a byte slice of PCM audio.
+func Int16ToBytes(s []int16) []byte {
+	if len(s) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*byte)(unsafe.Pointer(&s[0])), len(s)*2)
+}

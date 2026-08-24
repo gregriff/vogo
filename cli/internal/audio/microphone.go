@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log"
 	"time"
-	"unsafe"
 
 	"github.com/gen2brain/malgo"
 	"github.com/gregriff/vogo/cli/internal/audio/pcm"
@@ -76,23 +75,23 @@ func (m *microphone) Init(ctx context.Context) error {
 		log.Printf("mic initialized in %v", time.Since(start))
 	}()
 
-	deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
-	deviceConfig.Capture.Format = pcm.AudioFormat
-	deviceConfig.Capture.Channels = pcm.NumChannels
-	deviceConfig.SampleRate = pcm.SampleRate
-	deviceConfig.PeriodSizeInMilliseconds = pcm.CapturePeriodMs
+	cfg := malgo.DefaultDeviceConfig(malgo.Capture)
+	cfg.Capture.Format = pcm.AudioFormat
+	cfg.Capture.Channels = pcm.NumChannels
+	cfg.SampleRate = pcm.SampleRate
+	cfg.PeriodSizeInMilliseconds = pcm.CapturePeriodMs
 
 	// this controls quality?
-	// deviceConfig.Resampling.Linear.LpfOrder = ?
-	// deviceConfig.Resampling.Algorithm = malgo.ResampleAlgorithmSpeex
+	// config.Resampling.Linear.LpfOrder = ?
+	// config.Resampling.Algorithm = malgo.ResampleAlgorithmSpeex
 
 	// write mic pcm to capture buffer, to send to network. this fires every X milliseconds
 	onRecvFrames := func(_, pInputSample []byte, _ uint32) { // uint32 is framecount
-		m.pcm.WriteFrame(bytesToInt16(pInputSample))
+		m.pcm.WriteFrame(pcm.BytesToInt16(pInputSample))
 	}
 
 	// init playback device
-	device, err := malgo.InitDevice(m.ctx.Context, deviceConfig, malgo.DeviceCallbacks{
+	device, err := malgo.InitDevice(m.ctx.Context, cfg, malgo.DeviceCallbacks{
 		Data: onRecvFrames,
 	})
 	m.device = device
@@ -137,6 +136,7 @@ func (m *microphone) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			// NOTE: may need to ensure this read is limited
 			if n := m.pcm.ReadFrame(frameBuffer); n == 0 {
 				continue
 			}
@@ -186,12 +186,4 @@ func (m *microphone) FailedPeers() <-chan error {
 // it asynchronously and wait for its completion.
 func (m *microphone) Initialized() <-chan struct{} {
 	return m.initialized
-}
-
-// bytesToInt16 reinterprets a byte slice of PCM audio into an int16 slice for the opus encoder to use.
-func bytesToInt16(b []byte) []int16 {
-	if len(b) == 0 {
-		return nil
-	}
-	return unsafe.Slice((*int16)(unsafe.Pointer(&b[0])), len(b)/2)
 }

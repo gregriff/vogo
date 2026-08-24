@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"simd/archsimd"
 	"time"
 
 	"github.com/gen2brain/malgo"
@@ -181,43 +180,11 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 
 // DataProc returns a callback that mixes multiple user's audio and sends it to the speaker.
 func (c *Channel) DataProc() malgo.DataProc {
-
-	// use simd if able
-	// TODO: opt for using tanh impl.
-	var mix func(int)
-
-	if archsimd.X86.AVX512() {
-		log.Println("using AVX512")
-		mix = func(n int) {
-			c.streams.mixAVX(n, true)
-		}
-	} else if archsimd.X86.AVX2() {
-		log.Println("using AVX2")
-		mix = func(n int) {
-			c.streams.mixAVX(n, false)
-		}
-	} else if archsimd.ARM64.PMULL() {
-		log.Println("using NEON")
-		mix = c.streams.mixNEON
-	} else {
-		log.Println("using scalar")
-		mix = c.streams.mix
-	}
-
 	// read into output sample buf, for output to speaker device.
 	// this fires every [frameDurationMs]
 	return func(pOutputSample, _ []byte, framecount uint32) {
 		samplesToRead := int(framecount) * pcm.NumChannels
-		c.streams.mu.Lock()
-
-		if samplesToRead > len(c.streams.mixed) {
-			log.Panicf("samplesToRead >= cap(mixed")
-		}
-
-		// write a full mixed sample to the speaker buffer
-		mix(samplesToRead)
-		copy(pOutputSample, int16ToBytes(c.streams.mixed[:samplesToRead]))
-		c.streams.mu.Unlock()
+		c.streams.MixAndWrite(pOutputSample, samplesToRead)
 	}
 }
 
@@ -277,15 +244,11 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 // DataProc returns a callback that sends audio data to the speaker.
 // https://github.com/gen2brain/malgo/blob/master/_examples/playback/playback.go
 func (c *Call) DataProc() malgo.DataProc {
-	writeBuffer := make([]int16, pcm.BufferSize)
 	return func(pOutputSample, _ []byte, framecount uint32) {
 		samplesToRead := int(framecount) * pcm.NumChannels
 
-		// TODO: ensure ONLY samplesToRead is read??
-		if n := c.stream.Read(writeBuffer, samplesToRead); n == 0 {
-			return
-		}
-		copy(pOutputSample, int16ToBytes(writeBuffer)) // send to speaker buffer
+		// TODO: if pOutputSample is not pre-zeroed, under-writing it may cause issues
+		_ = c.stream.ReadBytes(pOutputSample, samplesToRead)
 	}
 }
 

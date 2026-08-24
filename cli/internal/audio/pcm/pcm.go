@@ -2,9 +2,9 @@ package pcm
 
 import (
 	"fmt"
-	"log"
 	"slices"
 	"sync"
+	"unsafe"
 
 	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 	"github.com/gregriff/vogo/shared"
@@ -32,38 +32,34 @@ func NewStream() Stream {
 	}
 }
 
-// Read reads at least count pcm samples into dst,
+// Read reads at most count pcm samples into dst,
 // if the internal ringbuffer has count samples available.
-func (s *Stream) Read(dst []int16, count int) int {
+func (s *Stream) ReadBytes(dst []byte, count int) int {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	// Need at least n samples
 	if s.rb.Len() < count {
-		s.mu.Unlock()
 		return 0
 	}
 
 	// Extract count samples and remove it from the buffer
-	n := s.rb.Read(dst) // overwrites whatever's in there
-	s.mu.Unlock()
-	return n
+	return s.rb.ReadNBytes(dst, count) // overwrites whatever's in dst
 }
 
 // ReadFrame reads up to len(dst) pcm samples into dst. Does not read any if there
 // are < FrameSize samples in the stream's ringbuffer, so the caller can wait for more.
 func (s *Stream) ReadFrame(dst []int16) int {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	// Need at least one frame worth of data
 	if s.rb.Len() < FrameSize {
-		s.mu.Unlock()
 		return 0
 	}
 
 	// Extract one frame and remove it from the buffer
-	n := s.rb.Read(dst) // overwrites whatever's in there
-	s.mu.Unlock()
-	return n
+	return s.rb.Read(dst) // overwrites whatever's in dst
 }
 
 // WriteFrame writes a frame of pcm data from src into the internal ringbuffer.
@@ -166,7 +162,6 @@ func (s *Streams) Remove(id string) error {
 
 	idx := slices.Index(s.ids[:], id)
 	if idx == -1 {
-		log.Printf("WARN: stream with id %s has already been removed", id)
 		return nil
 	}
 
@@ -176,6 +171,58 @@ func (s *Streams) Remove(id string) error {
 
 	s.ids[idx] = ""
 	s.data[idx] = nil
-	log.Printf("INFO: removed stream %s at index %d", id, idx)
 	return nil
+}
+
+// MixAndWrite finds all pcm buffers that have numSamples samples,
+// mixes them and copies the mixed array to dst. Fast paths exist for
+// 0 or 1 full buffer.
+//
+// The mixing function uses SIMD and is determined at compile-time by
+// build flags.
+//
+// It is also responsible for zeroing the mixing sink,
+// since miniaudio has been configured to not do it itself.
+//
+// Note: bursty packet arrival could lead to a backup of samples in the ringbuffers.
+// Consider implementing time-compressing frames if this is detected.
+func (s *Streams) MixAndWrite(dst []byte, numSamples int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// this should never happen. if it does, s.fullStreams only will read
+	// len(s.writeBufs[n]) samples. this would leave some samples in the rb?
+	// if numSamples > len(s.mixed) {
+	// 	log.Panicf("samplesToRead > cap(mixed)")
+	// }
+
+	full, numFull := s.fullStreams(numSamples)
+	defer clear(full[:])
+
+	// slowdown prob related to numfull and full... scalar 1 stream no slowdown bc of early return
+	switch numFull {
+	case 0:
+		return // nothing to write
+	case 1:
+		// if only one other person in the room, don't mix, just write their pcm
+		ints := ringbuffer.Int16ToBytes(s.writeBufs[0][:numSamples])
+		copy(dst, ints)
+		return
+	}
+
+	// try clearing :numSamples, or no need to clear at all?
+	clear(s.mixed[:])
+
+	// write a full mixed sample to the speaker buffer
+	s.mix(full, numFull, numSamples)
+	mixed := ringbuffer.Int16ToBytes(s.mixed[:numSamples])
+	copy(dst, mixed)
+}
+
+// BytesToInt16 reinterprets a byte slice of PCM audio into an int16 slice.
+func BytesToInt16(b []byte) []int16 {
+	if len(b) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*int16)(unsafe.Pointer(&b[0])), len(b)/2)
 }

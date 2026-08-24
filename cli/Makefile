@@ -100,7 +100,7 @@ test:
 	go test -tags nolibopusfile -v ./...
 
 build-test-mixing:
-	go test -c -o $(OUT_DIR)/vogo-mixtest -tags nolibopusfile -v ./internal/audio
+	go test -c -o $(OUT_DIR)/vogo-mixtest -tags nolibopusfile -v ./internal/audio/pcm
 
 # run audio mixing tests and benchmarks
 test-mixing: build-test-mixing
@@ -110,7 +110,7 @@ test-pade: build-test-mixing
 	$(OUT_DIR)/vogo-mixtest -test.cpu=1 -test.v -test.run=TestSoftSaturate_PadeVsTanh
 
 bench:
-	go test -bench=. -benchmem -cpu=1 -tags nolibopusfile -v ./internal/audio
+	go test -bench=. -benchmem -cpu=1 -tags nolibopusfile -v ./internal/audio/pcm
 
 # shows escape analysis
 escape:

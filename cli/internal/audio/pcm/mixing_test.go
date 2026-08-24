@@ -2,6 +2,7 @@ package pcm
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -10,29 +11,37 @@ import (
 	"github.com/gregriff/vogo/cli/internal/audio/ringbuffer"
 )
 
+// this file tests per-arch SIMD implementations of the mixing algorithm and
+// compares them to the reference scalar implementations.
+//
+// best pre-refactor: 2=360ns, 4=460ns
+
 func TestMix(t *testing.T) {
 	t.Run("single full stream", func(t *testing.T) {
 		numSamples := 5
+		dst := [15]byte{}
 		s := NewStreams()
 		a := ringbuffer.New(numSamples)
 		a.Write([]int16{10, 20, 30, 40, 50})
 		s.ids[0] = "a"
 		s.data[0] = &a
-		s.mixTanh(numSamples)
+		s.MixAndWrite(dst[:], numSamples)
+		ints := BytesToInt16(dst[:])
 
 		count := 0
-		for _, v := range s.mixed {
+		for _, v := range ints {
 			if v == 0 {
 				break
 			}
 			count++
 		}
 		if count != numSamples {
-			t.Errorf("num mixed samples in mixed buf (%d) != numSamples arg (%d)", count, numSamples)
+			t.Errorf("incorrect number of mixed samples. got %d want %d", count, numSamples)
 		}
 	})
 
 	t.Run("silence streams mix to silence", func(t *testing.T) {
+		dst := [10]byte{}
 		s := NewStreams()
 		pcm := []int16{0, 0, 0}
 		a := ringbuffer.New(3)
@@ -45,7 +54,7 @@ func TestMix(t *testing.T) {
 		s.ids[1] = "b"
 		s.data[1] = &b
 
-		s.mixTanh(3)
+		s.MixAndWrite(dst[:], 3)
 		if s.mixed[0] != 0 {
 			t.Errorf("expected sample[0]==0, got %d", s.mixed[0])
 		}
@@ -57,13 +66,14 @@ func TestMix(t *testing.T) {
 	})
 
 	t.Run("remove makes buffer unavailable", func(t *testing.T) {
+		dst := [15]byte{}
 		s := NewStreams()
 		a := ringbuffer.New(3)
 		a.Write([]int16{1, 2, 3})
 		s.ids[0] = "a"
 		s.data[0] = &a
 		_ = s.Remove("a")
-		s.mixTanh(3)
+		s.MixAndWrite(dst[:], 3)
 		if s.mixed[0] == 1 {
 			t.Error("expected s.mix to not use removed buffer")
 		}
@@ -79,13 +89,17 @@ func randomPCMSample(amplitude float64) int16 {
 // don't do more than like 15k
 const pcmAmplitude = 12_000
 
+// dst buffer is []byte, so must be twice the int16 buffer size
+const dstBufSize = BufferSize * 2.5
+
 func BenchmarkMix(b *testing.B) {
-	b.Run("pade_scalar_n=1", func(b *testing.B) {
+	b.Run("pade_simd_n=1", func(b *testing.B) {
 		samples := make([]int16, BufferSize)
 		for i := range samples {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
+		dst := [dstBufSize]byte{}
 		s := NewStreams()
 		s.AddNew("s1")
 
@@ -95,7 +109,51 @@ func BenchmarkMix(b *testing.B) {
 			// b.StopTimer()
 			s.WriteFrame("s1", samples)
 			// b.StartTimer()
-			s.mix(BufferSize)
+			s.MixAndWrite(dst[:], BufferSize)
+		}
+	})
+
+	b.Run("pade_simd_n=2", func(b *testing.B) {
+		samples := make([]int16, BufferSize)
+		for i := range samples {
+			samples[i] = randomPCMSample(pcmAmplitude)
+		}
+
+		dst := [dstBufSize]byte{}
+		s := NewStreams()
+		_ = s.AddNew("s1")
+		_ = s.AddNew("s2")
+
+		for b.Loop() {
+			b.StopTimer()
+			s.WriteFrame("s1", samples)
+			s.WriteFrame("s2", samples)
+			b.StartTimer()
+			s.MixAndWrite(dst[:], BufferSize)
+		}
+	})
+
+	b.Run("pade_simd_n=4", func(b *testing.B) {
+		samples := make([]int16, BufferSize)
+		for i := range samples {
+			samples[i] = randomPCMSample(pcmAmplitude)
+		}
+
+		dst := [dstBufSize]byte{}
+		s := NewStreams()
+		_ = s.AddNew("s1")
+		_ = s.AddNew("s2")
+		_ = s.AddNew("s3")
+		_ = s.AddNew("s4")
+
+		for b.Loop() {
+			b.StopTimer()
+			s.WriteFrame("s1", samples)
+			s.WriteFrame("s2", samples)
+			s.WriteFrame("s3", samples)
+			s.WriteFrame("s4", samples)
+			b.StartTimer()
+			s.MixAndWrite(dst[:], BufferSize)
 		}
 	})
 
@@ -105,6 +163,7 @@ func BenchmarkMix(b *testing.B) {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
+		dst := [dstBufSize]byte{}
 		s := NewStreams()
 		_ = s.AddNew("s1")
 		_ = s.AddNew("s2")
@@ -114,7 +173,7 @@ func BenchmarkMix(b *testing.B) {
 			s.WriteFrame("s1", samples)
 			s.WriteFrame("s2", samples)
 			b.StartTimer()
-			s.mix(BufferSize)
+			s.MixAndWriteScalar(dst[:], BufferSize)
 		}
 	})
 
@@ -124,6 +183,7 @@ func BenchmarkMix(b *testing.B) {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
+		dst := [dstBufSize]byte{}
 		s := NewStreams()
 		_ = s.AddNew("s1")
 		_ = s.AddNew("s2")
@@ -137,7 +197,7 @@ func BenchmarkMix(b *testing.B) {
 			s.WriteFrame("s3", samples)
 			s.WriteFrame("s4", samples)
 			b.StartTimer()
-			s.mix(BufferSize)
+			s.MixAndWriteScalar(dst[:], BufferSize)
 		}
 	})
 
@@ -147,6 +207,7 @@ func BenchmarkMix(b *testing.B) {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
+		dst := [dstBufSize]byte{}
 		s := NewStreams()
 		_ = s.AddNew("s1")
 		_ = s.AddNew("s2")
@@ -156,7 +217,7 @@ func BenchmarkMix(b *testing.B) {
 			s.WriteFrame("s1", samples)
 			s.WriteFrame("s2", samples)
 			b.StartTimer()
-			s.mixIdiomatic(BufferSize)
+			s.MixAndWriteIdiomatic(dst[:], BufferSize)
 		}
 	})
 
@@ -166,6 +227,7 @@ func BenchmarkMix(b *testing.B) {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
+		dst := [dstBufSize]byte{}
 		s := NewStreams()
 		_ = s.AddNew("s1")
 		_ = s.AddNew("s2")
@@ -179,7 +241,7 @@ func BenchmarkMix(b *testing.B) {
 			s.WriteFrame("s3", samples)
 			s.WriteFrame("s4", samples)
 			b.StartTimer()
-			s.mixIdiomatic(BufferSize)
+			s.MixAndWriteIdiomatic(dst[:], BufferSize)
 		}
 	})
 
@@ -189,6 +251,7 @@ func BenchmarkMix(b *testing.B) {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
+		dst := [dstBufSize]byte{}
 		s := NewStreams()
 		_ = s.AddNew("s1")
 		_ = s.AddNew("s2")
@@ -198,7 +261,7 @@ func BenchmarkMix(b *testing.B) {
 			s.WriteFrame("s1", samples)
 			s.WriteFrame("s2", samples)
 			b.StartTimer()
-			s.mixTanh(BufferSize)
+			s.MixAndWriteTanh(dst[:], BufferSize)
 		}
 	})
 
@@ -208,6 +271,7 @@ func BenchmarkMix(b *testing.B) {
 			samples[i] = randomPCMSample(pcmAmplitude)
 		}
 
+		dst := [dstBufSize]byte{}
 		s := NewStreams()
 		_ = s.AddNew("s1")
 		_ = s.AddNew("s2")
@@ -221,23 +285,143 @@ func BenchmarkMix(b *testing.B) {
 			s.WriteFrame("s3", samples)
 			s.WriteFrame("s4", samples)
 			b.StartTimer()
-			s.mixTanh(BufferSize)
+			s.MixAndWriteTanh(dst[:], BufferSize)
 		}
 	})
+}
+
+func (s *Streams) MixAndWriteScalar(dst []byte, numSamples int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if numSamples > len(s.mixed) {
+		log.Panicf("samplesToRead > cap(mixed)")
+	}
+
+	full, numFull := s.fullStreams(numSamples)
+	defer clear(full[:])
+
+	switch numFull {
+	case 0:
+		return // nothing to write
+	case 1:
+		// if only one other person in the room, don't mix, just write their pcm
+		ints := ringbuffer.Int16ToBytes(s.writeBufs[0][:numSamples])
+		copy(dst, ints)
+		return
+	}
+
+	// write a full mixed sample to the speaker buffer
+	s.mixScalar(full, numFull, numSamples)
+	mixed := ringbuffer.Int16ToBytes(s.mixed[:numSamples])
+	copy(dst, mixed)
+	clear(s.mixed[:])
+}
+
+func (s *Streams) MixAndWriteIdiomatic(dst []byte, numSamples int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if numSamples > len(s.mixed) {
+		log.Panicf("samplesToRead > cap(mixed)")
+	}
+
+	full, numFull := s.fullStreamsIdiomatic(numSamples)
+	defer clear(full[:])
+
+	switch numFull {
+	case 0:
+		return // nothing to write
+	case 1:
+		// if only one other person in the room, don't mix, just write their pcm
+		ints := ringbuffer.Int16ToBytes(s.writeBufs[0][:numSamples])
+		copy(dst, ints)
+		return
+	}
+
+	// write a full mixed sample to the speaker buffer
+	s.mixIdiomatic(full, numFull, numSamples)
+	mixed := ringbuffer.Int16ToBytes(s.mixed[:numSamples])
+	copy(dst, mixed)
+	clear(s.mixed[:])
+}
+
+func (s *Streams) MixAndWriteTanh(dst []byte, numSamples int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if numSamples > len(s.mixed) {
+		log.Panicf("samplesToRead > cap(mixed)")
+	}
+
+	full, numFull := s.fullStreams(numSamples)
+	defer clear(full[:])
+
+	switch numFull {
+	case 0:
+		return // nothing to write
+	case 1:
+		// if only one other person in the room, don't mix, just write their pcm
+		ints := ringbuffer.Int16ToBytes(s.writeBufs[0][:numSamples])
+		copy(dst, ints)
+		return
+	}
+
+	// write a full mixed sample to the speaker buffer
+	s.mixTanh(full, numFull, numSamples)
+	mixed := ringbuffer.Int16ToBytes(s.mixed[:numSamples])
+	copy(dst, mixed)
+	clear(s.mixed[:])
+}
+
+// Mix takes all pcm bufs that have at least [numSamples] samples and mixes their pcm data
+// using a Pade tanh approximant, writing the result to [s.mixed]. It must be run within
+// a mutex lock. If [full] is empty due to network conditions, or [s.bufs] is empty due
+// to none being added, the caller can still write [s.mixed] to the speaker because it
+// is zeroed, and the speaker will play silence. Assumes numSamples <= cap(s.mixed).
+// This function is the reference spec for Pade mixing
+// functions and is not used outside of testing due to faster SIMD variants.
+func (s *Streams) mixScalar(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) {
+	// avoid bounds checks
+	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.AddNew
+	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.AddNew
+
+	// sum samples for each buffer
+	const int16Size = unsafe.Sizeof(int16(0))
+	var offset uintptr
+	var sample *int16
+	for i := range numSamples {
+		var sum int32
+		offset = uintptr(i) * int16Size
+		for j := range numFull {
+			sample = (*int16)(unsafe.Add(full[j], offset))
+			sum += int32(*(sample))
+		}
+		s.mixed[i] = softSaturateScalar(sum, math.MaxInt16)
+	}
+}
+
+// mixIdiomatic mixes pcm streams with a Pade approximant without using unsafe, pointer
+// arithmetic or other things that are not go idiomatic. Used as a control in benchmarks.
+func (s *Streams) mixIdiomatic(full [MaxStreams]*[BufferSize]int16, numFull, numSamples int) {
+	// sum samples for each buffer
+	for i := range numSamples {
+		var sum int32
+		for j := range numFull {
+			sum += int32(full[j][i])
+		}
+		s.mixed[i] = softSaturateScalar(sum, math.MaxInt16)
+	}
 }
 
 // mixTanh is a legacy scalar mixing pcm mixing algorithm that has since been replaced
 // by simd implementations that use approximations for improved speed. This func, now
 // used a control for testing the newer variants, uses math.Tanh to soft-saturate
 // the mixed PCM.
-func (s *Streams) mixTanh(numSamples int) {
-	full, numFull, done := s.preMix(numSamples)
-	if done {
-		return
-	}
-
+func (s *Streams) mixTanh(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) {
 	// avoid bounds checks
-	_ = full[numFull-1] //nolint:gosec // G602: checked in streams.add
+	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.AddNew
+	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.AddNew
 
 	// sum the samples across all pcm streams. Uses pointer arithmetic
 	// to access each element to avoid bounds checks.
@@ -251,11 +435,6 @@ func (s *Streams) mixTanh(numSamples int) {
 		}
 		s.mixed[i] = softSaturateTanh(sum, math.MaxInt16)
 	}
-
-	// ensure these are cleaned up
-	for i := range numFull {
-		full[i] = nil
-	}
 }
 
 // softSaturateTanh takes a sum of multiple int16s and returns
@@ -266,14 +445,8 @@ func softSaturateTanh(sum int32, threshold float64) int16 {
 	return clampInt16(x)
 }
 
-// preMixIdiomatic performs the pre-mix logic without using unsafe.
-func (s *Streams) preMixIdiomatic(numSamples int) ([MaxStreams]*[BufferSize]int16, int, bool) {
-	full, numFull, done := [MaxStreams]*[BufferSize]int16{}, 0, false
-
-	// ensure previous mixed pcm is erased
-	clear(s.mixed[:])
-
-	// get pointers to bufs with at least [numSamples] samples
+func (s *Streams) fullStreamsIdiomatic(numSamples int) ([MaxStreams]*[BufferSize]int16, int) {
+	full, numFull := [MaxStreams]*[BufferSize]int16{}, 0
 	for _, rb := range s.data {
 		if rb != nil && rb.Len() >= numSamples {
 			_ = rb.Read(s.writeBufs[numFull][:])
@@ -281,41 +454,7 @@ func (s *Streams) preMixIdiomatic(numSamples int) ([MaxStreams]*[BufferSize]int1
 			numFull++
 		}
 	}
-
-	switch numFull {
-	case 0:
-		done = true
-		return full, numFull, done
-	case 1:
-		// if only one other person in the room, don't mix, just write their pcm
-		copy(s.mixed[:], s.writeBufs[0][:numSamples])
-		full[0] = nil
-		done = true
-	}
-	return full, numFull, done
-}
-
-// mixIdiomatic mixes pcm streams with a Pade approximant without using unsafe, pointer
-// arithmetic or other things that are not go idiomatic. Used as a control in benchmarks.
-func (s *Streams) mixIdiomatic(numSamples int) {
-	full, numFull, done := s.preMixIdiomatic(numSamples)
-	if done {
-		return
-	}
-
-	// sum samples for each buffer
-	for i := range numSamples {
-		var sum int32
-		for j := range numFull {
-			sum += int32(full[j][i])
-		}
-		s.mixed[i] = softSaturate(sum, math.MaxInt16)
-	}
-
-	// ensure these are cleaned up
-	for i := range numFull {
-		full[i] = nil
-	}
+	return full, numFull
 }
 
 // TestSoftSaturate_PadeVsTanh compares softSaturate (real tanh) against
@@ -341,7 +480,7 @@ func TestSoftSaturate_PadeVsTanh(t *testing.T) {
 
 	for sum := int32(-maxSum); sum <= maxSum; sum += step {
 		tanh := softSaturateTanh(sum, threshold)
-		pade := softSaturate(sum, threshold)
+		pade := softSaturateScalar(sum, threshold)
 
 		diff := int32(tanh) - int32(pade)
 		if diff < 0 {
@@ -418,7 +557,7 @@ func TestSoftSaturate_PadeVsTanh_Table(t *testing.T) {
 	for _, sum := range sums {
 		t.Run(fmt.Sprintf("sum=%d", sum), func(t *testing.T) {
 			tanh := softSaturateTanh(sum, threshold)
-			pade := softSaturate(sum, threshold)
+			pade := softSaturateScalar(sum, threshold)
 			diff := int32(tanh) - int32(pade)
 			t.Logf("tanh=%d pade=%d diff=%d", tanh, pade, diff)
 		})

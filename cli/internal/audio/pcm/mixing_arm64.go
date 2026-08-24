@@ -6,53 +6,13 @@ import (
 	"unsafe"
 )
 
-// stub for compilation on arm64
-func (s *Streams) mixAVX(int, bool) {
-	panic("not implemented")
-}
-
-// mixNEON is a SIMD implementation of [s.mix].
+// mix mixes two or more pcm arrays with soft-saturation.
 //
 // CPU Feature: NEON
-func (s *Streams) mixNEON(numSamples int) {
-	// slowdown prob related to numfull and full... scalar 1 stream no slowdown bc of early return
-	full, numFull, done := s.preMix(numSamples)
-	if done {
-		return
-	}
-	// full, numFull := [MaxStreams]unsafe.Pointer{}, 0
-
-	// // ensure previous mixed pcm is erased
-	// // TODO: is this even needed? Just clear the tail?
-	// clear(s.mixed[:])
-
-	// // get pointers to bufs with at least [numSamples] samples
-	// // TODO: research if you could have simd kernel read straight from RB to avoid these copies
-	// // to the temp arrays, and full could point to the rb itself at the right read index.
-	// for _, rb := range s.data {
-	// 	if rb != nil && rb.Len() >= numSamples {
-	// 		// copy the full pcm buf so we can vectorize access easily.
-	// 		_ = rb.Read(s.writeBufs[numFull][:])
-
-	// 		// since we're in the lock and ensured length, we can use unsafe access.
-	// 		full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
-	// 		numFull++
-	// 	}
-	// }
-
-	// switch numFull {
-	// case 0:
-	// 	return
-	// case 1:
-	// 	// if only one other person in the room, don't mix, just write their pcm
-	// 	copy(s.mixed[:], s.writeBufs[0][:numSamples])
-	// 	full[0] = nil
-	// 	return
-	// }
-
+func (s *Streams) mix(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) {
 	// avoid bounds checks
-	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.add
-	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.add
+	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.AddNew
+	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.AddNew
 
 	const w16 = 8             // NEON int16 width
 	const increment = w16 * 4 // unroll factor of 4
@@ -60,7 +20,7 @@ func (s *Streams) mixNEON(numSamples int) {
 	vThreshold := archsimd.BroadcastFloat32x4(math.MaxInt16)
 
 	// Loop is unrolled to improve ILP.
-	var i = 0
+	i := 0
 	for ; i+increment <= numSamples; i += increment {
 		// Accumulators. NEON has 8 lanes of int16, but we are doing
 		// operations in int32, so we need to accumulate with 4 lanes.
@@ -91,32 +51,32 @@ func (s *Streams) mixNEON(numSamples int) {
 		// After saturating, pack the two result vectors by
 		// reinterpreting as int64 and zipping.
 		// Ops are ordered as to improve ILP.
-		satLo := softSaturateNEON(accLo, vThreshold)
-		satHi := softSaturateNEON(accHi, vThreshold)
+		satLo := softSaturate(accLo, vThreshold)
+		satHi := softSaturate(accHi, vThreshold)
 		lo := satLo.ToBits().ReshapeToUint64s().BitsToInt64()
 		hi := satHi.ToBits().ReshapeToUint64s().BitsToInt64()
 		packed := lo.InterleaveLo(hi) // [lo, hi]
 		mixed := packed.ToBits().ReshapeToUint16s().BitsToInt16()
 		mixed.StoreArray((*[w16]int16)(s.mixed[i:]))
 
-		satLo2 := softSaturateNEON(accLo2, vThreshold)
-		satHi2 := softSaturateNEON(accHi2, vThreshold)
+		satLo2 := softSaturate(accLo2, vThreshold)
+		satHi2 := softSaturate(accHi2, vThreshold)
 		lo2 := satLo2.ToBits().ReshapeToUint64s().BitsToInt64()
 		hi2 := satHi2.ToBits().ReshapeToUint64s().BitsToInt64()
 		packed2 := lo2.InterleaveLo(hi2)
 		mixed2 := packed2.ToBits().ReshapeToUint16s().BitsToInt16()
 		mixed2.StoreArray((*[w16]int16)(s.mixed[i+8:]))
 
-		satLo3 := softSaturateNEON(accLo3, vThreshold)
-		satHi3 := softSaturateNEON(accHi3, vThreshold)
+		satLo3 := softSaturate(accLo3, vThreshold)
+		satHi3 := softSaturate(accHi3, vThreshold)
 		lo3 := satLo3.ToBits().ReshapeToUint64s().BitsToInt64()
 		hi3 := satHi3.ToBits().ReshapeToUint64s().BitsToInt64()
 		packed3 := lo3.InterleaveLo(hi3)
 		mixed3 := packed3.ToBits().ReshapeToUint16s().BitsToInt16()
 		mixed3.StoreArray((*[w16]int16)(s.mixed[i+16:]))
 
-		satLo4 := softSaturateNEON(accLo4, vThreshold)
-		satHi4 := softSaturateNEON(accHi4, vThreshold)
+		satLo4 := softSaturate(accLo4, vThreshold)
+		satHi4 := softSaturate(accHi4, vThreshold)
 		lo4 := satLo4.ToBits().ReshapeToUint64s().BitsToInt64()
 		hi4 := satHi4.ToBits().ReshapeToUint64s().BitsToInt64()
 		packed4 := lo4.InterleaveLo(hi4)
@@ -132,12 +92,7 @@ func (s *Streams) mixNEON(numSamples int) {
 			sample := (*int16)(unsafe.Add(full[j], offset))
 			sum += int32(*(sample))
 		}
-		s.mixed[i] = softSaturate(sum, math.MaxInt16)
-	}
-
-	// ensure these are cleaned up
-	for i := range numFull {
-		full[i] = nil
+		s.mixed[i] = softSaturateScalar(sum, math.MaxInt16)
 	}
 }
 
@@ -157,12 +112,12 @@ func loadAndAccInt16x8(
 	return lo, hi
 }
 
-// softSaturateNEON is a SIMD version of softSaturate.
+// softSaturate saturates sums to a threshold.
 //
 // CPU Feature: NEON
-func softSaturateNEON(acc archsimd.Int32x4, threshold archsimd.Float32x4) archsimd.Int16x8 {
+func softSaturate(acc archsimd.Int32x4, threshold archsimd.Float32x4) archsimd.Int16x8 {
 	x := acc.ConvertToFloat32().Div(threshold)
-	approx := padeTanhNEON(x)
+	approx := padeTanh(x)
 
 	// scale back to int16 range and saturate
 	scaled := approx.Mul(threshold)
@@ -170,10 +125,10 @@ func softSaturateNEON(acc archsimd.Int32x4, threshold archsimd.Float32x4) archsi
 	return ints.SaturateToInt16()
 }
 
-// padeTanhNEON is a simd version of `padeTanhScalar`
+// padeTanh applies a [3/2] Padé tanh approximant to float32s.
 //
 // CPU Feature: NEON
-func padeTanhNEON(x archsimd.Float32x4) archsimd.Float32x4 {
+func padeTanh(x archsimd.Float32x4) archsimd.Float32x4 {
 	// clamp before divergence from tanh.
 	x = x.Max(archsimd.BroadcastFloat32x4(padeMinInput))
 	x = x.Min(archsimd.BroadcastFloat32x4(padeMaxInput))

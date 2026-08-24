@@ -183,6 +183,6 @@ func TestAddAfterRemove_ReusesSlot(t *testing.T) {
 
 	// add scans for the first nil slot, so the freed slot should be reused.
 	if idx != idx2 {
-		t.Fatalf("expected freed slot %d to be reused by new add, got %p want %p", idx, idx2, idx)
+		t.Fatalf("expected freed slot %d to be reused by new add, got %d want %d", idx, idx2, idx)
 	}
 }
