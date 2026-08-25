@@ -83,6 +83,8 @@ func GetUser(db *sql.DB, username string) (*User, error) {
 	query := "SELECT id, username, created_at FROM users WHERE username = $1"
 	err := db.QueryRowContext(ctx, query, username).Scan(&user.Id, &user.Name, &user.CreatedAt)
 	if err != nil {
+		// TODO: this should just return &user, err,
+		// and caller should look for ErrNoRows
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("user not found: %s", username)
 		}
@@ -182,7 +184,7 @@ func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, e
        `
 	_, err = db.ExecContext(ctx, query, userId, dbFriend.Id)
 	if err != nil {
-		return nil, fmt.Errorf("error during add friend query: %w", err)
+		return nil, err
 	}
 	friend.Name = dbFriend.Name
 	return &friend, nil
@@ -201,9 +203,5 @@ func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
 
 	var areFriends bool
 	err := db.QueryRowContext(ctx, query, userId, friendId).Scan(&areFriends)
-	if err != nil {
-		return false, fmt.Errorf("query error: %w", err)
-	}
-
-	return areFriends, nil
+	return areFriends, err
 }

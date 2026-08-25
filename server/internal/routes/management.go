@@ -141,6 +141,7 @@ func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
 
 	friend, err := dal.AddFriend(h.db, user.Id, data.Name)
 	if err != nil {
+		err = fmt.Errorf("error during query: %w", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

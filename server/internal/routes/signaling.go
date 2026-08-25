@@ -3,7 +3,9 @@ package routes
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -40,40 +42,33 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	username := middleware.GetUsernameWS(ws)
 	caller, err := dal.GetUser(h.db, username)
 	if err != nil {
-		logger.ROUTE.Error("fetching caller", "err", err)
+		logger.ROUTE.Error("querying user", "err", err)
 		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
 
-	var offer requests.Connection
-	if err := wsock.ReceiveJSON(ctx, ws, &offer); err != nil {
-		if err != io.EOF {
-			logger.ROUTE.Error("receiving offer", "err", err)
-			_ = ws.WriteClose(http.StatusBadRequest)
-		}
-		return
-	}
-	if offer.Sd.SDP == "" {
-		logger.ROUTE.Error("empty offer")
-		_ = ws.WriteClose(http.StatusBadRequest)
+	offer, err := recvConnectionRequest(ctx, ws)
+	if err != nil {
+		logger.ROUTE.Error("receiving offer", "err", err)
 		return
 	}
 	logger.WRTC.Debug("offer received")
+
 	recipient, err := dal.GetUser(h.db, offer.To)
 	if err != nil {
-		logger.ROUTE.Error("fetching recipient", "err", err)
+		logger.ROUTE.Error("querying recipient", "err", err)
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 
 	friends, err := dal.AreFriends(h.db, caller.Id, recipient.Id)
 	if err != nil {
-		logger.ROUTE.Error("checking friendship status", "err", err)
+		logger.ROUTE.Error("querying friendship status", "with", recipient.Name, "err", err)
 		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
 	if !friends {
-		logger.ROUTE.Error("caller not friends with recipient", "err", err)
+		logger.ROUTE.Error("not friends", "with", recipient.Name, "err", err)
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
@@ -87,28 +82,13 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	defer calls.Delete(caller.Id)
 	logger.STATE.Info("call created")
 
-	g, gCtx := errgroup.WithContext(ctx)
-	defer func() { // wait for listener to complete.
-		cancel()
-		if err := g.Wait(); err != nil {
-			logger.ROUTE.Error("while cancelling", "err", err)
-		}
-		_ = ws.Close()
-	}()
-
 	// websocket message dispatcher
+	g, gCtx := errgroup.WithContext(ctx)
+	defer cleanupDispatcher(g, cancel, ws, logger.ROUTE)
+
 	msgChan := make(chan wsock.Message)
 	g.Go(func() error {
-		defer cancel() // cancels main goroutine
-		err := wsock.Listen(gCtx, ws, msgChan)
-		if err == io.EOF {
-			logger.ROUTE.Info("connection closed by client")
-			return nil
-		}
-		if err != nil {
-			logger.ROUTE.Error("during message loop", "err", err)
-		}
-		return err
+		return dispatchMessages(gCtx, cancel, ws, msgChan, logger.ROUTE)
 	})
 
 	for {
@@ -137,10 +117,9 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 				logger.ROUTE.Info("call connected", "with", recipient.Name)
 				return
 			case wsock.ICEOffer:
-				var data messages.Candidate
-				if err := json.Unmarshal(msg.Data, &data); err != nil {
-					logger.ROUTE.Error("unmarshalling ice-offer candidate", "err", err)
-					_ = ws.WriteClose(http.StatusBadRequest)
+				data, err := parseCandidate(ws, msg.Data)
+				if err != nil {
+					logger.ROUTE.Error("parsing ice-offer candidate", "err", err)
 					return
 				}
 
@@ -166,6 +145,78 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	}
 }
 
+// recvConnectionRequest blocks until an offer or answer request is received from ws,
+// and closes ws if an error is encountered or the request's SDP is empty.
+func recvConnectionRequest(ctx context.Context, ws *websocket.Conn) (requests.Connection, error) {
+	var req requests.Connection
+	if err := wsock.ReceiveJSON(ctx, ws, &req); err != nil {
+		if err != io.EOF {
+			_ = ws.WriteClose(http.StatusBadRequest)
+		}
+		return req, err
+	}
+
+	if req.Sd.SDP == "" {
+		_ = ws.WriteClose(http.StatusBadRequest)
+		return req, fmt.Errorf("empty sdp")
+	}
+	return req, nil
+}
+
+// dispatchMessages sends messages received from ws to ch until ctx is cancelled
+// or an error is encountered. It should be run in its own goroutine, so that it can signal
+// and cancel the message receiving loop running in the main request handler goroutine.
+// Upon returning, it cancels its context, which should be the top-level context.
+// This is used during calling and answering to terminate the infinite message receive
+// loop and close the ws once the webrtc connection has been made.
+func dispatchMessages(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	ws *websocket.Conn,
+	ch chan<- wsock.Message,
+	logger *slog.Logger,
+) error {
+	defer cancel()
+
+	err := wsock.Listen(ctx, ws, ch)
+	if err == io.EOF {
+		logger.Info("connection closed by client")
+		return nil
+	}
+	if err != nil {
+		logger.Error("during message loop", "err", err)
+	}
+	return err
+}
+
+// cleanupDispatcher cleans up the message dispatcher. It cancels the dispatcher's context,
+// which immediately unblocks it from reading the websocket. It then waits for the errgroup,
+// logs any errors and closes the websocket once done. It should be deferred by its caller.
+func cleanupDispatcher(
+	g *errgroup.Group,
+	cancel context.CancelFunc,
+	ws *websocket.Conn,
+	logger *slog.Logger,
+) {
+	cancel()
+	if err := g.Wait(); err != nil {
+		logger.Error("while cancelling", "err", err)
+	}
+	_ = ws.Close()
+}
+
+// parseCandidate parses an ICE candidate from data and returns
+// the candidate. It closes the ws if an error is encountered.
+func parseCandidate(ws *websocket.Conn, data json.RawMessage) (messages.Candidate, error) {
+	var c messages.Candidate
+
+	err := json.Unmarshal(data, &c)
+	if err != nil {
+		_ = ws.WriteClose(http.StatusBadRequest)
+	}
+	return c, err
+}
+
 // Answer obtains the caller's name from the first ws message and sends the caller's offer Sd to the client.
 // It then waits for the clients answer, where it then facilitates trickle-ICE gathering between the two clients.
 func (h *RouteHandler) Answer(ws *websocket.Conn) {
@@ -180,7 +231,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	username := middleware.GetUsernameWS(ws)
 	recipient, err := dal.GetUser(h.db, username)
 	if err != nil {
-		logger.ROUTE.Error("fetching recipient", "err", err)
+		logger.ROUTE.Error("querying user", "err", err)
 		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
@@ -189,18 +240,18 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	callerName := ws.Request().PathValue("name")
 	caller, err := dal.GetUser(h.db, callerName)
 	if err != nil {
-		logger.ROUTE.Error("fetching caller", "err", err)
+		logger.ROUTE.Error("querying caller", "err", err)
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 	friends, err := dal.AreFriends(h.db, caller.Id, recipient.Id)
 	if err != nil {
-		logger.ROUTE.Error("checking friendship status", "err", err)
+		logger.ROUTE.Error("querying friendship status", "with", callerName, "err", err)
 		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
 	if !friends {
-		logger.ROUTE.Error("recipient not friends with caller", "err", err)
+		logger.ROUTE.Error("not friends", "with", callerName, "err", err)
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
@@ -222,45 +273,22 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	}
 
 	// wait for answer from client
-	var answer requests.Connection
-	if err = wsock.ReceiveJSON(ctx, ws, &answer); err != nil {
-		if err == io.EOF {
-			return
-		}
+	answer, err := recvConnectionRequest(ctx, ws)
+	if err != nil {
 		logger.ROUTE.Error("receiving answer", "err", err)
-		_ = ws.WriteClose(http.StatusBadRequest)
-		return
-	}
-	if answer.Sd.SDP == "" {
-		logger.WRTC.Error("empty answer")
-		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
 	logger.WRTC.Debug("answer received")
+
 	call.Answer <- answer.Sd
 
-	g, gCtx := errgroup.WithContext(ctx)
-	defer func() { // wait for listener to complete.
-		cancel()
-		if err := g.Wait(); err != nil {
-			logger.ROUTE.Error("while cancelling", "err", err)
-		}
-		_ = ws.Close()
-	}()
-
 	// websocket message dispatcher
+	g, gCtx := errgroup.WithContext(ctx)
+	defer cleanupDispatcher(g, cancel, ws, logger.ROUTE)
+
 	msgChan := make(chan wsock.Message)
 	g.Go(func() error {
-		defer cancel() // cancels main goroutine
-		err := wsock.Listen(gCtx, ws, msgChan)
-		if err == io.EOF {
-			logger.ROUTE.Info("connection closed by client")
-			return nil
-		}
-		if err != nil {
-			logger.ROUTE.Error("during message loop", "err", err)
-		}
-		return err
+		return dispatchMessages(gCtx, cancel, ws, msgChan, logger.ROUTE)
 	})
 
 	for {
@@ -282,10 +310,9 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 				logger.ROUTE.Info("call connected", "with", caller.Name)
 				return
 			case wsock.ICEAnswer:
-				var data messages.Candidate
-				if err := json.Unmarshal(msg.Data, &data); err != nil {
-					logger.ROUTE.Error("unmarshalling ice-answer candidate", "err", err)
-					_ = ws.WriteClose(http.StatusBadRequest)
+				data, err := parseCandidate(ws, msg.Data)
+				if err != nil {
+					logger.ROUTE.Error("parsing ice-answer candidate", "err", err)
 					return
 				}
 
@@ -548,10 +575,9 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			switch msg.Type {
 			// TODO: try to combine offer and answer handlers with additional property in messages.Candidate
 			case wsock.ICEOffer:
-				var data messages.Candidate
-				if err := json.Unmarshal(msg.Data, &data); err != nil {
-					logger.ROUTE.Error("unmarshalling ice-offer candidate", "err", err)
-					_ = ws.WriteClose(http.StatusBadRequest)
+				data, err := parseCandidate(ws, msg.Data)
+				if err != nil {
+					logger.ROUTE.Error("parsing ice-offer candidate", "err", err)
 					return
 				}
 
@@ -569,10 +595,9 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				}
 				conn.From.Candidates <- data.Candidate
 			case wsock.ICEAnswer:
-				var data messages.Candidate
-				if err := json.Unmarshal(msg.Data, &data); err != nil {
-					logger.ROUTE.Error("unmarshaling ice-answer candidate", "err", err)
-					_ = ws.WriteClose(http.StatusBadRequest)
+				data, err := parseCandidate(ws, msg.Data)
+				if err != nil {
+					logger.ROUTE.Error("parsing ice-answer candidate", "err", err)
 					return
 				}
 

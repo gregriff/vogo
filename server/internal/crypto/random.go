@@ -15,9 +15,11 @@ func GenerateInviteCode() string {
 
 func secureRandomString(length int) string {
 	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	maxInt := big.NewInt(int64(len(charset)))
 	result := make([]byte, length)
+
 	for i := range result {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		n, _ := rand.Int(rand.Reader, maxInt)
 		result[i] = charset[n.Int64()]
 	}
 	return string(result)
