@@ -4,7 +4,6 @@ package wsock
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
@@ -66,9 +65,7 @@ func ReceiveJSON[T any](ctx context.Context, ws *websocket.Conn, v *T) error {
 
 	select {
 	case <-ctx.Done():
-		if err := ws.SetReadDeadline(time.Now()); err != nil { // interrupt the read
-			return fmt.Errorf("error: %w; and error setting read deadline: %w", ctx.Err(), err)
-		}
+		_ = ws.SetReadDeadline(time.Now()) // interrupt the read
 		return ctx.Err()
 	case err := <-done:
 		return err

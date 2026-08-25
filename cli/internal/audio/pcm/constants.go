@@ -2,7 +2,7 @@
 // structs and functions that store and manipulate int16 pcm arrays.
 //
 // Mixing functions have zero heap allocations and are available for NEON, AVX2
-// and AVX512. They are 300%+ faster than scalar and are enabled with build flags.
+// and AVX512. They are 4x+ faster than scalar and are enabled with build flags.
 package pcm
 
 import (
