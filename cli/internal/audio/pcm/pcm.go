@@ -82,6 +82,9 @@ type Streams struct {
 	// writes data to from the network.
 	data [MaxStreams]*ringbuffer.RingBuffer
 
+	// full is filled with pointers to elements in writeBufs during mixing.
+	full [MaxStreams]unsafe.Pointer
+
 	// these are used during mixing to allow for iteration of pcm via pointer arithmetic.
 	writeBufs [MaxStreams][BufferSize]int16
 
@@ -196,11 +199,9 @@ func (s *Streams) MixAndWrite(dst []byte, numSamples int) {
 	// 	log.Panicf("samplesToRead > cap(mixed)")
 	// }
 
-	// todo: try storing full as a streams field
-	full, numFull := s.fullStreams(numSamples)
-	defer clear(full[:])
+	numFull := s.fullStreams(numSamples)
+	defer clear(s.full[:])
 
-	// slowdown prob related to numfull and full... scalar 1 stream no slowdown bc of early return
 	switch numFull {
 	case 0:
 		return // nothing to write
@@ -215,7 +216,7 @@ func (s *Streams) MixAndWrite(dst []byte, numSamples int) {
 	clear(s.mixed[:])
 
 	// write a full mixed sample to the speaker buffer
-	s.mix(full, numFull, numSamples)
+	s.mix(numFull, numSamples)
 	mixed := ringbuffer.Int16ToBytes(s.mixed[:numSamples])
 	copy(dst, mixed)
 }

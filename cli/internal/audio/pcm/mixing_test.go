@@ -298,8 +298,8 @@ func (s *Streams) MixAndWriteScalar(dst []byte, numSamples int) {
 		log.Panicf("samplesToRead > cap(mixed)")
 	}
 
-	full, numFull := s.fullStreams(numSamples)
-	defer clear(full[:])
+	numFull := s.fullStreams(numSamples)
+	defer clear(s.full[:])
 
 	switch numFull {
 	case 0:
@@ -312,7 +312,7 @@ func (s *Streams) MixAndWriteScalar(dst []byte, numSamples int) {
 	}
 
 	// write a full mixed sample to the speaker buffer
-	s.mixScalar(full, numFull, numSamples)
+	s.mixScalar(numFull, numSamples)
 	mixed := ringbuffer.Int16ToBytes(s.mixed[:numSamples])
 	copy(dst, mixed)
 	clear(s.mixed[:])
@@ -354,8 +354,8 @@ func (s *Streams) MixAndWriteTanh(dst []byte, numSamples int) {
 		log.Panicf("samplesToRead > cap(mixed)")
 	}
 
-	full, numFull := s.fullStreams(numSamples)
-	defer clear(full[:])
+	numFull := s.fullStreams(numSamples)
+	defer clear(s.full[:])
 
 	switch numFull {
 	case 0:
@@ -368,7 +368,7 @@ func (s *Streams) MixAndWriteTanh(dst []byte, numSamples int) {
 	}
 
 	// write a full mixed sample to the speaker buffer
-	s.mixTanh(full, numFull, numSamples)
+	s.mixTanh(numFull, numSamples)
 	mixed := ringbuffer.Int16ToBytes(s.mixed[:numSamples])
 	copy(dst, mixed)
 	clear(s.mixed[:])
@@ -381,9 +381,9 @@ func (s *Streams) MixAndWriteTanh(dst []byte, numSamples int) {
 // is zeroed, and the speaker will play silence. Assumes numSamples <= cap(s.mixed).
 // This function is the reference spec for Pade mixing
 // functions and is not used outside of testing due to faster SIMD variants.
-func (s *Streams) mixScalar(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) {
+func (s *Streams) mixScalar(numFull, numSamples int) {
 	// avoid bounds checks
-	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.AddNew
+	_ = s.full[numFull-1]     //nolint:gosec // G602: checked in streams.AddNew
 	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.AddNew
 
 	// sum samples for each buffer
@@ -394,7 +394,7 @@ func (s *Streams) mixScalar(full [MaxStreams]unsafe.Pointer, numFull, numSamples
 		var sum int32
 		offset = uintptr(i) * int16Size
 		for j := range numFull {
-			sample = (*int16)(unsafe.Add(full[j], offset))
+			sample = (*int16)(unsafe.Add(s.full[j], offset))
 			sum += int32(*(sample))
 		}
 		s.mixed[i] = softSaturateScalar(sum, math.MaxInt16)
@@ -418,9 +418,9 @@ func (s *Streams) mixIdiomatic(full [MaxStreams]*[BufferSize]int16, numFull, num
 // by simd implementations that use approximations for improved speed. This func, now
 // used a control for testing the newer variants, uses math.Tanh to soft-saturate
 // the mixed PCM.
-func (s *Streams) mixTanh(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) {
+func (s *Streams) mixTanh(numFull, numSamples int) {
 	// avoid bounds checks
-	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.AddNew
+	_ = s.full[numFull-1]     //nolint:gosec // G602: checked in streams.AddNew
 	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.AddNew
 
 	// sum the samples across all pcm streams. Uses pointer arithmetic
@@ -430,7 +430,7 @@ func (s *Streams) mixTanh(full [MaxStreams]unsafe.Pointer, numFull, numSamples i
 		var sum int32
 		offset := uintptr(i) * int16Size
 		for j := range numFull {
-			sample := (*int16)(unsafe.Add(full[j], offset))
+			sample := (*int16)(unsafe.Add(s.full[j], offset))
 			sum += int32(*(sample))
 		}
 		s.mixed[i] = softSaturateTanh(sum, math.MaxInt16)

@@ -22,8 +22,8 @@ const (
 // If any 3 streams are full, it returns [p1, p2, p3, nil, nil]. It must be run inside s's mutex.
 // When a full stream is found, it is read from the ringbuffer into one of s.writeBufs, to ensure
 // the pcm is in contiguous memory and able to be accessed via pointer arithmetic in the mixing algo.
-func (s *Streams) fullStreams(numSamples int) ([MaxStreams]unsafe.Pointer, int) {
-	full, numFull := [MaxStreams]unsafe.Pointer{}, 0
+func (s *Streams) fullStreams(numSamples int) int {
+	numFull := 0
 
 	// TODO: research if you could have simd kernel read straight from RB to avoid these copies
 	// to the temp arrays, and full could point to the rb itself at the right read index.
@@ -33,11 +33,11 @@ func (s *Streams) fullStreams(numSamples int) ([MaxStreams]unsafe.Pointer, int) 
 			_ = rb.Read(s.writeBufs[numFull][:])
 
 			// since we're in the lock and ensured length, we can use unsafe access.
-			full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
+			s.full[numFull] = unsafe.Pointer(&(s.writeBufs[numFull])[0])
 			numFull++
 		}
 	}
-	return full, numFull
+	return numFull
 }
 
 // softSaturateScalar takes the sum of multiple int16s and returns

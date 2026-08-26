@@ -9,9 +9,9 @@ import (
 // mix mixes two or more pcm arrays with soft-saturation.
 //
 // CPU Feature: NEON
-func (s *Streams) mix(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) {
+func (s *Streams) mix(numFull, numSamples int) {
 	// avoid bounds checks
-	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.AddNew
+	_ = s.full[numFull-1]     //nolint:gosec // G602: checked in streams.AddNew
 	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.AddNew
 
 	const w16 = 8             // NEON int16 width
@@ -42,10 +42,10 @@ func (s *Streams) mix(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) 
 
 		// for each pcm array, grab 32 samples and add to the accumulators.
 		for j := range numFull {
-			accLo, accHi = loadAndAccInt16x8(accLo, accHi, full[j], offset)
-			accLo2, accHi2 = loadAndAccInt16x8(accLo2, accHi2, full[j], offset2)
-			accLo3, accHi3 = loadAndAccInt16x8(accLo3, accHi3, full[j], offset3)
-			accLo4, accHi4 = loadAndAccInt16x8(accLo4, accHi4, full[j], offset4)
+			accLo, accHi = loadAndAccInt16x8(accLo, accHi, s.full[j], offset)
+			accLo2, accHi2 = loadAndAccInt16x8(accLo2, accHi2, s.full[j], offset2)
+			accLo3, accHi3 = loadAndAccInt16x8(accLo3, accHi3, s.full[j], offset3)
+			accLo4, accHi4 = loadAndAccInt16x8(accLo4, accHi4, s.full[j], offset4)
 		}
 
 		// After saturating, pack the two result vectors by
@@ -89,7 +89,7 @@ func (s *Streams) mix(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) 
 		var sum int32
 		offset := uintptr(i) * int16Size
 		for j := range numFull {
-			sample := (*int16)(unsafe.Add(full[j], offset))
+			sample := (*int16)(unsafe.Add(s.full[j], offset))
 			sum += int32(*(sample))
 		}
 		s.mixed[i] = softSaturateScalar(sum, math.MaxInt16)

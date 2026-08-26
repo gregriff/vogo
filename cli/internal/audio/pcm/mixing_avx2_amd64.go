@@ -11,7 +11,7 @@ import (
 // mix mixes two or more pcm arrays with soft-saturation.
 //
 // CPU Feature: AVX2
-func (s *Streams) mix(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) {
+func (s *Streams) mix(numFull, numSamples int) {
 	const int16Size = unsafe.Sizeof(int16(0))
 	const w32 = 8 // AVX2 int32 width
 	const w16 = w32 * 2
@@ -19,7 +19,7 @@ func (s *Streams) mix(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) 
 	vThreshold := archsimd.BroadcastFloat32x8(math.MaxInt16)
 
 	// avoid bounds checks
-	_ = full[numFull-1]       //nolint:gosec // G602: checked in streams.AddNew
+	_ = s.full[numFull-1]     //nolint:gosec // G602: checked in streams.AddNew
 	_ = s.mixed[numSamples-1] //nolint:gosec // G602: checked in streams.AddNew
 
 	i := 0
@@ -32,8 +32,8 @@ func (s *Streams) mix(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) 
 		offset2 := uintptr(i+8) * int16Size
 
 		for j := range numFull {
-			p := (*[w16]int16)(unsafe.Add(full[j], offset))
-			p2 := (*[w16]int16)(unsafe.Add(full[j], offset2))
+			p := (*[w16]int16)(unsafe.Add(s.full[j], offset))
+			p2 := (*[w16]int16)(unsafe.Add(s.full[j], offset2))
 			v := archsimd.LoadInt16x16Array(p)
 			v2 := archsimd.LoadInt16x16Array(p2)
 
@@ -59,7 +59,7 @@ func (s *Streams) mix(full [MaxStreams]unsafe.Pointer, numFull, numSamples int) 
 		var sum int32
 		offset := uintptr(i) * int16Size
 		for j := range numFull {
-			sample := (*int16)(unsafe.Add(full[j], offset))
+			sample := (*int16)(unsafe.Add(s.full[j], offset))
 			sum += int32(*(sample))
 		}
 		s.mixed[i] = softSaturateScalar(sum, math.MaxInt16)

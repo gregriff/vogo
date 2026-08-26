@@ -203,8 +203,5 @@ pprof-view:
 	@echo "Viewing \$PPROF_FILE: $${PPROF_FILE:?PPROF_FILE is not set}"
 	go tool pprof -http=:$(PPROF_PORT) $${PPROF_FILE}
 
-trace-view:
-
-
 
 .PHONY: format lint build install answer join call invite friends channel status register test escape
