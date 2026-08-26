@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw"
+	"github.com/gregriff/vogo/shared"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -28,7 +29,7 @@ var callCmd = &cobra.Command{
 		}
 
 		recipient := args[0]
-		if len(recipient) > 16 {
+		if len(recipient) > shared.MaxUsernameLen {
 			return fmt.Errorf("recipient string too long")
 		}
 		viper.Set("recipient", recipient)

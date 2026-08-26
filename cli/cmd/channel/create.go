@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
+	"github.com/gregriff/vogo/shared"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -22,7 +23,7 @@ var createChannelCmd = &cobra.Command{
 	Args: cobra.ExactArgs(1),
 	PreRunE: func(_ *cobra.Command, args []string) error {
 		channelName := args[0]
-		if len(channelName) > 20 {
+		if len(channelName) > shared.MaxChannelNameLen {
 			return fmt.Errorf("channel name too long")
 		}
 		if channelName == "" {

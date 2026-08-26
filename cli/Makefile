@@ -7,18 +7,16 @@ SHELL = /usr/bin/env bash -o pipefail
 #
 # Detect OS
 ifeq ($(OS),Windows_NT)
-DETECTED_OS := Windows
+OS_NAME := windows
 else
 DETECTED_OS := $(shell uname -s)
-endif
 ifeq ($(DETECTED_OS),Linux)
 OS_NAME := linux
 else ifeq ($(DETECTED_OS),Darwin)
 OS_NAME := darwin
-else ifeq ($(DETECTED_OS),Windows)
-OS_NAME := windows
 else
 OS_NAME := unknown
+endif
 endif
 
 # Detect Architecture
@@ -54,8 +52,6 @@ info:
 # =========================================================================
 
 # global env vars
-GOARCH := $(ARCH_NAME)
-GOOS := $(OS_NAME)
 GOEXPERIMENT := simd
 OUT_DIR := ./bin
 
@@ -75,10 +71,10 @@ endif
 
 # cpu arch env vars
 ifeq ($(ARCH_NAME),amd64)
-GOAMD64 := v4  # or v3, depending on your CPU features
+GOAMD64 := v3  # or v4, depending on your CPU features
 endif
 
-export CC CGO_CFLAGS CGO_LDFLAGS PKG_CONFIG GOEXPERIMENT GOARCH GOAMD64 GOOS OUT_DIR
+export CC CGO_CFLAGS CGO_LDFLAGS PKG_CONFIG GOEXPERIMENT GOAMD64 OUT_DIR
 
 # view asm: `go tool objdump -s "func_name" bin/vogo`
 

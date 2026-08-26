@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw"
+	"github.com/gregriff/vogo/shared"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -32,10 +33,10 @@ var joinCmd = &cobra.Command{
 			return fmt.Errorf("channel descriptor must be of the format '[owner's name]/[channel name]' (ex, 'tom/gaming')")
 		}
 		owner, channel := strs[0], strs[1]
-		if len(owner) > 16 {
+		if len(owner) > shared.MaxUsernameLen {
 			return fmt.Errorf("owner name too long")
 		}
-		if len(channel) > 16 {
+		if len(channel) > shared.MaxChannelNameLen {
 			return fmt.Errorf("channel name too long")
 		}
 		viper.Set("ownerName", owner)

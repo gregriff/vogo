@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
+	"github.com/gregriff/vogo/shared"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -29,7 +30,7 @@ var inviteCmd = &cobra.Command{
 		viper.Set("friendName", friendName)
 
 		channelName := args[1]
-		if len(channelName) > 20 {
+		if len(channelName) > shared.MaxChannelNameLen {
 			return fmt.Errorf("channel name too long")
 		}
 		if channelName == "" {

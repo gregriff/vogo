@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
+	"github.com/gregriff/vogo/shared"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -22,7 +23,7 @@ var addFriendCmd = &cobra.Command{
 	Args: cobra.ExactArgs(1),
 	PreRunE: func(_ *cobra.Command, args []string) error {
 		friendName := args[0]
-		if len(friendName) > 16 {
+		if len(friendName) > shared.MaxUsernameLen {
 			return fmt.Errorf("friend's name too long")
 		}
 		if friendName == "" {
