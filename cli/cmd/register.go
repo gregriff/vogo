@@ -1,22 +1,25 @@
 package cmd
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"log"
-	"regexp"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	// _ "net/http/pprof".
+
+	"github.com/gregriff/vogo/shared/validation"
 )
 
 var registerCmd = &cobra.Command{
 	Use:   "register",
 	Short: "Register this client with a new user",
 	Args:  cobra.NoArgs,
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRunE: func(_ *cobra.Command, _ []string) error {
 		inviteCode := viper.GetString("code")
 		if inviteCode == "" {
 			return fmt.Errorf("must specify an invite code to register")
@@ -28,12 +31,10 @@ var registerCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(registerCmd)
-	var flagName string
 
-	flagName = "code"
-	registerCmd.PersistentFlags().String(flagName, "", "invite code for a vogo server")
-	_ = viper.BindPFlag(flagName, registerCmd.PersistentFlags().Lookup(flagName))
-
+	flagName := "code"
+	registerCmd.Flags().String(flagName, "", "invite code for a vogo server")
+	_ = viper.BindPFlag(flagName, registerCmd.Flags().Lookup(flagName))
 }
 
 func registerUser(_ *cobra.Command, _ []string) {
@@ -43,17 +44,20 @@ func registerUser(_ *cobra.Command, _ []string) {
 		viper.GetString("code"),
 		viper.GetString("servers.vogo-origin")
 
-	if vErr := validateUsername(username); vErr != nil {
-		msg := fmt.Errorf("invalid username %s (%w)", username, vErr)
+	if err := validation.CheckUsername(username); err != nil {
+		msg := fmt.Errorf("invalid username %s (%w)", username, err)
 		log.Fatal(msg.Error())
 	}
-	if vErr := validatePassword(password); vErr != nil {
-		msg := fmt.Errorf("invalid password %s (%w)", password, vErr)
+	if err := validation.CheckPassword(password); err != nil {
+		msg := fmt.Errorf("invalid password %s (%w)", password, err)
 		log.Fatal(msg.Error())
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	vogoClient := crud.NewClient(vogoServer, "", "")
-	username, err := crud.Register(vogoClient, username, password, inviteCode)
+	username, err := crud.Register(ctx, vogoClient, username, password, inviteCode)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error during registration: %w", err).Error())
 	}
@@ -66,33 +70,4 @@ func registerUser(_ *cobra.Command, _ []string) {
 	// 	)
 	// }
 	log.Printf("Now registered with username: %s", username)
-}
-
-var validCharsUsername = regexp.MustCompile(`^[A-Za-z\d@$!%*?&]+$`)
-var validCharsPassword = regexp.MustCompile(`^[A-Za-z\d@$!%*?&#]+$`)
-
-func validateUsername(username string) error {
-	if len(username) == 0 {
-		return errors.New("empty username")
-	}
-	if len(username) > 16 {
-		return errors.New("username too long. Must be 16 characters or less")
-	}
-	if valid := validCharsUsername.MatchString(username); !valid {
-		return errors.New("invalid character(s) detected. only normal characters, numbers, and some symbols (no #) allowed")
-	}
-	return nil
-}
-
-func validatePassword(password string) error {
-	if len(password) == 0 {
-		return errors.New("empty password. please ensure it's your config file")
-	}
-	if len(password) > 30 {
-		return errors.New("password too long. Must be 30 characters or less")
-	}
-	if valid := validCharsPassword.MatchString(password); !valid {
-		return errors.New("invalid character(s) detected. only normal characters, numbers, and some symbols allowed")
-	}
-	return nil
 }

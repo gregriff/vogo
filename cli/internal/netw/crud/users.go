@@ -3,32 +3,31 @@ package crud
 // users.go implements user-related CRUD.
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/gregriff/vogo/shared/public"
+	"github.com/gregriff/vogo/shared/requests"
+	"github.com/gregriff/vogo/shared/responses"
 )
 
-type newUser struct {
-	Name,
-	Password string
-	InviteCode string
-}
-
 // Register asks the vogo-server to create a new user given the provided credentials and returns
-// the official username and friend code if sucessful. It will exit if an error is encountered.
-func Register(client *http.Client, username, password, inviteCode string) (string, error) {
-	newUser := newUser{Name: username, Password: password, InviteCode: inviteCode}
-	payload, err := json.Marshal(newUser)
+// the official username and friend code if successful. It will exit if an error is encountered.
+func Register(ctx context.Context, client *http.Client, username, password, inviteCode string) (string, error) {
+	data := requests.NewUser{Name: username, Password: password, InviteCode: inviteCode}
+	payload, err := json.Marshal(data)
 	if err != nil {
 		return "", fmt.Errorf("json marshal error: %w", err)
 	}
 
-	res, err := client.Post(
-		"/register",
-		"application/json; charset=utf-8",
-		bytes.NewReader(payload),
-	)
+	req, err := http.NewRequestWithContext(ctx, "POST", "/register", bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+	res, err := client.Do(req) //nolint:gosec // G704: URL is static
 	if err != nil {
 		return "", fmt.Errorf("request error: %w", err)
 	}
@@ -48,33 +47,14 @@ func Register(client *http.Client, username, password, inviteCode string) (strin
 	return username, nil
 }
 
-type user struct {
-	Name string
-}
-
-type Friend struct {
-	user
-	Status string
-}
-
-type Channel struct {
-	Owner,
-	Name,
-	Description string
-
-	Capacity int
-
-	MemberNames string
-}
-
-type statusResponse struct {
-	Friends  []Friend
-	Channels []Channel
-}
-
 // Status fetches friends, channels, and incoming calls.
-func Status(client *http.Client) (status *statusResponse, err error) {
-	res, err := client.Get("/status")
+func Status(ctx context.Context, client *http.Client) (status *responses.Status, err error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", "/status", nil)
+	if err != nil {
+		err = fmt.Errorf("error creating request: %w", err)
+		return
+	}
+	res, err := client.Do(req) //nolint:gosec // G704: URL is static
 	if err != nil {
 		err = fmt.Errorf("request error: %w", err)
 		return
@@ -97,29 +77,24 @@ func Status(client *http.Client) (status *statusResponse, err error) {
 	return
 }
 
-type addFriendResponse struct {
-	Name string
-}
-
-// AddFriend adds a friend. TODO: make this return a friend
-func AddFriend(client *http.Client, friendName string) (status *addFriendResponse, err error) {
-	req := struct {
-		Name string
-	}{Name: friendName}
-
-	payload, err := json.Marshal(req)
+// AddFriend adds a friend. TODO: make this return a friend.
+func AddFriend(ctx context.Context, client *http.Client, friendName string) (friend *public.User, err error) {
+	data := requests.AddFriend{Name: friendName}
+	payload, err := json.Marshal(data)
 	if err != nil {
 		err = fmt.Errorf("json marshal err")
-		return
+		return friend, err
 	}
 
-	res, err := client.Post("/friend",
-		"application/json; charset=utf-8",
-		bytes.NewReader(payload),
-	)
+	req, err := http.NewRequestWithContext(ctx, "POST", "/friend", bytes.NewReader(payload))
+	if err != nil {
+		err = fmt.Errorf("error creating request: %w", err)
+		return friend, err
+	}
+	res, err := client.Do(req) //nolint:gosec // G704: URL is static
 	if err != nil {
 		err = fmt.Errorf("request error: %w", err)
-		return
+		return friend, err
 	}
 
 	defer func() {
@@ -129,94 +104,86 @@ func AddFriend(client *http.Client, friendName string) (status *addFriendRespons
 	if res.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(res.Body)
 		err = fmt.Errorf("request failed: %s", string(body))
-		return
-	}
-
-	if err = json.NewDecoder(res.Body).Decode(&status); err != nil {
-		err = fmt.Errorf("json decode error: %w", err)
-		return
-	}
-	return
-}
-
-// CreateChannel creates a persistent voice-chat channel.
-func CreateChannel(client *http.Client, name, desc string, cap int) (channel *Channel, err error) {
-	req := struct {
-		Name,
-		Description string
-		Capacity int
-	}{Name: name}
-
-	payload, err := json.Marshal(req)
-	if err != nil {
-		err = fmt.Errorf("json marshal err")
-		return
-	}
-
-	res, err := client.Post("/channel",
-		"application/json; charset=utf-8",
-		bytes.NewReader(payload),
-	)
-	if err != nil {
-		err = fmt.Errorf("request error: %w", err)
-		return
-	}
-
-	defer func() {
-		_ = res.Body.Close()
-	}()
-
-	if res.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(res.Body)
-		err = fmt.Errorf("request failed: %s", string(body))
-		return
-	}
-
-	if err = json.NewDecoder(res.Body).Decode(&channel); err != nil {
-		err = fmt.Errorf("json decode error: %w", err)
-		return
-	}
-	return
-}
-
-type inviteFriendResponse struct {
-	Name string
-}
-
-func InviteFriend(client *http.Client, channelName, friendName string) (friend *inviteFriendResponse, err error) {
-	req := struct {
-		ChannelName,
-		FriendName string
-	}{ChannelName: channelName, FriendName: friendName}
-
-	payload, err := json.Marshal(req)
-	if err != nil {
-		err = fmt.Errorf("json marshal err")
-		return
-	}
-
-	res, err := client.Post("/invite",
-		"application/json; charset=utf-8",
-		bytes.NewReader(payload),
-	)
-	if err != nil {
-		err = fmt.Errorf("request error: %w", err)
-		return
-	}
-
-	defer func() {
-		_ = res.Body.Close()
-	}()
-
-	if res.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(res.Body)
-		err = fmt.Errorf("request failed: %s", string(body))
-		return
+		return friend, err
 	}
 
 	if err = json.NewDecoder(res.Body).Decode(&friend); err != nil {
 		err = fmt.Errorf("json decode error: %w", err)
-		return
+		return friend, err
 	}
-	return
+	return friend, err
+}
+
+// CreateChannel creates a persistent voice-chat channel.
+func CreateChannel(ctx context.Context, client *http.Client, name, desc string, capacity int) (channel *public.Channel, err error) {
+	data := requests.CreateChannel{Name: name, Description: desc, Capacity: capacity}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		err = fmt.Errorf("json marshal err")
+		return channel, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "/channel", bytes.NewReader(payload))
+	if err != nil {
+		err = fmt.Errorf("error creating request: %w", err)
+		return channel, err
+	}
+	res, err := client.Do(req) //nolint:gosec // G704: URL is static
+	if err != nil {
+		err = fmt.Errorf("request error: %w", err)
+		return channel, err
+	}
+
+	defer func() {
+		_ = res.Body.Close()
+	}()
+
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		err = fmt.Errorf("request failed: %s", string(body))
+		return channel, err
+	}
+
+	if err = json.NewDecoder(res.Body).Decode(&channel); err != nil {
+		err = fmt.Errorf("json decode error: %w", err)
+		return channel, err
+	}
+	return channel, err
+}
+
+// InviteFriend invites a friend to a channel owned by the user inviting.
+func InviteFriend(ctx context.Context, client *http.Client, channelName, friendName string) (friend *public.User, err error) {
+	data := requests.InviteFriend{ChannelName: channelName, FriendName: friendName}
+	payload, err := json.Marshal(data)
+	if err != nil {
+		err = fmt.Errorf("json marshal err")
+		return friend, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "/channel/invite", bytes.NewReader(payload))
+	if err != nil {
+		err = fmt.Errorf("error creating request: %w", err)
+		return friend, err
+	}
+	res, err := client.Do(req) //nolint:gosec // G704: URL is static
+	if err != nil {
+		err = fmt.Errorf("request error: %w", err)
+		return friend, err
+	}
+
+	defer func() {
+		_ = res.Body.Close()
+	}()
+
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		err = fmt.Errorf("request failed: %s", string(body))
+		return friend, err
+	}
+
+	if err = json.NewDecoder(res.Body).Decode(&friend); err != nil {
+		err = fmt.Errorf("json decode error: %w", err)
+		return friend, err
+	}
+	return friend, err
 }

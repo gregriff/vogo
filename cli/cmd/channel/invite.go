@@ -1,10 +1,15 @@
-package cmd
+package channel
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
+	"github.com/gregriff/vogo/shared"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -17,7 +22,7 @@ var inviteCmd = &cobra.Command{
       channel 	  The name of the channel (required)
 	`,
 	Args: cobra.ExactArgs(2),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRunE: func(_ *cobra.Command, args []string) error {
 		friendName := args[0]
 		if len(friendName) == 0 {
 			return fmt.Errorf("must specify a friend to invite")
@@ -25,7 +30,7 @@ var inviteCmd = &cobra.Command{
 		viper.Set("friendName", friendName)
 
 		channelName := args[1]
-		if len(channelName) > 20 {
+		if len(channelName) > shared.MaxChannelNameLen {
 			return fmt.Errorf("channel name too long")
 		}
 		if channelName == "" {
@@ -38,10 +43,6 @@ var inviteCmd = &cobra.Command{
 	Run: inviteFriend,
 }
 
-func init() {
-	rootCmd.AddCommand(inviteCmd)
-}
-
 func inviteFriend(_ *cobra.Command, _ []string) {
 	_, username, password, channelName, friendName, vogoServer := viper.GetBool("debug"),
 		viper.GetString("user.name"),
@@ -50,8 +51,11 @@ func inviteFriend(_ *cobra.Command, _ []string) {
 		viper.GetString("friendName"),
 		viper.GetString("servers.vogo-origin")
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	vogoClient := crud.NewClient(vogoServer, username, password)
-	friend, err := crud.InviteFriend(vogoClient, channelName, friendName)
+	friend, err := crud.InviteFriend(ctx, vogoClient, channelName, friendName)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error inviting friend: %w", err).Error())
 	}

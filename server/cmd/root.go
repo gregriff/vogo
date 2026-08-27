@@ -2,20 +2,32 @@
 package cmd
 
 import (
-	"fmt"
 	"log"
+	"net/http"
+	"path/filepath"
 
 	"github.com/gregriff/vogo/server/configs"
 	"github.com/spf13/cobra"
+
+	_ "net/http/pprof"
 )
 
 var ConfigFile string
+var pprofAddr string
 
 // rootCmd represents the base command when called without any subcommands.
 var rootCmd = &cobra.Command{
 	Use:   "vogo-server",
 	Short: "Facilitates WebRTC signaling and persists call/channel state for Vogo clients",
 	Long:  ``,
+	PersistentPreRun: func(_ *cobra.Command, _ []string) {
+		if pprofAddr != "" {
+			log.Printf("starting pprof server at %s", pprofAddr)
+			go func() {
+				log.Println(http.ListenAndServe(pprofAddr, nil))
+			}()
+		}
+	},
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	// Run: func(cmd *cobra.Command, args []string) { },
@@ -24,8 +36,7 @@ var rootCmd = &cobra.Command{
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err.Error())
 	}
 }
@@ -37,14 +48,21 @@ func init() {
 
 	// deferring this allows user to override config path with cli option
 	cobra.OnInitialize(func() {
-		log.Printf("using config file: %s", ConfigFile)
-		configs.InitConfig(ConfigFile)
+		nativeFilepath, err := filepath.Abs(ConfigFile)
+		if err != nil {
+			log.Fatalf("error resolving config file: %v", err)
+		}
+		log.Printf("using config file: %s", nativeFilepath)
+		configs.Init("vogo-server", nativeFilepath)
 
-		configs.ConfigurePostgres()
+		if err := configs.ConfigurePostgres(); err != nil {
+			log.Fatal(err)
+		}
 	})
 
-	configDir := configs.GetConfigDir()
-	defaultConfigFilePath := fmt.Sprintf("%s/vogo-server.toml", configDir)
+	configDir := configs.Dir("vogo")
+	defaultConfigFilePath := filepath.Join(configDir, "vogo-server.toml")
 	rootCmd.PersistentFlags().StringVar(&ConfigFile, "config", defaultConfigFilePath, "config file")
 
+	rootCmd.PersistentFlags().StringVar(&pprofAddr, "pprof", "", "enable pprof on addr (e.g. localhost:6060)")
 }

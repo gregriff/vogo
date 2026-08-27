@@ -1,4 +1,13 @@
-bin
+bin/
 
 *.sqlite
 **/dev.*
+
+logs/
+
+.pprof/
+
+escape.out
+ops*.test
+
+*prompt.txt
