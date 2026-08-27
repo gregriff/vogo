@@ -35,7 +35,7 @@ func BasicAuth(next http.Handler, db *sql.DB, logOpts logging.Opts) http.Handler
 
 		user, err := dal.GetUserWithPassword(db, username)
 		if err != nil || crypto.CompareHashAndPassword(user.Password, password) != nil {
-			logger.Error("wrong password or db error: ", "err", err)
+			logger.Error("error querying user with password", "err", err)
 			writeAuthError(w)
 			return
 		}

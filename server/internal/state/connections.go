@@ -2,7 +2,7 @@
 package state
 
 import (
-	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -36,7 +36,7 @@ func (m *connMap) Get(id uuid.UUID) (*connection, error) {
 	if c, ok := m.conns[id]; ok {
 		return c, nil
 	}
-	return &connection{}, errors.New("connection not found")
+	return &connection{}, fmt.Errorf("connection not found")
 }
 
 // Delete removes a call entry from the PendingCalls map.

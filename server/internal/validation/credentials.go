@@ -2,7 +2,6 @@ package validation
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,7 +14,7 @@ import (
 func CheckRegistrationCredentials(db *sql.DB, inviteCode, username, password string) (int, error) {
 	if err := dal.ValidateInviteCode(db, inviteCode); err != nil {
 		log.Printf("invite code validation error: %v", err)
-		return http.StatusUnauthorized, errors.New("invalid invite code")
+		return http.StatusUnauthorized, fmt.Errorf("invalid invite code")
 	}
 	if err := v.CheckUsername(username); err != nil {
 		return http.StatusBadRequest, fmt.Errorf("invalid username %s (%w)", username, err)

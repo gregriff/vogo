@@ -1,7 +1,6 @@
 package state
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -146,7 +145,7 @@ func (m *roomMap) Get(id uuid.UUID) (*room, error) {
 	if r, exists := m.active[id]; exists {
 		return r, nil
 	}
-	return &room{}, errors.New("channel not found")
+	return &room{}, fmt.Errorf("channel not found")
 }
 
 // Delete removes a room entry from the activeRooms map.

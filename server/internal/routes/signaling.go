@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,7 +44,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	caller, err := dal.GetUser(h.db, username)
 	if err != nil {
 		logger.ROUTE.Error("querying user", "err", err)
-		_ = ws.WriteClose(http.StatusInternalServerError)
+		_ = ws.WriteClose(getUserErrCode(err))
 		return
 	}
 
@@ -57,11 +58,11 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	recipient, err := dal.GetUser(h.db, offer.To)
 	if err != nil {
 		logger.ROUTE.Error("querying recipient", "err", err)
-		_ = ws.WriteClose(http.StatusBadRequest)
+		_ = ws.WriteClose(getUserErrCode(err))
 		return
 	}
 
-	friends, err := dal.AreFriends(h.db, caller.Id, recipient.Id)
+	friends, err := caller.HasFriend(h.db, recipient.Id)
 	if err != nil {
 		logger.ROUTE.Error("querying friendship status", "with", recipient.Name, "err", err)
 		_ = ws.WriteClose(http.StatusInternalServerError)
@@ -232,7 +233,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	recipient, err := dal.GetUser(h.db, username)
 	if err != nil {
 		logger.ROUTE.Error("querying user", "err", err)
-		_ = ws.WriteClose(http.StatusInternalServerError)
+		_ = ws.WriteClose(getUserErrCode(err))
 		return
 	}
 
@@ -241,10 +242,11 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	caller, err := dal.GetUser(h.db, callerName)
 	if err != nil {
 		logger.ROUTE.Error("querying caller", "err", err)
-		_ = ws.WriteClose(http.StatusBadRequest)
+		_ = ws.WriteClose(getUserErrCode(err))
 		return
 	}
-	friends, err := dal.AreFriends(h.db, caller.Id, recipient.Id)
+
+	friends, err := recipient.HasFriend(h.db, caller.Id)
 	if err != nil {
 		logger.ROUTE.Error("querying friendship status", "with", callerName, "err", err)
 		_ = ws.WriteClose(http.StatusInternalServerError)
@@ -338,6 +340,15 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 	}
 }
 
+// getUserErrCode returns an http error code for a non-nil
+// error returned by dal.GetUser().
+func getUserErrCode(err error) int {
+	if err == sql.ErrNoRows {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 // JoinRoom lets a user join a room they are a member of, given its name and owner's name,
 // and creates the in-memory representation of that room if no members are currently connected
 // to it. This is a websocket endpoint that will stay open until the user leaves the room call
@@ -352,8 +363,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	username := middleware.GetUsernameWS(ws)
 	user, err := dal.GetUser(h.db, username)
 	if err != nil {
-		logger.ROUTE.Error("fetching user", "err", err)
-		_ = ws.WriteClose(http.StatusInternalServerError)
+		logger.ROUTE.Error("querying user", "err", err)
+		_ = ws.WriteClose(getUserErrCode(err))
 		return
 	}
 
@@ -369,8 +380,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	}
 	owner, err := dal.GetUser(h.db, req.OwnerName)
 	if err != nil {
-		logger.ROUTE.Error("fetching room owner", "err", err)
-		_ = ws.WriteClose(http.StatusBadRequest)
+		logger.ROUTE.Error("querying room owner", "err", err)
+		_ = ws.WriteClose(getUserErrCode(err))
 		return
 	}
 

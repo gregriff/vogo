@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,7 +34,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 	hashedPassword, err := crypto.HashPassword(data.Password)
 	if err != nil {
 		logger.ROUTE.Error("hashing password", "err", err)
-		err = errors.New("password error")
+		err = fmt.Errorf("password error")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -41,8 +42,7 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 	username, err := dal.CreateUser(h.db, data.Name, hashedPassword, data.InviteCode)
 	if err != nil {
 		logger.ROUTE.Error("creating new user", "err", err)
-		err = errors.New("error creating new user")
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "error creating new user", http.StatusInternalServerError)
 		return
 	}
 
@@ -51,27 +51,34 @@ func (h *RouteHandler) Register(w http.ResponseWriter, req *http.Request) {
 
 // Status writes a response containing the user's friends and any channels they are a member of.
 func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
+	logger := h.loggers.forRequest(req)
 	username := middleware.GetUsername(req)
 
 	user, err := dal.GetUser(h.db, username)
 	if err != nil {
-		err = fmt.Errorf("error getting user: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpCode := http.StatusInternalServerError
+		httpErr := "error getting user"
+		if err == sql.ErrNoRows {
+			httpCode = http.StatusBadRequest
+			httpErr += ": user not found"
+		}
+		logger.ROUTE.Error("querying user", "err", err)
+		http.Error(w, httpErr, httpCode)
 		return
 	}
 
 	userId := user.Id.String()
-	friends, err := dal.GetFriends(h.db, userId, true)
+	friends, err := user.Friends(h.db, true)
 	if err != nil {
-		err = fmt.Errorf("error getting friends: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logger.ROUTE.Error("querying friends", "err", err)
+		http.Error(w, "error getting friends", http.StatusInternalServerError)
 		return
 	}
 
 	channels, err := dal.GetChannels(h.db, userId)
 	if err != nil {
-		err = fmt.Errorf("error getting channels: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logger.ROUTE.Error("querying channels", "err", err)
+		http.Error(w, "error getting channels", http.StatusInternalServerError)
 		return
 	}
 
@@ -82,24 +89,32 @@ func (h *RouteHandler) Status(w http.ResponseWriter, req *http.Request) {
 
 // CreateChannel creates a persistent voice-chat channel.
 func (h *RouteHandler) CreateChannel(w http.ResponseWriter, req *http.Request) {
+	logger := h.loggers.forRequest(req)
 	username := middleware.GetUsername(req)
 
 	user, err := dal.GetUser(h.db, username)
 	if err != nil {
-		err = fmt.Errorf("error getting user: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpCode := http.StatusInternalServerError
+		httpErr := "error getting user"
+		if err == sql.ErrNoRows {
+			httpCode = http.StatusBadRequest
+			httpErr += ": user not found"
+		}
+		logger.ROUTE.Error("querying user", "err", err)
+		http.Error(w, httpErr, httpCode)
 		return
 	}
 
 	channel := requests.CreateChannel{}
 	if err := json.NewDecoder(req.Body).Decode(&channel); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logger.ROUTE.Error("decoding create channel request", "err", err)
+		http.Error(w, "incorrect data in request", http.StatusBadRequest)
 		return
 	}
 
 	if len(channel.Name) == 0 {
-		err = errors.New("no channel name specified")
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		logger.ROUTE.Error("user did not specify a channel name")
+		http.Error(w, "no channel name specified", http.StatusBadRequest)
 		return
 	}
 
@@ -109,7 +124,14 @@ func (h *RouteHandler) CreateChannel(w http.ResponseWriter, req *http.Request) {
 
 	dbChannel, err := dal.CreateChannel(h.db, user.Id, channel)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpCode := http.StatusInternalServerError
+		httpErr := "error creating channel"
+		if errors.Is(err, sql.ErrNoRows) {
+			httpCode = http.StatusBadRequest
+			httpErr += ": channel already exists"
+		}
+		logger.ROUTE.Error("creating channel", "err", err)
+		http.Error(w, httpErr, httpCode)
 		return
 	}
 
@@ -118,31 +140,45 @@ func (h *RouteHandler) CreateChannel(w http.ResponseWriter, req *http.Request) {
 
 // AddFriend creates or accepts a friend request with another user.
 func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
+	logger := h.loggers.forRequest(req)
 	username := middleware.GetUsername(req)
 
 	user, err := dal.GetUser(h.db, username)
 	if err != nil {
-		err = fmt.Errorf("error getting user: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpCode := http.StatusInternalServerError
+		httpErr := "error getting user"
+		if err == sql.ErrNoRows {
+			httpCode = http.StatusBadRequest
+			httpErr += ": user not found"
+		}
+		logger.ROUTE.Error("querying user", "err", err)
+		http.Error(w, httpErr, httpCode)
 		return
 	}
 
 	data := requests.AddFriend{}
 	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logger.ROUTE.Error("decoding add friend request", "err", err)
+		http.Error(w, "incorrect data in request", http.StatusBadRequest)
 		return
 	}
 
 	if len(data.Name) == 0 {
-		err = errors.New("no name specified")
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		logger.ROUTE.Error("user did not specify a friend's name")
+		http.Error(w, "friend's name not specified", http.StatusBadRequest)
 		return
 	}
 
-	friend, err := dal.AddFriend(h.db, user.Id, data.Name)
+	friend, err := user.AddFriend(h.db, data.Name)
 	if err != nil {
-		err = fmt.Errorf("error during query: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpCode := http.StatusInternalServerError
+		httpErr := "error adding friend"
+		if errors.Is(err, sql.ErrNoRows) {
+			httpCode = http.StatusBadRequest
+			httpErr += fmt.Sprintf(": user with name %s not found", data.Name)
+		}
+		logger.ROUTE.Error("adding friend", "err", err, "name", data.Name)
+		http.Error(w, httpErr, httpCode)
 		return
 	}
 
@@ -151,35 +187,53 @@ func (h *RouteHandler) AddFriend(w http.ResponseWriter, req *http.Request) {
 
 // InviteFriend invites a friend to an existing channel. Currently they join immediately (without having to accept).
 func (h *RouteHandler) InviteFriend(w http.ResponseWriter, req *http.Request) {
+	logger := h.loggers.forRequest(req)
 	username := middleware.GetUsername(req)
 
 	user, err := dal.GetUser(h.db, username)
 	if err != nil {
-		err = fmt.Errorf("error getting user: %w", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpCode := http.StatusInternalServerError
+		httpErr := "error getting user"
+		if err == sql.ErrNoRows {
+			httpCode = http.StatusBadRequest
+			httpErr += ": user not found"
+		}
+		logger.ROUTE.Error("querying user", "err", err)
+		http.Error(w, httpErr, httpCode)
 		return
 	}
 
 	data := requests.InviteFriend{}
 	if err := json.NewDecoder(req.Body).Decode(&data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		logger.ROUTE.Error("decoding invite friend request", "err", err)
+		http.Error(w, "incorrect data in request", http.StatusBadRequest)
 		return
 	}
 
 	if len(data.ChannelName) == 0 {
-		err = errors.New("no channel name specified")
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		logger.ROUTE.Error("user did not specify a channel name")
+		http.Error(w, "channel name not specified", http.StatusBadRequest)
 		return
 	}
 	if len(data.FriendName) == 0 {
-		err = errors.New("no friend name specified")
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		logger.ROUTE.Error("user did not specify a friend's name")
+		http.Error(w, "friend's name not specified", http.StatusBadRequest)
 		return
 	}
 
-	friend, err := dal.InviteFriend(h.db, user.Id, data.ChannelName, data.FriendName)
+	friend, err := user.InviteFriend(h.db, data.ChannelName, data.FriendName)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		httpCode := http.StatusBadRequest
+		httpErr := "error inviting friend: "
+		if errors.Is(err, sql.ErrNoRows) {
+			httpErr += fmt.Sprintf("user with name %s not found", data.FriendName)
+		} else if errors.Is(err, dal.ErrChannelNotFound) {
+			httpErr += dal.ErrChannelNotFound.Error()
+		} else {
+			httpCode = http.StatusInternalServerError
+		}
+		logger.ROUTE.Error("inviting friend", "err", err, "name", data.FriendName)
+		http.Error(w, httpErr, httpCode)
 		return
 	}
 

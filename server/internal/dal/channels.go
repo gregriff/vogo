@@ -16,6 +16,8 @@ import (
 	"github.com/gregriff/vogo/shared/requests"
 )
 
+var ErrChannelNotFound = errors.New("channel not found or inviter is not owner")
+
 // Channel is the database representation of public.Channel.
 type Channel struct {
 	public.Channel
@@ -69,8 +71,6 @@ func GetChannels(db *sql.DB, userId string) ([]public.Channel, error) {
 // CreateChannel creates a channel in the database. TODO: handle onconflict, tell user to use PUT to edit.
 func CreateChannel(db *sql.DB, ownerId uuid.UUID, data requests.CreateChannel) (*public.Channel, error) {
 	ctx := context.TODO()
-	var channel public.Channel
-	var channelId uuid.UUID
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -83,13 +83,13 @@ func CreateChannel(db *sql.DB, ownerId uuid.UUID, data requests.CreateChannel) (
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT DO NOTHING RETURNING id, name, description, capacity
 	`
+
+	var channel public.Channel
+	var channelId uuid.UUID
 	err = tx.QueryRowContext(ctx, query, uuid.New(), ownerId, data.Name, data.Description, data.Capacity).
 		Scan(&channelId, &channel.Name, &channel.Description, &channel.Capacity)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("channel already exists")
-		}
-		return nil, err
+		return nil, fmt.Errorf("error inserting new channel: %w", err)
 	}
 
 	query = `
@@ -98,7 +98,7 @@ func CreateChannel(db *sql.DB, ownerId uuid.UUID, data requests.CreateChannel) (
 		ON CONFLICT DO NOTHING
 	`
 	if _, err = tx.ExecContext(ctx, query, channelId, ownerId, ownerId); err != nil {
-		return nil, fmt.Errorf("error adding creator as a member of channel")
+		return nil, fmt.Errorf("error adding creator as a member of channel: %w", err)
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
@@ -107,13 +107,12 @@ func CreateChannel(db *sql.DB, ownerId uuid.UUID, data requests.CreateChannel) (
 }
 
 // InviteFriend adds a friend to an existing channel. Only the owner can invite.
-func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) (*public.User, error) {
+func (u *User) InviteFriend(db *sql.DB, channelName, friendName string) (*public.User, error) {
 	ctx := context.TODO()
-	friend := public.User{}
 
 	dbFriend, err := GetUser(db, friendName)
 	if err != nil {
-		return &friend, fmt.Errorf("friend not found: %w", err)
+		return nil, fmt.Errorf("error querying friend: %w", err)
 	}
 
 	query := `
@@ -128,14 +127,15 @@ func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) 
         RETURNING channel_id;
     `
 
+	var friend public.User
 	var channelId uuid.UUID
-	err = db.QueryRowContext(ctx, query, channelName, userId, dbFriend.Id).Scan(&channelId)
+	err = db.QueryRowContext(ctx, query, channelName, u.Id, dbFriend.Id).Scan(&channelId)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, errors.New("channel not found or inviter is not owner")
+			return nil, ErrChannelNotFound
 		}
-		log.Printf("%v", fmt.Errorf("error during invite friend query: %w", err))
-		return nil, errors.New("error during invite friend query: user probably already in channel")
+		// TODO: check if user is already in channel.
+		return nil, fmt.Errorf("error inserting into channel_members (user probably already in channel): w", err)
 	}
 	friend.Name = dbFriend.Name
 	return &friend, nil
@@ -146,7 +146,7 @@ func InviteFriend(db *sql.DB, userId uuid.UUID, channelName, friendName string) 
 // This is because there is a unique constraint on db::channels(owner_id, name).
 func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*Channel, error) {
 	ctx := context.TODO()
-	var channel Channel
+
 	query := `
         SELECT
             c.id, c.name, c.description, c.capacity, c.created_at
@@ -155,13 +155,14 @@ func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*
         WHERE m.user_id = $1 AND c.owner_id = $2 AND c.name = $3
     `
 
+	var channel Channel
 	err := db.QueryRowContext(ctx, query, memberId, ownerId, name).
 		Scan(&channel.Id, &channel.Name, &channel.Description, &channel.Capacity, &channel.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return &channel, fmt.Errorf("channel not found: %s", name)
+			return nil, fmt.Errorf("channel not found: %s", name)
 		}
-		return &channel, err
+		return nil, err
 	}
 	return &channel, nil
 }

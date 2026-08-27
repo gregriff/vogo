@@ -26,7 +26,7 @@ func Dir(name string) string {
 
 // 	data, err := os.ReadFile(filename)
 // 	if err != nil {
-// 		return errors.New("config file not found! developer error")
+// 		return fmt.Errorf("config file not found! developer error")
 // 	}
 
 // 	// loads entire config

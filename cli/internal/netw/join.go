@@ -4,7 +4,6 @@ package netw
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -153,7 +152,7 @@ func joinChannelAndConnect(
 		var err error
 		if err = wsock.Listen(gCtx, ws, msgs); err != nil {
 			if err == io.EOF { // todo: may need to handle this in startMessageLoop
-				err = errors.New("closed by server")
+				err = fmt.Errorf("closed by server")
 			}
 			_ = ws.WriteClose(1)
 		}

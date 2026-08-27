@@ -77,57 +77,36 @@ func CreateUser(db *sql.DB, username, hashedPassword, inviteCode string) (*strin
 // GetUser returns a user from the database given their username.
 func GetUser(db *sql.DB, username string) (*User, error) {
 	ctx := context.TODO()
-	var user User
 	username = strings.ToLower(username)
 
 	query := "SELECT id, username, created_at FROM users WHERE username = $1"
+
+	var user User
 	err := db.QueryRowContext(ctx, query, username).Scan(&user.Id, &user.Name, &user.CreatedAt)
-	if err != nil {
-		// TODO: this should just return &user, err,
-		// and caller should look for ErrNoRows
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found: %s", username)
-		}
-		return nil, fmt.Errorf("error querying user: %w", err)
-	}
-	return &user, nil
+	return &user, err
 }
 
 // GetUserWithPassword returns a friend from the database with their hashed password given their username.
 func GetUserWithPassword(db *sql.DB, username string) (*UserWithPassword, error) {
 	ctx := context.TODO()
-	var user UserWithPassword
 	username = strings.ToLower(username)
 
 	query := "SELECT id, username, password, created_at FROM users WHERE username = $1"
+
+	var user UserWithPassword
 	err := db.QueryRowContext(ctx, query, username).Scan(&user.Id, &user.Name, &user.Password, &user.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found: %s", username)
+			return nil, fmt.Errorf("user %s not found", username)
 		}
-		return nil, fmt.Errorf("error querying user: %w", err)
+		return nil, fmt.Errorf("other error. probably wrong password")
 	}
 	return &user, nil
 }
 
-func GetUserById(db *sql.DB, id string) (*User, error) {
-	ctx := context.TODO()
-	var user User
-
-	query := "SELECT id, username, created_at FROM users WHERE id = $1"
-	err := db.QueryRowContext(ctx, query, id).Scan(&user.Id, &user.Name, &user.CreatedAt)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found: %s", id)
-		}
-		return nil, fmt.Errorf("error querying user: %w", err)
-	}
-	return &user, nil
-}
-
-// GetFriends returns the names of the friends of a user with a given id.
+// Friends returns the names of the friends of the user.
 // Use pending to control returning incoming friend requests.
-func GetFriends(db *sql.DB, userId string, pending bool) ([]public.Friend, error) {
+func (u *User) Friends(db *sql.DB, pending bool) ([]public.Friend, error) {
 	ctx := context.TODO()
 	friends := make([]public.Friend, 0, 10)
 
@@ -145,7 +124,7 @@ func GetFriends(db *sql.DB, userId string, pending bool) ([]public.Friend, error
 	}
 
 	query := fmt.Sprintf(template, filter)
-	rows, err := db.QueryContext(ctx, query, userId)
+	rows, err := db.QueryContext(ctx, query, u.Id.String())
 	if err != nil {
 		return nil, err
 	}
@@ -165,13 +144,12 @@ func GetFriends(db *sql.DB, userId string, pending bool) ([]public.Friend, error
 }
 
 // AddFriend adds a friend with a given name.
-func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, error) {
+func (u *User) AddFriend(db *sql.DB, friendName string) (*public.User, error) {
 	ctx := context.TODO()
-	friend := public.User{}
 
 	dbFriend, err := GetUser(db, friendName)
 	if err != nil {
-		return &friend, fmt.Errorf("friend not found: %w", err)
+		return nil, fmt.Errorf("friend not found: %w", err)
 	}
 
 	// if the request is already pending, update it to accepted
@@ -182,7 +160,9 @@ func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, e
 		DO UPDATE SET status = 'accepted'
     	WHERE friendships.status = 'pending'
        `
-	_, err = db.ExecContext(ctx, query, userId, dbFriend.Id)
+
+	var friend public.User
+	_, err = db.ExecContext(ctx, query, u.Id, dbFriend.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -190,9 +170,10 @@ func AddFriend(db *sql.DB, userId uuid.UUID, friendName string) (*public.User, e
 	return &friend, nil
 }
 
-// AreFriends returns true if the two users are friends.
-func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
+// HasFriend returns true if the users are friends.
+func (u *User) HasFriend(db *sql.DB, friendId uuid.UUID) (bool, error) {
 	ctx := context.TODO()
+
 	query := `
 	    SELECT EXISTS(
 	        SELECT 1 FROM friendships
@@ -202,6 +183,6 @@ func AreFriends(db *sql.DB, userId, friendId uuid.UUID) (bool, error) {
 		)`
 
 	var areFriends bool
-	err := db.QueryRowContext(ctx, query, userId, friendId).Scan(&areFriends)
+	err := db.QueryRowContext(ctx, query, u.Id, friendId).Scan(&areFriends)
 	return areFriends, err
 }
