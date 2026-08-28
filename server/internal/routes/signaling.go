@@ -92,6 +92,7 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 		return dispatchMessages(gCtx, cancel, ws, msgChan, logger.ROUTE)
 	})
 
+	// recv messages on websocket until cancelled.
 	for {
 		select {
 		case <-ctx.Done():
@@ -218,6 +219,15 @@ func parseCandidate(ws *websocket.Conn, data json.RawMessage) (messages.Candidat
 	return c, err
 }
 
+// getUserErrCode returns an http error code for a non-nil
+// error returned by dal.GetUser().
+func getUserErrCode(err error) int {
+	if err == sql.ErrNoRows {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 // Answer obtains the caller's name from the first ws message and sends the caller's offer Sd to the client.
 // It then waits for the clients answer, where it then facilitates trickle-ICE gathering between the two clients.
 func (h *RouteHandler) Answer(ws *websocket.Conn) {
@@ -293,6 +303,7 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 		return dispatchMessages(gCtx, cancel, ws, msgChan, logger.ROUTE)
 	})
 
+	// recv messages on websocket until cancelled.
 	for {
 		select {
 		case <-ctx.Done():
@@ -338,15 +349,6 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 			}
 		}
 	}
-}
-
-// getUserErrCode returns an http error code for a non-nil
-// error returned by dal.GetUser().
-func getUserErrCode(err error) int {
-	if err == sql.ErrNoRows {
-		return http.StatusBadRequest
-	}
-	return http.StatusInternalServerError
 }
 
 // JoinRoom lets a user join a room they are a member of, given its name and owner's name,
