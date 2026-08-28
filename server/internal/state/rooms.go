@@ -2,6 +2,7 @@ package state
 
 import (
 	"fmt"
+	"log"
 	"log/slog"
 	"sync"
 	"time"
@@ -31,8 +32,10 @@ type RoomUser struct {
 func NewRoomUser(u *dal.User) *RoomUser {
 	const maxConns = shared.ChannelCapacity - 1
 	return &RoomUser{
-		Id:                 u.Id,
-		Name:               u.Name,
+		Id:   u.Id,
+		Name: u.Name,
+
+		// TODO: could maybe embed requests.ConnectionWithId into *connection, and remove Offers field.
 		PendingConnections: &connMap{conns: make(map[uuid.UUID]*connection, maxConns)},
 		Offers:             make(chan requests.ConnectionWithId, maxConns),
 	}
@@ -100,15 +103,30 @@ func (r *room) addUser(user *RoomUser) error {
 	return nil
 }
 
+// Leave always removes the user from the room. If the user is the
+// last person in the room, it also deletes the room entirely.
 func (r *room) Leave(user *RoomUser) {
+	rooms := getRooms()
+	rooms.mu.Lock()
+	defer rooms.mu.Unlock()
+
+	if _, ok := rooms.active[r.Id]; !ok {
+		log.Panicf("room %s not in roomMap, while %s is attempting to leave it", r.Name, user.Name)
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	delete(r.users, user.Id)
+	if len(r.users) == 0 {
+		rooms.delete(r.Id)
+	}
 }
 
 func CreateOrJoinRoom(c *dal.Channel, user *RoomUser, logger *slog.Logger) (*room, error) {
 	rooms := getRooms()
 	rooms.mu.Lock()
+
 	r, exists := rooms.active[c.Id]
 	if !exists {
 		r = newRoom(c, user, logger)
@@ -117,9 +135,11 @@ func CreateOrJoinRoom(c *dal.Channel, user *RoomUser, logger *slog.Logger) (*roo
 		r.logger.Debug("created")
 		return r, nil
 	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rooms.mu.Unlock()
+
 	if err := r.addUser(user); err != nil {
 		return nil, fmt.Errorf("error adding participant: %w", err)
 	}
@@ -139,17 +159,17 @@ type roomMap struct {
 }
 
 // Get returns a copy of a Room for a given id, returning an error if not found.
-func (m *roomMap) Get(id uuid.UUID) (*room, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if r, exists := m.active[id]; exists {
-		return r, nil
-	}
-	return &room{}, fmt.Errorf("channel not found")
-}
+// func (m *roomMap) Get(id uuid.UUID) (*room, error) {
+// 	m.mu.Lock()
+// 	defer m.mu.Unlock()
+// 	if r, exists := m.active[id]; exists {
+// 		return r, nil
+// 	}
+// 	return &room{}, fmt.Errorf("channel not found")
+// }
 
 // Delete removes a room entry from the activeRooms map.
-func (m *roomMap) Delete(id uuid.UUID) {
+func (m *roomMap) delete(id uuid.UUID) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.active, id)

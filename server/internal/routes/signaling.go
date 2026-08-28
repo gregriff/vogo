@@ -353,9 +353,9 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 
 // JoinRoom lets a user join a room they are a member of, given its name and owner's name,
 // and creates the in-memory representation of that room if no members are currently connected
-// to it. This is a websocket endpoint that will stay open until the user leaves the room call
-// or is disconnected. When another member joins the room, this endpoint will send their Sd to
-// the user, to facilitate the webrtc signaling for all members connected to the room.
+// to it. This is a websocket endpoint that will stay open until the user disconnects. When
+// another member joins the room, this endpoint will send their Sd to the user, to facilitate
+// the webrtc signaling for all members connected to the room.
 func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	ctx, cancel := context.WithCancel(ws.Request().Context())
 	defer cancel()
@@ -387,7 +387,20 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		return
 	}
 
-	// add areFriends check? TODO: removeFriend and blockFriend endpoints should remove user
+	// ensure user is friends with owner.
+	friends, err := user.HasFriend(h.db, owner.Id)
+	if err != nil {
+		logger.ROUTE.Error("querying friendship status", "with", owner, "err", err)
+		_ = ws.WriteClose(http.StatusInternalServerError)
+		return
+	}
+	if !friends {
+		logger.ROUTE.Error("not friends with owner", "owner", owner, "err", err)
+		_ = ws.WriteClose(http.StatusBadRequest)
+		return
+	}
+
+	// TODO: removeFriend and blockFriend endpoints should remove user
 	// from relevant rooms in the same DB transaction
 	c, err := dal.GetChannelOfMember(h.db, req.RoomName, user.Id, owner.Id)
 	if err != nil {
