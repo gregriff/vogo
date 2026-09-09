@@ -53,12 +53,10 @@ func Listen(ctx context.Context, ws *websocket.Conn, ch chan<- Message) error {
 // ReceiveJSON reads json into v from ws in a new goroutine and cancels
 // the read if ctx is cancelled, waiting for the spawned goroutine to finish.
 func ReceiveJSON[T any](ctx context.Context, ws *websocket.Conn, v *T) error {
-	var (
-		recv sync.WaitGroup
-		done = make(chan error, 1)
-	)
+	var recv sync.WaitGroup
 	defer recv.Wait()
 
+	done := make(chan error, 1)
 	recv.Go(func() {
 		done <- websocket.JSON.Receive(ws, v)
 	})

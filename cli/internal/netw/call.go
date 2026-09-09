@@ -38,7 +38,7 @@ func CallFriend(ctx context.Context, creds *credentials, recipient string) error
 	}()
 
 	g.Go(func() error {
-		return call.Speaker.Init(gCtx, call.DataProc())
+		return call.Speaker.Init(gCtx, call.DataProc)
 	})
 	defer func() {
 		conn.Close()

@@ -184,8 +184,9 @@ func (s *Streams) Remove(id string) error {
 // The mixing function uses SIMD and is determined at compile-time by
 // build flags.
 //
-// It is also responsible for zeroing the mixing sink,
-// since miniaudio has been configured to not do it itself.
+// It returns the number of samples written to dst.
+//
+// TODO: test to ensure numSamples is always written to dst.
 //
 // Note: bursty packet arrival could lead to a backup of samples in the ringbuffers.
 // Consider implementing time-compressing frames if this is detected.
@@ -204,9 +205,10 @@ func (s *Streams) MixAndWrite(dst []byte, numSamples int) {
 
 	switch numFull {
 	case 0:
-		return // nothing to write
+		return
 	case 1:
 		// if only one other person in the room, don't mix, just write their pcm
+		// NOTE: this may under-write on last chunk before someone leaves.
 		ints := ringbuffer.Int16ToBytes(s.writeBufs[0][:numSamples])
 		copy(dst, ints)
 		return
@@ -215,7 +217,7 @@ func (s *Streams) MixAndWrite(dst []byte, numSamples int) {
 	// try clearing :numSamples, or no need to clear at all?
 	clear(s.mixed[:])
 
-	// write a full mixed sample to the speaker buffer
+	// write a full chunk of samples to the speaker buffer
 	s.mix(numFull, numSamples)
 	mixed := ringbuffer.Int16ToBytes(s.mixed[:numSamples])
 	copy(dst, mixed)

@@ -95,7 +95,6 @@ func NewConnection(
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		conn.onConnectionStateChange(s)
 	})
-
 	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
 		conn.onICEConnectionStateChange(s)
 	})
@@ -293,3 +292,14 @@ func (c *Connection) Close() {
 	// Some webrtc goroutine is not finishing...
 	c.closeOnce.Do(func() { _ = c.Pc.Close() })
 }
+
+// this hangs...
+// func (c *Connection) GracefulClose() {
+// 	var wg sync.WaitGroup
+// 	wg.Go(func() {
+// 		c.closeOnce.Do(func() { _ = c.Pc.GracefulClose() })
+// 	})
+// 	log.Printf("waiting for graceful close...")
+// 	wg.Wait()
+// 	log.Printf("graceful close complete")
+// }

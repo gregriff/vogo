@@ -43,6 +43,9 @@ type microphone struct {
 	// initialized will be closed when the microphone device is initialized.
 	initialized chan struct{}
 
+	// uninitialized will be closed when the microphone device is uninitialized.
+	uninitialized chan struct{}
+
 	// mic will send failed PC Ids on this chan
 	failedPeers chan error
 
@@ -52,13 +55,14 @@ type microphone struct {
 
 func newMicrophone(track *webrtc.TrackLocalStaticSample) microphone {
 	return microphone{
-		ctx:         &malgo.AllocatedContext{},
-		device:      &malgo.Device{},
-		track:       track,
-		pcm:         pcm.NewStream(),
-		initialized: make(chan struct{}),
-		failedPeers: make(chan error, shared.ChannelCapacity-1),
-		ctxChan:     make(chan *malgo.AllocatedContext),
+		ctx:           &malgo.AllocatedContext{},
+		device:        &malgo.Device{},
+		track:         track,
+		pcm:           pcm.NewStream(),
+		initialized:   make(chan struct{}),
+		uninitialized: make(chan struct{}),
+		failedPeers:   make(chan error, shared.ChannelCapacity-1),
+		ctxChan:       make(chan *malgo.AllocatedContext),
 	}
 }
 
@@ -164,10 +168,15 @@ func (m *microphone) Start(ctx context.Context) error {
 }
 
 func (m *microphone) Uninit() {
+	// m.track.Unbind()
 	if m.device != nil {
+		if err := m.device.Stop(); err != nil {
+			log.Printf("error stopping mic: %v. now uninitializing...", err)
+		}
 		m.device.Uninit()
 	}
-	log.Println("uninit and freed mic")
+	close(m.uninitialized)
+	log.Println("uninitialized mic")
 }
 
 // Track returns the webrtc Track where microphone audio is written.

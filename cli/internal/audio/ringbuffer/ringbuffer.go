@@ -125,6 +125,8 @@ func (r *RingBuffer) Empty() bool { return r.count == 0 }
 // }
 
 // func (r *RingBuffer) Cap() int    { return r.size }
+
+// Reset resets the state of the RingBuffer and zeroes its buffer.
 // func (r *RingBuffer) Reset() {
 // 	r.head = 0
 // 	r.tail = 0

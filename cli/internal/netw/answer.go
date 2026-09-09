@@ -43,7 +43,7 @@ func AnswerCall(ctx context.Context, creds *credentials, caller string) error {
 	}()
 
 	g.Go(func() error {
-		return call.Speaker.Init(gCtx, call.DataProc())
+		return call.Speaker.Init(gCtx, call.DataProc)
 	})
 	defer func() {
 		conn.Close()

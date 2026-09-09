@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/gregriff/vogo/shared/wsock"
 	"github.com/gregriff/vogo/shared/wsock/messages"
+	"github.com/pion/webrtc/v4"
 	"golang.org/x/net/websocket"
 	"golang.org/x/sync/errgroup"
 )
@@ -75,11 +77,13 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 	}
 
 	// create the call in memory, delete once answered
-	call := state.CreateConnection(*caller, *recipient, offer.Sd)
 	calls := state.GetPendingCalls()
 	// defer calls.PrintAll(logger.STATE)
 	// add this call to pending map, using caller's ID since a client can only make one call at a time
-	calls.Add(caller.Id, call)
+	call, err := calls.AddNew(caller.Id, *caller, *recipient, offer.Sd)
+	if err != nil {
+		logger.STATE.Warn("while adding new Call, overwriting", "err", err)
+	}
 	defer calls.Delete(caller.Id)
 	logger.STATE.Info("call created")
 
@@ -394,7 +398,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
-	if !friends {
+	if !friends && user.Id != owner.Id {
 		logger.ROUTE.Error("not friends with owner", "owner", owner, "err", err)
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
@@ -418,21 +422,19 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusInternalServerError)
 		return
 	}
-	defer room.Leave(roomUser)
+	defer func() {
+		// TODO: this never runs sometimes, so a goroutine leaks and never hits this when the user leaves.
+		if err := room.Leave(c.Id, user.Id); err != nil {
+			log.Panicf("room %s not in roomMap, while %s is attempting to leave it", room.Name, user.Name)
+		}
+	}()
 
+	// notify client of all existing room users so it can send offers.
 	users := room.Users(roomUser.Id)
-	// own func
-	newConns := requests.BulkConnection{
-		Users: make(map[uuid.UUID]string, shared.ChannelCapacity-1),
-	}
-	for id, user := range users {
-		newConns.Users[id] = user.Name
-	}
-	if err := websocket.JSON.Send(ws, newConns); err != nil {
-		logger.ROUTE.Error("writing NewConnections msg", "err", err)
+	if err := sendBulkConnectionMsg(ws, users); err != nil {
+		logger.ROUTE.Error("sending BulkConnection msg", "err", err)
 		return
 	}
-	// ^^
 
 	// note: parallelize this
 	var offers messages.BulkConnection
@@ -444,112 +446,46 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
-	if len(offers.Data) == 0 && len(users) != 0 {
+	if len(offers.Data) == 0 && len(users) > 0 {
 		logger.ROUTE.Error("no offers received from ws", "users_in_room", len(users))
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
+	// use up-to-date user count
+	if len(offers.Data) > 0 && len(room.Users(roomUser.Id)) == 0 {
+		logger.STATE.Warn("offers received but users have left the room", "num_offers", len(offers.Data))
+		_ = ws.WriteClose(http.StatusNotFound)
+		return
+	}
 
-	var (
-		connectWg                 sync.WaitGroup
-		connectCtx, cancelConnect = context.WithCancel(ctx)
-	)
+	var signalingWg sync.WaitGroup
+	var signalingCtx, cancelSignaling = context.WithCancel(ctx)
 	defer func() {
-		cancelConnect()
-		connectWg.Wait()
+		cancelSignaling()
+		signalingWg.Wait()
 	}()
 
-	// note: pull out into own func, then later parallelize
-	for recipientId, req := range offers.Data {
-		connectWg.Go(func() {
-			ctx, cancel := context.WithTimeout(connectCtx, 15*time.Second)
+	// todo: parallelize
+	for recipientId, offer := range offers.Data {
+		signalingWg.Go(func() {
+			ctx, cancel := context.WithTimeout(signalingCtx, 15*time.Second)
 			defer cancel()
 
-			if _, ok := users[recipientId]; !ok {
-				logger.STATE.Warn("client wants to send an offer to someone who is not in the room", "recipient", req.To)
-				return
-			}
+			logger.WRTC.Debug("BEGIN with", "offer", offer, "recipientId", recipientId)
 
+			// TODO: there is some race going on below that prevents PendingConnections from being accurate at all times.
 			recipient := dal.User{
 				Id:   recipientId,
-				Name: users[recipientId].Name,
+				Name: offer.To, // should be offer.To??
 			}
-			conn := state.CreateConnection(*user, recipient, req.Sd)
-			roomUser.PendingConnections.Add(recipientId, conn)
-			defer roomUser.PendingConnections.Delete(recipientId)
-			// note: its important to ensure that none of the below goroutines never die and
-			// keep holding references to this connection^^ (could set it to nil to debug?)
-
-			offer := requests.ConnectionWithId{
-				Connection: requests.Connection{
-					From: user.Name, // this is the caller's name
-					To:   recipient.Name,
-					Sd:   conn.From.Sd,
-				},
-				FromId: user.Id,
-				ToId:   recipientId,
-			}
-			users[recipientId].Offers <- offer
-			logger.WRTC.Debug("conn created, signaling beginning", "with", req.To)
-
-			// own func
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case answerSd, ok := <-conn.Answer:
-					if !ok {
-						conn.Answer = nil
-						continue
-					}
-					logger.WRTC.Debug("received answer from chan", "answer_from", req.To)
-					bytes, err := json.Marshal(requests.Connection{
-						To: req.To, // this is the recipient
-						Sd: answerSd,
-					})
-					if err != nil {
-						logger.ROUTE.Error("encoding candidate", "err", err)
-						return
-					}
-
-					msg := wsock.Message{Type: wsock.Answer, Data: bytes}
-					if err := websocket.JSON.Send(ws, msg); err != nil {
-						logger.ROUTE.Error("writing answer", "err", err)
-						return
-					}
-					logger.WRTC.Debug("answer relayed", "from", req.To)
-				case answerCandidate, ok := <-conn.To.Candidates:
-					bytes, err := json.Marshal(messages.Candidate{
-						UserId:    recipientId,
-						Username:  req.To, // this is the recipient
-						Candidate: answerCandidate,
-					})
-					if err != nil {
-						logger.ROUTE.Error("encoding candidate", "err", err)
-						return
-					}
-
-					msg := wsock.Message{Type: wsock.ICEAnswer, Data: bytes}
-					if err := websocket.JSON.Send(ws, msg); err != nil {
-						logger.ROUTE.Error("writing answer candidate", "err", err)
-						return
-					}
-					logger.WRTC.Debug("candidate relayed", "from", req.To)
-					// we've sent the caller the recipient's last candidate. nothing left to do
-					if !ok {
-						conn.To.Candidates = nil // unness
-						return
-					}
-				}
-			}
+			offerCh := users[recipientId].Offers
+			beginSignaling(ctx, ws, roomUser, offer.Sd, *user, recipient, offerCh, logger)
 		})
 	}
 
-	var (
-		wsRecvWg                sync.WaitGroup
-		wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
-		msgChan                 = make(chan wsock.Message)
-	)
+	var wsRecvWg sync.WaitGroup
+	var wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
+	var msgChan = make(chan wsock.Message)
 	defer func() {
 		cancelWsRecv()
 		wsRecvWg.Wait()
@@ -607,6 +543,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					return
 				}
 
+				// TODO: this may run before the bulk connection has been recvd from the client, meaning that the conn
+				// is not yet present. ICE msgs cannot be processed until connection has been created. add a chan.
 				conn, err := roomUser.PendingConnections.Get(data.UserId)
 				if err != nil {
 					// this probably means signalling has completed. should be able to figure this out with sync primitives
@@ -616,7 +554,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				}
 				if data.Candidate.Candidate == "" {
 					close(conn.From.Candidates)
-					logger.WRTC.Debug("caller ice gather completed", "callerName", data.Username)
+					logger.WRTC.Debug("ice gather completed (caller)", "caller", data.Username)
 					break
 				}
 				conn.From.Candidates <- data.Candidate
@@ -627,8 +565,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 					return
 				}
 
-				caller := room.GetUser(data.UserId)
-				if caller == nil {
+				caller, found := room.GetUser(data.UserId)
+				if !found {
 					logger.STATE.Error("unable to find caller in room while handling ice-answer message", "caller", data.Username)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
@@ -641,7 +579,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				}
 				if data.Candidate.Candidate == "" {
 					close(conn.To.Candidates)
-					logger.WRTC.Debug("answerer ice gather completed", "answerer", data.Username)
+					logger.WRTC.Debug("ice gather completed (answerer)", "answerer", data.Username)
 					break
 				}
 				conn.To.Candidates <- data.Candidate
@@ -661,21 +599,21 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				}
 				logger.WRTC.Debug("answer prepared", "for", answer.To)
 
-				caller := room.GetUser(answer.ToId)
-				if caller == nil {
+				caller, found := room.GetUser(answer.ToId)
+				if !found {
 					logger.STATE.Error("caller not found in room while handling answer message", "caller", answer.From)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				conn, err := caller.PendingConnections.Get(roomUser.Id)
 				if err != nil {
-					logger.STATE.Warn("unable to get conn in answer handler", "conn_owner", caller.Name, "conn_for", conn.To.User.Name)
+					logger.STATE.Warn("unable to get conn in answer handler", "conn_owner", caller.Name, "conn_for", conn.To.Name)
 					// _ = ws.WriteClose(http.StatusBadRequest)
 					break
 				}
 				conn.Answer <- answer.Sd
 				close(conn.Answer)
-				logger.WRTC.Debug("answer sent to caller's chan", "callerName", answer.To)
+				logger.WRTC.Debug("answer sent", "to", answer.To)
 
 				sendIceCtx, cancelSendIce := context.WithTimeout(ctx, 30*time.Second)
 				defer cancelSendIce()
@@ -686,7 +624,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 						case <-sendIceCtx.Done():
 							logger.ROUTE.Debug("answer handler sendICE ctx cancelled. stopping listening for caller candidates")
 							return
-						// forwards caller's candidates to answerer
+						// forwards caller's candidates to client
 						case candidate, ok := <-conn.From.Candidates:
 							bytes, err := json.Marshal(messages.Candidate{
 								UserId:    caller.Id,
@@ -700,10 +638,10 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 							msg := wsock.Message{Type: wsock.ICEOffer, Data: bytes}
 							if err := websocket.JSON.Send(ws, msg); err != nil {
-								logger.ROUTE.Error("writing caller candidate to answerer ws", "err", err)
+								logger.ROUTE.Error("writing caller's candidate to client ws", "err", err)
 								return
 							}
-							logger.WRTC.Debug("sent ice-offer", "from", caller.Name)
+							logger.WRTC.Debug("ice-offer relayed", "from", caller.Name)
 							if !ok { // empty end candidate sent, return
 								conn.From.Candidates = nil // unness?
 								return
@@ -713,6 +651,121 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				})
 			case wsock.Offer, wsock.Connected:
 				logger.ROUTE.Error("unexpected message", "type", msg.Type, "data", msg.Data)
+			}
+		}
+	}
+}
+
+// sendBulkConnectionMsg notifies the client of all the users it needs to send offers to.
+func sendBulkConnectionMsg(ws *websocket.Conn, recipients map[uuid.UUID]state.RoomUser) error {
+	newConns := requests.BulkConnection{
+		Users: make(map[uuid.UUID]string, shared.ChannelCapacity-1),
+	}
+	for id, user := range recipients {
+		newConns.Users[id] = user.Name
+	}
+
+	return websocket.JSON.Send(ws, newConns)
+}
+
+// beginSignaling initalizes the connection state between two users. Using the client's Sd,
+// it creates an offer and sends it to the recipient's offer channel. It then starts a listening
+// loop that relays the recipient's candidates and answer to the client.
+func beginSignaling(
+	ctx context.Context,
+	ws *websocket.Conn,
+	roomUser state.RoomUser,
+	sd webrtc.SessionDescription,
+	user,
+	recipient dal.User,
+	offerCh chan requests.ConnectionWithId,
+	logger routeLoggers,
+) {
+
+	conn, err := roomUser.PendingConnections.AddNew(recipient.Id, user, recipient, sd)
+	if err != nil {
+		logger.STATE.Warn("while adding new PendingConnection, overwriting", "err", err)
+	}
+	defer roomUser.PendingConnections.Delete(recipient.Id)
+	// note: its important to ensure that none of the below goroutines never die and
+	// keep holding references to this connection^^ (could set it to nil to debug?)
+
+	// create offer and send to recipient's chan.
+	offer := requests.ConnectionWithId{
+		Connection: requests.Connection{
+			From: user.Name, // this is the caller's name
+			To:   recipient.Name,
+			Sd:   conn.From.Sd,
+		},
+		FromId: user.Id,
+		ToId:   recipient.Id,
+	}
+	offerCh <- offer
+	logger.WRTC.Debug("conn created, offer sent, signaling beginning", "with", recipient.Name)
+
+	rErr := recvSignals(ctx, ws, conn.To, conn.Answer, logger.WRTC)
+	if rErr != nil {
+		logger.ROUTE.Error("while signaling", "err", rErr)
+	}
+}
+
+// recvSignals relays candidates, and the answer from the recipient to
+// the client until the answer has been relayed, or the ctx is cancelled.
+func recvSignals(
+	ctx context.Context,
+	ws *websocket.Conn,
+	from state.ClientInfo,
+	answerCh <-chan webrtc.SessionDescription,
+	logger *slog.Logger,
+) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+
+		// recv answer from the recipient.
+		case answerSd, ok := <-answerCh:
+			if !ok {
+				answerCh = nil
+				continue
+			}
+			logger.Debug("received answer from chan", "answer_from", from.Name)
+
+			bytes, err := json.Marshal(requests.Connection{
+				To: from.Name, // this is the recipient
+				Sd: answerSd,
+			})
+			if err != nil {
+				return fmt.Errorf("encoding answer: %w", err)
+			}
+
+			msg := wsock.Message{Type: wsock.Answer, Data: bytes}
+			if err := websocket.JSON.Send(ws, msg); err != nil {
+				return fmt.Errorf("writing answer: %w", err)
+			}
+			logger.Debug("answer relayed", "from", from.Name)
+
+		// recv answer candidates from the recipient
+		case candidate, ok := <-from.Candidates:
+			bytes, err := json.Marshal(messages.Candidate{
+				UserId:    from.Id,
+				Username:  from.Name,
+				Candidate: candidate,
+			})
+			if err != nil {
+				return fmt.Errorf("encoding candidate: %w", err)
+			}
+
+			msg := wsock.Message{Type: wsock.ICEAnswer, Data: bytes}
+			if err := websocket.JSON.Send(ws, msg); err != nil {
+				return fmt.Errorf("writing answer candidate: %w", err)
+			}
+			logger.Debug("candidate relayed", "from", from.Name)
+
+			// we've sent the client the recipient's last candidate. nothing left to do
+			if !ok {
+				from.Candidates = nil // unness?
+				return nil
 			}
 		}
 	}

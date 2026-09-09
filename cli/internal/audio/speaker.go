@@ -21,16 +21,20 @@ type speaker struct {
 	// initialized will be closed when the speaker device is initialized.
 	initialized chan struct{}
 
+	// uninitialized will be closed when the speaker device is uninitialized.
+	uninitialized chan struct{}
+
 	// the malgo context will be sent over this chan
 	ctxChan chan *malgo.AllocatedContext
 }
 
 func newSpeaker() speaker {
 	return speaker{
-		ctx:         &malgo.AllocatedContext{},
-		device:      &malgo.Device{},
-		initialized: make(chan struct{}),
-		ctxChan:     make(chan *malgo.AllocatedContext),
+		ctx:           &malgo.AllocatedContext{},
+		device:        &malgo.Device{},
+		initialized:   make(chan struct{}),
+		uninitialized: make(chan struct{}),
+		ctxChan:       make(chan *malgo.AllocatedContext),
 	}
 }
 
@@ -78,9 +82,13 @@ func (s *speaker) Start() error {
 // closing all PeerConnections beforehand, since their RemoteTrack handlers write to the device.
 func (s *speaker) Uninit() {
 	if s.device != nil {
+		if err := s.device.Stop(); err != nil {
+			log.Printf("error stopping speaker: %v. now uninitializing...", err)
+		}
 		s.device.Uninit()
 	}
-	log.Println("uninit and freed speaker")
+	close(s.uninitialized)
+	log.Println("uninitialized speaker")
 }
 
 // Initialized returns the channel to notify the caller when the speaker

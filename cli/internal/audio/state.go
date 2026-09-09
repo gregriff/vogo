@@ -62,12 +62,16 @@ func (d *devices) CreateDeviceContext(_ context.Context) error {
 	return nil
 }
 
-// Uninit uninitializes the cgo context that the mic and speaker rely on. It must only be called
-// if both the mic and speaker are uninitialized.
+// Uninit uninitializes the cgo context that the mic and speaker rely on.
 func (d *devices) Uninit() error {
 	if d.ctx == nil {
 		return nil
 	}
+
+	// ensure devices are uninitialized.
+	<-d.Mic.uninitialized
+	<-d.Speaker.uninitialized
+
 	if err := d.ctx.Uninit(); err != nil {
 		return err
 	}
@@ -92,7 +96,7 @@ func NewChannel(track *webrtc.TrackLocalStaticSample, recvMTU int) *Channel {
 // NOTE: if text remote tracks are added, this will have to not add those to audio stream struct.
 func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 	// note: this callback should not panic
-	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		decoder, err := opus.NewDecoder(pcm.SampleRate, pcm.NumChannels)
 		if err != nil {
 			log.Panicf("decoder init error: %v", err)
@@ -106,25 +110,27 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 			log.Panicf("error adding stream: %v", err)
 		}
 
-		var (
-			lastSeqNum  uint16
-			initialized bool
-		)
+		var lastSeqNum uint16
+		var initialized bool
 
 		for {
 			r := &rtp.Packet{}
 
-			_, err := ReadRTP(r, packetBuf, track)
-			if err != nil {
-				if err == io.EOF {
-					rErr := c.streams.Remove(trackID)
-					if rErr != nil {
-						log.Printf("error removing stream: %s", rErr.Error())
-					}
-					return
+			if _, err := ReadRTP(r, packetBuf, track); err != nil {
+				if err != io.EOF {
+					log.Printf("PACKET READ ERR: %v", err)
+					continue
 				}
-				log.Printf("PACKET READ ERR: %v", err)
-				continue
+				rErr := c.streams.Remove(trackID)
+				if rErr != nil {
+					log.Printf("error removing stream: %v", rErr)
+				} else {
+					log.Printf("removed stream %s", trackID)
+				}
+				if sErr := receiver.Stop(); sErr != nil {
+					log.Print("error stopping receiver")
+				}
+				return
 			}
 
 			if !initialized {
@@ -136,13 +142,13 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 			diff := int16(r.SequenceNumber - lastSeqNum)
 
 			if diff <= 0 {
-				// duplicate or reordered — drop
+				// duplicate or reordered. drop the packet.
 				log.Printf("received dropped or reordered frame. skipping it")
 				continue
 			}
 
 			if diff > 1 {
-				// gap detected — fill with PLC using last known packet duration
+				// gap detected. fill with PLC using last known packet duration
 				lastDuration, err := decoder.LastPacketDuration()
 				if err != nil {
 					log.Printf("PLC: could not get last packet duration: %v", err)
@@ -157,6 +163,7 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 						if err = c.streams.WriteFrame(trackID, plcBuf); err != nil {
 							log.Printf("error writing PLC frame: %v", err)
 						}
+						log.Printf("wrote PLC frame")
 					}
 				}
 			}
@@ -178,14 +185,17 @@ func (c *Channel) AddPeer(pc *webrtc.PeerConnection) {
 	})
 }
 
-// DataProc returns a callback that mixes multiple user's audio and sends it to the speaker.
-func (c *Channel) DataProc() malgo.DataProc {
-	// read into output sample buf, for output to speaker device.
-	// this fires every [frameDurationMs]
-	return func(pOutputSample, _ []byte, framecount uint32) {
-		samplesToRead := int(framecount) * pcm.NumChannels
-		c.streams.MixAndWrite(pOutputSample, samplesToRead)
-	}
+// DataProc is a malgo callback that fires every [frameDurationMs]. It mixes
+// multiple user's audio and sends it to the speaker.
+// https://github.com/gen2brain/malgo/blob/master/_examples/playback/playback.go
+//
+// Note: Since malgo is configured to not pre-zero pOutputSample, it must be zeroed
+// if not fully filled.
+func (c *Channel) DataProc(pOutputSample, _ []byte, framecount uint32) {
+	samplesToRead := int(framecount) * pcm.NumChannels
+
+	clear(pOutputSample)
+	c.streams.MixAndWrite(pOutputSample, samplesToRead)
 }
 
 type Call struct {
@@ -241,15 +251,16 @@ func (c *Call) AddPeer(pc *webrtc.PeerConnection) {
 	})
 }
 
-// DataProc returns a callback that sends audio data to the speaker.
+// DataProc is a malgo callback that fires every [frameDurationMs].
+// It sends audio data to the speaker.
 // https://github.com/gen2brain/malgo/blob/master/_examples/playback/playback.go
-func (c *Call) DataProc() malgo.DataProc {
-	return func(pOutputSample, _ []byte, framecount uint32) {
-		samplesToRead := int(framecount) * pcm.NumChannels
+//
+// Note: Since malgo is configured to not pre-zero pOutputSample, it must be zeroed.
+func (c *Call) DataProc(pOutputSample, _ []byte, framecount uint32) {
+	samplesToRead := int(framecount) * pcm.NumChannels
 
-		// TODO: if pOutputSample is not pre-zeroed, under-writing it may cause issues
-		_ = c.stream.ReadBytes(pOutputSample, samplesToRead)
-	}
+	clear(pOutputSample)
+	_ = c.stream.ReadBytes(pOutputSample, samplesToRead)
 }
 
 // ReadRTP is a rewrite of webrtc.TrackRemote.ReadRTP() that reuses a

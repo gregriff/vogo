@@ -144,7 +144,7 @@ func (u *User) InviteFriend(db *sql.DB, channelName, friendName string) (*public
 // GetChannelOfMember returns a channel with a given name, that is owned by ownerId and memberId
 // is a member of. It prevents a member from accessing a channel of another owner with the same name.
 // This is because there is a unique constraint on db::channels(owner_id, name).
-func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*Channel, error) {
+func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (Channel, error) {
 	ctx := context.TODO()
 
 	query := `
@@ -155,16 +155,16 @@ func GetChannelOfMember(db *sql.DB, name string, memberId, ownerId uuid.UUID) (*
         WHERE m.user_id = $1 AND c.owner_id = $2 AND c.name = $3
     `
 
-	var channel Channel
+	channel := Channel{}
 	err := db.QueryRowContext(ctx, query, memberId, ownerId, name).
 		Scan(&channel.Id, &channel.Name, &channel.Description, &channel.Capacity, &channel.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("channel not found: %s", name)
+			return channel, fmt.Errorf("channel not found: %s", name)
 		}
-		return nil, err
+		return channel, err
 	}
-	return &channel, nil
+	return channel, nil
 }
 
 func rollback(tx *sql.Tx, err error) {

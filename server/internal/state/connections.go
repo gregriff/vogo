@@ -20,12 +20,18 @@ type connMap struct {
 	conns map[uuid.UUID]*connection
 }
 
-// Add inserts or updates a connection for a given user id.
-// TODO: move this to a new method? combine with createConnection into a createCall func.
-func (m *connMap) Add(id uuid.UUID, call *connection) {
+// AddNew creates a new connection struct between caller and recipient. It can be retrieved from the connMap with id.
+func (m *connMap) AddNew(id uuid.UUID, caller, recipient dal.User, callerSd webrtc.SessionDescription) (connection, error) {
+	conn := newConnection(caller, recipient, callerSd)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.conns[id] = call
+
+	if c, ok := m.conns[id]; ok {
+		return *conn, fmt.Errorf("connection already exists: %#v", c)
+	}
+
+	m.conns[id] = conn
+	return *conn, nil
 }
 
 // Get returns a copy of a connection for a given id, returning an error if not found.
@@ -39,7 +45,8 @@ func (m *connMap) Get(id uuid.UUID) (*connection, error) {
 	return &connection{}, fmt.Errorf("connection not found")
 }
 
-// Delete removes a call entry from the PendingCalls map.
+// Delete removes a call entry from the PendingCalls map. If retry functionality is
+// added in the future, this function may not need to be called in most places.
 func (m *connMap) Delete(id uuid.UUID) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -75,7 +82,7 @@ func GetPendingCalls() *connMap {
 // connection is the struct that stores the signaling state between two webrtc peers.
 type connection struct {
 	From,
-	To clientInfo
+	To ClientInfo
 
 	CreatedAt time.Time
 
@@ -83,10 +90,11 @@ type connection struct {
 	Answer chan webrtc.SessionDescription
 }
 
-// clientInfo is the information about a webrtc client needed to create a call or a room.
+// ClientInfo is the information about a webrtc client needed to create a call or a room.
 // It stores data used during the signaling process.
-type clientInfo struct {
-	User dal.User
+type ClientInfo struct {
+	Id   uuid.UUID
+	Name string
 
 	// encapsulates the offer or answer of the client
 	Sd webrtc.SessionDescription
@@ -95,26 +103,27 @@ type clientInfo struct {
 	Candidates chan webrtc.ICECandidateInit
 }
 
-// CreateConnection creates a struct encapsulating a pending connection that is stored in memory
+// newConnection creates a struct encapsulating a pending connection that is stored in memory
 // until the caller and recipient exchange all their ICE candidates. Channels in this
 // struct facilitate offer/answer and ICE exchance between the /call and /answer endpoints,
 // or when a user joins a room and needs to connect to the existing members.
-func CreateConnection(caller, recipient dal.User, callerSd webrtc.SessionDescription) *connection {
+func newConnection(caller, recipient dal.User, callerSd webrtc.SessionDescription) *connection {
 	const maxICECandidates = 15 // should be enough?
 	var (
-		// TODO: with channel rooms, these chans will need to be per-client
 		answerChan          = make(chan webrtc.SessionDescription, 1)
 		callerCandidates    = make(chan webrtc.ICECandidateInit, maxICECandidates)
 		recipientCandidates = make(chan webrtc.ICECandidateInit, maxICECandidates)
 	)
 	// TODO: these user attrs could prob be avoided, and prevent a db hit in JoinRoom
-	callerClient := clientInfo{
-		User:       caller,
+	callerClient := ClientInfo{
+		Id:         caller.Id,
+		Name:       caller.Name,
 		Sd:         callerSd,
 		Candidates: callerCandidates,
 	}
-	recipientClient := clientInfo{
-		User:       recipient,
+	recipientClient := ClientInfo{
+		Id:         recipient.Id,
+		Name:       recipient.Name,
 		Sd:         webrtc.SessionDescription{},
 		Candidates: recipientCandidates,
 	}

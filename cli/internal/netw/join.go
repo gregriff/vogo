@@ -42,7 +42,7 @@ func JoinChannel(ctx context.Context, creds *credentials, ownerName, channelName
 
 	// todo: defer a func that uninits the context once, waiting for both devices to be uninited on two chans.
 	g.Go(func() error {
-		return channel.Speaker.Init(gCtx, channel.DataProc())
+		return channel.Speaker.Init(gCtx, channel.DataProc)
 	})
 	defer channel.Speaker.Uninit()
 

@@ -76,6 +76,9 @@ func (cm *connectionMap) AddConnection(ctx context.Context, recipientId uuid.UUI
 		if err == io.EOF { // pc closed
 			cm.Delete(recipientName)
 		}
+		if err != nil {
+			log.Printf("err in connMap wg: %v", err)
+		}
 	})
 
 	cm.wg.Go(func() {
@@ -114,6 +117,11 @@ func (cm *connectionMap) Len() int {
 func (cm *connectionMap) Delete(key string) {
 	cm.mu.Lock()
 	delete(cm.conns, key)
+
+	// if len(cm.conns) == 0 {
+	// 	cm.channel.Speaker.Uninit()
+	// }
+
 	cm.mu.Unlock()
 	log.Printf("deleted %s from connMap", key)
 }
@@ -131,6 +139,7 @@ func (cm *connectionMap) Snapshot() map[string]*Connection {
 func (cm *connectionMap) Uninit() {
 	var wg sync.WaitGroup
 	cm.mu.Lock()
+	// defer cm.mu.Unlock()
 
 	for _, c := range cm.conns {
 		wg.Go(func() {
@@ -138,6 +147,8 @@ func (cm *connectionMap) Uninit() {
 		})
 	}
 
+	// race?? this unlocks before all closing goroutines finish, so another
+	// goroutine could be writing while this is closing.
 	cm.mu.Unlock()
 	wg.Wait()
 }
