@@ -3,7 +3,8 @@ package requests
 // contains http requests used in webrtc signaling processes.
 
 import (
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/pion/webrtc/v4"
 )
 

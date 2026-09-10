@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/server/internal/middleware"
 	"github.com/gregriff/vogo/server/internal/state"

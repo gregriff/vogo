@@ -2,7 +2,8 @@
 package messages
 
 import (
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/pion/webrtc/v4"
 )

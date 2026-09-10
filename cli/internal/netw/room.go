@@ -13,8 +13,8 @@ import (
 	"log"
 	"maps"
 	"sync"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/audio/pcm"
 	"github.com/gregriff/vogo/shared"

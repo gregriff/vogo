@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gregriff/vogo/shared/public"
 	"github.com/gregriff/vogo/shared/requests"
 )

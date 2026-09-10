@@ -3,7 +3,6 @@ module github.com/gregriff/vogo/shared
 go 1.27.0
 
 require (
-	github.com/google/uuid v1.6.0
 	github.com/pion/webrtc/v4 v4.2.18
 	github.com/spf13/viper v1.21.0
 	golang.org/x/net v0.56.0
@@ -12,6 +11,7 @@ require (
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect
 	github.com/pion/dtls/v3 v3.1.5 // indirect

@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared/requests"
 	"github.com/pion/rtcp"

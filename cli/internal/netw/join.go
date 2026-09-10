@@ -8,8 +8,8 @@ import (
 	"io"
 	"log"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gregriff/vogo/cli/internal/audio"
 	"github.com/gregriff/vogo/cli/internal/netw/wrtc"
 	"github.com/gregriff/vogo/shared"

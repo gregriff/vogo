@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gregriff/vogo/server/internal/crypto"
 )
 

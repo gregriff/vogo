@@ -4,7 +4,6 @@ go 1.27.0
 
 require (
 	github.com/gen2brain/malgo v0.11.25
-	github.com/google/uuid v1.6.0
 	github.com/gregriff/vogo/shared v0.0.0
 	github.com/hraban/opus v0.0.0-20260708213942-bde8e4304501
 	github.com/pion/interceptor v0.1.47
@@ -20,6 +19,7 @@ require (
 require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect

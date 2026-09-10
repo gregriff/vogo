@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/pion/webrtc/v4"
 )

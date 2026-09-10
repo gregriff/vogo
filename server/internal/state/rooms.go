@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/gregriff/vogo/server/internal/dal"
 	"github.com/gregriff/vogo/shared"
 	"github.com/gregriff/vogo/shared/requests"
