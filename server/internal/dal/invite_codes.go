@@ -9,8 +9,7 @@ import (
 	"github.com/gregriff/vogo/server/internal/crypto"
 )
 
-func AddInviteCode(db *sql.DB, code string) error {
-	ctx := context.TODO()
+func AddInviteCode(ctx context.Context, db *sql.DB, code string) error {
 	id := uuid.New()
 	result, err := db.ExecContext(ctx,
 		"INSERT INTO invite_codes (id, code) VALUES ($1, $2) ON CONFLICT DO NOTHING", id, code,

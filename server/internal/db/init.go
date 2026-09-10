@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // sql side effects
 )
@@ -21,9 +22,12 @@ var (
 )
 
 // GetDB opens the database once, creating it if needed.
-func GetDB() *sql.DB {
+func GetDB(ctx context.Context) *sql.DB {
 	dbCreate.Do(func() {
-		db, dbErr = createDB()
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+
+		db, dbErr = createDB(ctx)
 		if dbErr != nil {
 			log.Fatalf("error getting db: %v", dbErr)
 		}
@@ -32,12 +36,12 @@ func GetDB() *sql.DB {
 }
 
 // createDB opens the sqlite database, creating it if needed.
-func createDB() (*sql.DB, error) {
+func createDB(ctx context.Context) (*sql.DB, error) {
 	db, err := sql.Open("pgx", "") // use config file or PG env vars to set db url
 	if err != nil {
 		return nil, fmt.Errorf("error opening db: %w", err)
 	}
-	ctx := context.TODO()
+
 	if err := db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("error pinging db: %w", err)
 	}
@@ -47,7 +51,7 @@ func createDB() (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error reading ddl file: %w", err)
 	}
-	ctx = context.TODO()
+
 	_, err = db.ExecContext(ctx, string(schema))
 	if err != nil {
 		return nil, fmt.Errorf("error creating tables: %w", err)

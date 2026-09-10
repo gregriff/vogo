@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"log"
 
 	"github.com/gregriff/vogo/server/internal/crypto"
@@ -22,9 +23,11 @@ func init() {
 }
 
 func generateInvite(_ *cobra.Command, _ []string) {
+	ctx := context.Background()
+	db := db.GetDB(ctx)
+
 	inviteCode := crypto.GenerateInviteCode()
-	db := db.GetDB()
-	if err := dal.AddInviteCode(db, inviteCode); err != nil {
+	if err := dal.AddInviteCode(ctx, db, inviteCode); err != nil {
 		log.Fatalf("error creating invite code: %v", err)
 	}
 	log.Printf("Generated Invite Code: %s", inviteCode)

@@ -18,9 +18,10 @@ import (
 )
 
 func CreateAndListen(host string, port int, logOpts logging.Opts) {
+	ctx := context.Background()
 	log := logging.New(logOpts)
 
-	db := db.GetDB()
+	db := db.GetDB(ctx)
 	defer func() {
 		if err := db.Close(); err != nil {
 			log.Error("closing database", "err", err)
@@ -66,7 +67,7 @@ func CreateAndListen(host string, port int, logOpts logging.Opts) {
 	// receive stop signals
 	<-sigChan
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
