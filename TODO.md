@@ -6,6 +6,10 @@
 - impl PLC for calls, refactor decode loop to reduce duplicate code. tweak PLC threshold. 
 - create sentinel errors for CallEnded, ConnectionFailed, handle them in top-level cli funcs
 - use ansi colors per profile to echo vogoenv
+- parallelize bulkconnection requests
+- send important errors back to client via ws, with new ErrorMessage
+- get rid of uuid,xdg packages
+- initiate STUN asap on client?
 - Test Packet Loss+PLC impl:
 ```
 # Add packet loss on loopback (lo0)

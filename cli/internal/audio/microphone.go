@@ -186,9 +186,9 @@ func (m *microphone) Track() *webrtc.TrackLocalStaticSample {
 
 // FailedPeers returns a channel will be sent errors containing information about
 // PeerConnections that failed to have audio packets written to them.
-func (m *microphone) FailedPeers() <-chan error {
-	return m.failedPeers
-}
+// func (m *microphone) FailedPeers() <-chan error {
+// 	return m.failedPeers
+// }
 
 // Initialized returns the channel to notify the caller when the microphone
 // is fully initialized. Since microphone initialization is slow, this allows the caller to do

@@ -437,6 +437,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	}
 
 	// note: parallelize this
+	// TODO: if joiner could also include 1..n ice candidates in their initial offer msgs to each
+	// existing user that would also make things quicker.
 	var offers messages.BulkConnection
 	if err = wsock.ReceiveJSON(ctx, ws, &offers); err != nil {
 		if err == io.EOF {
@@ -471,12 +473,10 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			ctx, cancel := context.WithTimeout(signalingCtx, 15*time.Second)
 			defer cancel()
 
-			logger.WRTC.Debug("BEGIN with", "offer", offer, "recipientId", recipientId)
-
 			// TODO: there is some race going on below that prevents PendingConnections from being accurate at all times.
 			recipient := dal.User{
 				Id:   recipientId,
-				Name: offer.To, // should be offer.To??
+				Name: offer.To,
 			}
 			offerCh := users[recipientId].Offers
 			beginSignaling(ctx, ws, roomUser, offer.Sd, *user, recipient, offerCh, logger)
@@ -505,10 +505,10 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	// now that the offers are being sent to existing users, we can start the loop that will run for the rest of the time
 	// that the user is in the room.
 
-	var sendIce sync.WaitGroup
+	var iceWg sync.WaitGroup
 	defer func() {
 		_ = ws.Close()
-		sendIce.Wait()
+		iceWg.Wait()
 	}()
 
 	// this is logic that needs to run for the duration of the session/ws.
@@ -517,12 +517,23 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		select {
 		case <-ctx.Done():
 			return
+		// NOTE: all funcs in this need to run async, since chan is unbuffered and blocks on sends
+		case msg := <-msgChan:
+			// TODO: put this switch into its own func. run it in its own goroutine. it should use a waitgroup defined before this
+			// event loop "msgHandlerWg". 'tick' will report the wg's counter (manually increment a top level int).
+			//
+			// TODO: could return (error, bool), signaling an abort with the bool.
+			// could also group retryable errors into a custom error, and also group client-side errors
+			// to send back to the client. could also send all errors back to client for detailed notifications
+			if err := handleMsg(ctx, &iceWg, ws, msg, logger, room, roomUser); err != nil {
+				logger.ROUTE.Error("handling message", "type", msg.Type, "err", err)
+			}
 		case offer := <-roomUser.Offers:
 			// when we get an offer from a new joiner, it must be relayed to self.
 			bytes, err := json.Marshal(offer)
 			if err != nil {
-				logger.ROUTE.Error("encoding candidate", "err", err)
-				return
+				logger.ROUTE.Error("encoding new offer", "from", offer.From, "err", err)
+				continue
 			}
 
 			msg := wsock.Message{Type: wsock.Offer, Data: bytes}
@@ -530,128 +541,6 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				logger.ROUTE.Error("relaying new offer", "from", offer.From, "to", offer.To, "err", err)
 			}
 			logger.WRTC.Debug("offer relayed", "from", offer.From)
-		// NOTE: all funcs in this need to run async, since chan is unbuffered and blocks on sends
-		case msg := <-msgChan:
-			// TODO: put this switch into its own func. run it in its own goroutine. it should use a waitgroup defined before this
-			// event loop "msgHandlerWg". 'tick' will report the wg's counter (manually increment a top level int).
-			switch msg.Type {
-			// TODO: try to combine offer and answer handlers with additional property in messages.Candidate
-			case wsock.ICEOffer:
-				data, err := parseCandidate(ws, msg.Data)
-				if err != nil {
-					logger.ROUTE.Error("parsing ice-offer candidate", "err", err)
-					return
-				}
-
-				// TODO: this may run before the bulk connection has been recvd from the client, meaning that the conn
-				// is not yet present. ICE msgs cannot be processed until connection has been created. add a chan.
-				conn, err := roomUser.PendingConnections.Get(data.UserId)
-				if err != nil {
-					// this probably means signalling has completed. should be able to figure this out with sync primitives
-					logger.ROUTE.Error("unable to get conn in ice-offer handler", "conn-owner", data.Username)
-					_ = ws.WriteClose(http.StatusInternalServerError)
-					return
-				}
-				if data.Candidate.Candidate == "" {
-					close(conn.From.Candidates)
-					logger.WRTC.Debug("ice gather completed (caller)", "caller", data.Username)
-					break
-				}
-				conn.From.Candidates <- data.Candidate
-			case wsock.ICEAnswer:
-				data, err := parseCandidate(ws, msg.Data)
-				if err != nil {
-					logger.ROUTE.Error("parsing ice-answer candidate", "err", err)
-					return
-				}
-
-				caller, found := room.GetUser(data.UserId)
-				if !found {
-					logger.STATE.Error("unable to find caller in room while handling ice-answer message", "caller", data.Username)
-					// _ = ws.WriteClose(http.StatusBadRequest)
-					break
-				}
-				conn, err := caller.PendingConnections.Get(roomUser.Id)
-				if err != nil {
-					logger.STATE.Warn("unable to get conn in ice-answer handler", "conn_owner", data.Username)
-					// _ = ws.WriteClose(http.StatusBadRequest)
-					break
-				}
-				if data.Candidate.Candidate == "" {
-					close(conn.To.Candidates)
-					logger.WRTC.Debug("ice gather completed (answerer)", "answerer", data.Username)
-					break
-				}
-				conn.To.Candidates <- data.Candidate
-			// this is when the client answers a new user's offer
-			case wsock.Answer:
-				var answer requests.ConnectionWithId
-				if err := json.Unmarshal(msg.Data, &answer); err != nil {
-					logger.ROUTE.Error("unmarshalling answer", "err", err)
-					_ = ws.WriteClose(http.StatusBadRequest)
-					return
-				}
-
-				if answer.Sd.SDP == "" {
-					logger.WRTC.Debug("empty answer", "from", answer.From)
-					// _ = ws.WriteClose(http.StatusBadRequest)
-					break
-				}
-				logger.WRTC.Debug("answer prepared", "for", answer.To)
-
-				caller, found := room.GetUser(answer.ToId)
-				if !found {
-					logger.STATE.Error("caller not found in room while handling answer message", "caller", answer.From)
-					// _ = ws.WriteClose(http.StatusBadRequest)
-					break
-				}
-				conn, err := caller.PendingConnections.Get(roomUser.Id)
-				if err != nil {
-					logger.STATE.Warn("unable to get conn in answer handler", "conn_owner", caller.Name, "conn_for", conn.To.Name)
-					// _ = ws.WriteClose(http.StatusBadRequest)
-					break
-				}
-				conn.Answer <- answer.Sd
-				close(conn.Answer)
-				logger.WRTC.Debug("answer sent", "to", answer.To)
-
-				sendIceCtx, cancelSendIce := context.WithTimeout(ctx, 30*time.Second)
-				defer cancelSendIce()
-				sendIce.Go(func() {
-					defer cancelSendIce()
-					for {
-						select {
-						case <-sendIceCtx.Done():
-							logger.ROUTE.Debug("answer handler sendICE ctx cancelled. stopping listening for caller candidates")
-							return
-						// forwards caller's candidates to client
-						case candidate, ok := <-conn.From.Candidates:
-							bytes, err := json.Marshal(messages.Candidate{
-								UserId:    caller.Id,
-								Username:  caller.Name,
-								Candidate: candidate,
-							})
-							if err != nil {
-								logger.ROUTE.Error("encoding candidates", "err", err)
-								return
-							}
-
-							msg := wsock.Message{Type: wsock.ICEOffer, Data: bytes}
-							if err := websocket.JSON.Send(ws, msg); err != nil {
-								logger.ROUTE.Error("writing caller's candidate to client ws", "err", err)
-								return
-							}
-							logger.WRTC.Debug("ice-offer relayed", "from", caller.Name)
-							if !ok { // empty end candidate sent, return
-								conn.From.Candidates = nil // unness?
-								return
-							}
-						}
-					}
-				})
-			case wsock.Offer, wsock.Connected:
-				logger.ROUTE.Error("unexpected message", "type", msg.Type, "data", msg.Data)
-			}
 		}
 	}
 }
@@ -765,6 +654,149 @@ func recvSignals(
 			// we've sent the client the recipient's last candidate. nothing left to do
 			if !ok {
 				from.Candidates = nil // unness?
+				return nil
+			}
+		}
+	}
+}
+
+// errors used to end the caller func. now none do. so any error that occurs while processing a msg
+// will not end the join endpoint. TODO: if this behavior is kept, the errors should be sent back
+// to the client so they know if they should terminate the connection. terminal errors should be
+// handled by the caller and SHOULD terminate the entire connection.
+func handleMsg(
+	ctx context.Context,
+	iceWg *sync.WaitGroup,
+	ws *websocket.Conn,
+	msg wsock.Message,
+	logger routeLoggers,
+	room *state.Room,
+	roomUser state.RoomUser,
+) error {
+	switch msg.Type {
+	// TODO: try to combine offer and answer handlers with additional property in messages.Candidate
+	case wsock.ICEOffer:
+		data, err := parseCandidate(ws, msg.Data)
+		if err != nil {
+			return fmt.Errorf("parsing ice-offer candidate: %w", err)
+		}
+
+		// TODO: this may run before the bulk connection has been recvd from the client, meaning that the conn
+		// is not yet present. ICE msgs cannot be processed until connection has been created. add a chan.
+		conn, err := roomUser.PendingConnections.Get(data.UserId)
+		if err != nil {
+			// this probably means signalling has completed. should be able to figure this out with sync primitives
+			logger.STATE.Error("unable to get conn in ice-offer handler", "conn-owner", data.Username)
+			// _ = ws.WriteClose(http.StatusInternalServerError)
+			return nil
+		}
+		if data.Candidate.Candidate == "" {
+			close(conn.From.Candidates)
+			logger.WRTC.Debug("ice gather completed (caller)", "caller", data.Username)
+			break
+		}
+		conn.From.Candidates <- data.Candidate
+	case wsock.ICEAnswer:
+		data, err := parseCandidate(ws, msg.Data)
+		if err != nil {
+			return fmt.Errorf("parsing ice-answer candidate: %w", err)
+		}
+
+		caller, found := room.GetUser(data.UserId)
+		if !found {
+			logger.STATE.Error("unable to find caller in room while handling ice-answer message", "caller", data.Username)
+			// _ = ws.WriteClose(http.StatusBadRequest)
+			return nil
+		}
+		conn, err := caller.PendingConnections.Get(roomUser.Id)
+		if err != nil {
+			logger.STATE.Error("unable to get conn in ice-answer handler", "conn_owner", data.Username)
+			// _ = ws.WriteClose(http.StatusBadRequest)
+			return nil
+		}
+		if data.Candidate.Candidate == "" {
+			close(conn.To.Candidates)
+			logger.WRTC.Debug("ice gather completed (answerer)", "answerer", data.Username)
+			return nil
+		}
+		conn.To.Candidates <- data.Candidate
+	// this is when the client answers a new user's offer
+	case wsock.Answer:
+		var answer requests.ConnectionWithId
+		if err := json.Unmarshal(msg.Data, &answer); err != nil {
+			// _ = ws.WriteClose(http.StatusBadRequest)
+			return fmt.Errorf("unmarshalling answer: %w", err)
+		}
+
+		if answer.Sd.SDP == "" { // TODO: retry
+			logger.WRTC.Debug("empty answer", "from", answer.From)
+			// _ = ws.WriteClose(http.StatusBadRequest)
+			return nil
+		}
+		logger.WRTC.Debug("answer prepared", "for", answer.To)
+
+		caller, found := room.GetUser(answer.ToId)
+		if !found {
+			logger.STATE.Error("caller not found in room while handling answer message", "caller", answer.From)
+			// _ = ws.WriteClose(http.StatusBadRequest)
+			return nil
+		}
+		conn, err := caller.PendingConnections.Get(roomUser.Id)
+		if err != nil {
+			logger.STATE.Warn("unable to get conn in answer handler", "conn_owner", caller.Name)
+			// _ = ws.WriteClose(http.StatusBadRequest)
+			return nil
+		}
+		conn.Answer <- answer.Sd
+		close(conn.Answer)
+		logger.WRTC.Debug("answer sent", "to", answer.To)
+
+		iceCtx, cancelIce := context.WithTimeout(ctx, 30*time.Second)
+		iceWg.Go(func() {
+			defer cancelIce()
+			if err := relayIceCandidates(iceCtx, ws, caller, conn.From.Candidates, logger.WRTC); err != nil {
+				logger.ROUTE.Error("while relaying ICE candidates", "err", err)
+			}
+		})
+	case wsock.Offer, wsock.Connected:
+		return fmt.Errorf("unexpected message: %v", msg.Data)
+	}
+	return nil
+}
+
+// NOTE: relaying caller's ice candidates to the client (user that was already in the room) may
+// be able to be done BEFORE client's answer is relayed to caller. client could buffer candidates...
+// check webrtc spec.
+func relayIceCandidates(
+	ctx context.Context,
+	ws *websocket.Conn,
+	caller state.RoomUser,
+	ch <-chan webrtc.ICECandidateInit,
+	logger *slog.Logger,
+) error {
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Debug("answer handler ice ctx cancelled. stopping listening for caller candidates")
+			return nil
+		// forwards caller's candidates to client
+		case candidate, ok := <-ch:
+			bytes, err := json.Marshal(messages.Candidate{
+				UserId:    caller.Id,
+				Username:  caller.Name,
+				Candidate: candidate,
+			})
+			if err != nil {
+				return fmt.Errorf("encoding caller candidates to relay: %w", err)
+			}
+
+			msg := wsock.Message{Type: wsock.ICEOffer, Data: bytes}
+			if err := websocket.JSON.Send(ws, msg); err != nil {
+				return fmt.Errorf("writing caller's candidate to client ws: %w", err)
+			}
+			logger.Debug("ice-offer relayed", "from", caller.Name)
+			if !ok { // empty end candidate sent, return
+				ch = nil // unness?
 				return nil
 			}
 		}

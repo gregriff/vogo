@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/adrg/xdg"
 	"github.com/spf13/viper"
 )
 
@@ -51,13 +50,19 @@ func Init(name, file string, defaultConfigFile []byte) {
 // but overriding to ~/.config on macOS
 func Dir(name string) string {
 	var configHome string
+
+	switch runtime.GOOS {
+	case "darwin", "linux":
+		home, _ := os.UserHomeDir()
+		configHome = filepath.Join(home, ".config")
+	case "windows":
+		configHome = os.Getenv("APPDATA")
+	default:
+		log.Fatalf("unsupported OS: %s", runtime.GOOS)
+	}
+
 	if envVar := os.Getenv("XDG_CONFIG_HOME"); envVar != "" {
 		configHome = envVar
-	} else if runtime.GOOS == "darwin" {
-		home, _ := os.UserHomeDir()
-		configHome = filepath.Join(home, ".config") // override for mac
-	} else {
-		configHome = xdg.ConfigHome
 	}
 
 	configDir := filepath.Join(configHome, name)

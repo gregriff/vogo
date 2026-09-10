@@ -43,9 +43,9 @@ func NewRoomUser(u *dal.User) RoomUser {
 	}
 }
 
-// room is a representation of a database Channel that is actively being used by one
+// Room is a representation of a database Channel that is actively being used by one
 // or more of its members for voice chat.
-type room struct {
+type Room struct {
 	dal.Channel
 
 	mu sync.Mutex
@@ -59,11 +59,11 @@ type room struct {
 // newRoom instantiates a new Room with the user that has just joined it. This
 // should only be run inside of the lock of roomMap. A parent logger
 // is used to create a child logger to report events in the room.
-func newRoom(c dal.Channel, user RoomUser, logger *slog.Logger) *room {
+func newRoom(c dal.Channel, user RoomUser, logger *slog.Logger) *Room {
 	users := make(map[uuid.UUID]RoomUser, shared.ChannelCapacity)
 	user.joinedAt = time.Now()
 	users[user.Id] = user
-	return &room{
+	return &Room{
 		Channel: c,
 		users:   users,
 		logger:  logger.WithGroup("room").With("owner", c.Owner, "name", c.Name),
@@ -71,7 +71,7 @@ func newRoom(c dal.Channel, user RoomUser, logger *slog.Logger) *room {
 }
 
 // GetUser returns a user if they are currently in the room.
-func (r *room) GetUser(id uuid.UUID) (RoomUser, bool) {
+func (r *Room) GetUser(id uuid.UUID) (RoomUser, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	u, ok := r.users[id]
@@ -79,7 +79,7 @@ func (r *room) GetUser(id uuid.UUID) (RoomUser, bool) {
 }
 
 // Users returns a copy of all users currently in the room other than omitID.
-func (r *room) Users(omitId uuid.UUID) map[uuid.UUID]RoomUser {
+func (r *Room) Users(omitId uuid.UUID) map[uuid.UUID]RoomUser {
 	users := make(map[uuid.UUID]RoomUser, shared.ChannelCapacity)
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -95,7 +95,7 @@ func (r *room) Users(omitId uuid.UUID) map[uuid.UUID]RoomUser {
 
 // addUser adds a member to the room. This should only be run inside
 // of the room's lock.
-func (r *room) addUser(user RoomUser) error {
+func (r *Room) addUser(user RoomUser) error {
 	if userCount := len(r.users); userCount >= r.Capacity {
 		if userCount > r.Capacity {
 			r.logger.Error("room is above capacity: %d", "roomName", r.Name, "userCount", userCount)
@@ -109,7 +109,7 @@ func (r *room) addUser(user RoomUser) error {
 
 // Leave always removes the user with userId from the room. If the user is the
 // last person in the room, it also deletes the room entirely.
-func (r *room) Leave(roomId, userId uuid.UUID) error {
+func (r *Room) Leave(roomId, userId uuid.UUID) error {
 	rooms := getRooms()
 	rooms.mu.Lock()
 	defer rooms.mu.Unlock()
@@ -129,7 +129,7 @@ func (r *room) Leave(roomId, userId uuid.UUID) error {
 	return nil
 }
 
-func CreateOrJoinRoom(c dal.Channel, user RoomUser, logger *slog.Logger) (*room, error) {
+func CreateOrJoinRoom(c dal.Channel, user RoomUser, logger *slog.Logger) (*Room, error) {
 	rooms := getRooms()
 	rooms.mu.Lock()
 
@@ -161,7 +161,7 @@ func CreateOrJoinRoom(c dal.Channel, user RoomUser, logger *slog.Logger) (*room,
 // join or leave.
 type roomMap struct {
 	mu     sync.Mutex
-	active map[uuid.UUID]*room
+	active map[uuid.UUID]*Room
 }
 
 // Get returns a copy of a Room for a given id, returning an error if not found.
@@ -196,7 +196,7 @@ var (
 // if you intend to read or modify it.
 func getRooms() *roomMap {
 	createRoomStore.Do(func() {
-		activeRooms = roomMap{active: make(map[uuid.UUID]*room, 10)}
+		activeRooms = roomMap{active: make(map[uuid.UUID]*Room, 10)}
 	})
 	return &activeRooms
 }

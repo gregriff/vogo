@@ -3,7 +3,6 @@ module github.com/gregriff/vogo/shared
 go 1.27.0
 
 require (
-	github.com/adrg/xdg v0.5.3
 	github.com/google/uuid v1.6.0
 	github.com/pion/webrtc/v4 v4.2.18
 	github.com/spf13/viper v1.21.0
