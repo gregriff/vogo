@@ -592,15 +592,18 @@ func beginSignaling(
 	offerCh <- offer
 	logger.WRTC.Debug("conn created, offer sent, signaling beginning", "with", recipient.Name)
 
-	rErr := recvSignals(ctx, ws, conn.To, conn.Answer, logger.WRTC)
+	rErr := recvEvents(ctx, ws, conn.To, conn.Answer, logger.WRTC)
 	if rErr != nil {
-		logger.ROUTE.Error("while signaling", "err", rErr)
+		logger.ROUTE.Error("while signaling or connecting", "err", rErr)
 	}
 }
 
-// recvSignals relays candidates, and the answer from the recipient to
+// recvEvents relays candidates, and the answer from the recipient to
 // the client until the answer has been relayed, or the ctx is cancelled.
-func recvSignals(
+//
+// NOTE: candidate chan is no longer closed, so this func only ends when the context is canceled,
+// in order to enable ICE restart.
+func recvEvents(
 	ctx context.Context,
 	ws *websocket.Conn,
 	from state.ClientInfo,
@@ -635,7 +638,7 @@ func recvSignals(
 			logger.Debug("answer relayed", "from", from.Name)
 
 		// recv answer candidates from the recipient
-		case candidate, ok := <-from.Candidates:
+		case candidate := <-from.Candidates:
 			bytes, err := json.Marshal(messages.Candidate{
 				UserId:    from.Id,
 				Username:  from.Name,
@@ -650,12 +653,6 @@ func recvSignals(
 				return fmt.Errorf("writing answer candidate: %w", err)
 			}
 			logger.Debug("candidate relayed", "from", from.Name)
-
-			// we've sent the client the recipient's last candidate. nothing left to do
-			if !ok {
-				from.Candidates = nil // unness?
-				return nil
-			}
 		}
 	}
 }
@@ -690,7 +687,6 @@ func handleMsg(
 			return nil
 		}
 		if data.Candidate.Candidate == "" {
-			close(conn.From.Candidates)
 			logger.WRTC.Debug("ice gather completed (caller)", "caller", data.Username)
 			break
 		}
@@ -712,10 +708,6 @@ func handleMsg(
 			return nil
 		}
 		if data.Candidate.Candidate == "" {
-			// since there are now senders in multiple goroutines, the sender goroutines should not close
-			// the chan. a closer goroutine should close once ice gather is completed, and sending should
-			// not happen if ice gather is completed (check nil chan?)
-			close(conn.To.Candidates)
 			logger.WRTC.Debug("ice gather completed (answerer)", "answerer", data.Username)
 			return nil
 		}
@@ -763,6 +755,9 @@ func handleMsg(
 // NOTE: relaying caller's ice candidates to the client (user that was already in the room) may
 // be able to be done BEFORE client's answer is relayed to caller. client could buffer candidates...
 // check webrtc spec.
+//
+// NOTE: candidate chan is no longer closed, so this func only ends when the context is canceled,
+// in order to enable ICE restart.
 func relayIceCandidates(
 	ctx context.Context,
 	ws *websocket.Conn,
@@ -776,7 +771,7 @@ func relayIceCandidates(
 			logger.Debug("answer handler ice ctx cancelled. stopping listening for caller candidates")
 			return nil
 		// forwards caller's candidates to client
-		case candidate, ok := <-ch:
+		case candidate := <-ch:
 			bytes, err := json.Marshal(messages.Candidate{
 				UserId:    caller.Id,
 				Username:  caller.Name,
@@ -791,10 +786,6 @@ func relayIceCandidates(
 				return fmt.Errorf("writing caller's candidate to client ws: %w", err)
 			}
 			logger.Debug("ice-offer relayed", "from", caller.Name)
-			if !ok { // empty end candidate sent, return
-				ch = nil // unness?
-				return nil
-			}
 		}
 	}
 }

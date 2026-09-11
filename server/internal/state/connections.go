@@ -99,7 +99,8 @@ type ClientInfo struct {
 	// encapsulates the offer or answer of the client
 	Sd webrtc.SessionDescription
 
-	// websockets will wait read from these to facilitate ICE trickle
+	// websockets will wait read from these to facilitate ICE trickle.
+	// this should not be closed, to enable ICE restart.
 	Candidates chan webrtc.ICECandidateInit
 }
 
