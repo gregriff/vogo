@@ -9,6 +9,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"runtime/trace"
 	"sync"
 	"time"
 	"uuid"
@@ -365,6 +366,9 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 
 	logger := h.loggers.forRequest(ws.Request())
 
+	ctx, task := trace.NewTask(ctx, "Join")
+	defer task.End()
+
 	username := middleware.GetUsernameWS(ws)
 	user, err := dal.GetUser(h.db, username)
 	if err != nil {
@@ -372,6 +376,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		_ = ws.WriteClose(getUserErrCode(err))
 		return
 	}
+	trace.Log(ctx, "db", "got user")
 
 	var req requests.JoinRoom
 	err = wsock.ReceiveJSON(ctx, ws, &req)
@@ -383,12 +388,15 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
+	trace.Log(ctx, "ws", "received join room request")
+
 	owner, err := dal.GetUser(h.db, req.OwnerName)
 	if err != nil {
 		logger.ROUTE.Error("querying room owner", "err", err)
 		_ = ws.WriteClose(getUserErrCode(err))
 		return
 	}
+	trace.Log(ctx, "db", "got owner")
 
 	// ensure user is friends with owner.
 	friends, err := user.HasFriend(h.db, owner.Id)
@@ -402,6 +410,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
+	trace.Log(ctx, "db", "verified friendship")
 
 	// TODO: removeFriend and blockFriend endpoints should remove user
 	// from relevant rooms in the same DB transaction
@@ -412,6 +421,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		return
 	}
 	c.Owner = owner.Name
+	trace.Log(ctx, "db", "got channel")
 
 	// create or join room
 	roomUser := state.NewRoomUser(user)
@@ -427,6 +437,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			log.Panicf("room %s not in roomMap, while %s is attempting to leave it", room.Name, user.Name)
 		}
 	}()
+	trace.Log(ctx, "state", "created or joined room")
 
 	// notify client of all existing room users so it can send offers.
 	users := room.Users(roomUser.Id)
@@ -434,6 +445,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		logger.ROUTE.Error("sending BulkConnection msg", "err", err)
 		return
 	}
+	trace.Log(ctx, "ws", "sent bulk connection message")
 
 	// note: parallelize this
 	// TODO: if joiner could also include 1..n ice candidates in their initial offer msgs to each
@@ -447,6 +459,8 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		_ = ws.WriteClose(http.StatusBadRequest)
 		return
 	}
+	trace.Log(ctx, "ws", "received bulk connection response")
+
 	if len(offers.Data) == 0 && len(users) > 0 {
 		logger.ROUTE.Error("no offers received from ws", "users_in_room", len(users))
 		_ = ws.WriteClose(http.StatusBadRequest)
@@ -459,6 +473,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		return
 	}
 
+	// TODO: figure out how to use tracing regions or tasks with these contexts...
 	var signalingWg sync.WaitGroup
 	var signalingCtx, cancelSignaling = context.WithCancel(ctx)
 	defer func() {
@@ -470,6 +485,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	for recipientId, offer := range offers.Data {
 		signalingWg.Go(func() {
 			ctx, cancel := context.WithTimeout(signalingCtx, 15*time.Second)
+			defer trace.StartRegion(ctx, fmt.Sprintf("init-connection-%s", offer.To)).End()
 			defer cancel()
 
 			// TODO: there is some race going on below that prevents PendingConnections from being accurate at all times.
@@ -482,16 +498,17 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		})
 	}
 
-	var wsRecvWg sync.WaitGroup
-	var wsRecvCtx, cancelWsRecv = context.WithCancel(ctx)
+	var listenWg sync.WaitGroup
+	var listenCtx, cancelListen = context.WithCancel(ctx)
 	var msgChan = make(chan wsock.Message)
 	defer func() {
-		cancelWsRecv()
-		wsRecvWg.Wait()
+		cancelListen()
+		listenWg.Wait()
 	}()
-	wsRecvWg.Go(func() {
+	listenWg.Go(func() {
+		defer trace.StartRegion(listenCtx, "listen").End()
 		defer cancel() // if websocket closes, end all goroutines
-		if err := wsock.Listen(wsRecvCtx, ws, msgChan); err != nil {
+		if err := wsock.Listen(listenCtx, ws, msgChan); err != nil {
 			if err == io.EOF { // todo: may need to handle this in startMessageLoop
 				logger.ROUTE.Info("connection closed")
 			} else {
@@ -524,6 +541,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 			// could also group retryable errors into a custom error, and also group client-side errors
 			// to send back to the client. could also send all errors back to client for detailed notifications
 			msgWg.Go(func() {
+				defer trace.StartRegion(ctx, fmt.Sprintf("handle-%s", msg.Type)).End()
 				if err := handleMsg(ctx, &iceWg, ws, msg, logger, room, roomUser); err != nil {
 					logger.ROUTE.Error("handling message", "type", msg.Type, "err", err)
 				}
@@ -541,6 +559,7 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 				logger.ROUTE.Error("relaying new offer", "from", offer.From, "to", offer.To, "err", err)
 			}
 			logger.WRTC.Debug("offer relayed", "from", offer.From)
+			trace.Log(ctx, "webrtc", fmt.Sprintf("%s's offer relayed", offer.From))
 		}
 	}
 }
@@ -591,6 +610,7 @@ func beginSignaling(
 	}
 	offerCh <- offer
 	logger.WRTC.Debug("conn created, offer sent, signaling beginning", "with", recipient.Name)
+	trace.Log(ctx, "webrtc", "sent offer")
 
 	rErr := recvEvents(ctx, ws, conn.To, conn.Answer, logger.WRTC)
 	if rErr != nil {
@@ -602,7 +622,8 @@ func beginSignaling(
 // the client until the answer has been relayed, or the ctx is cancelled.
 //
 // NOTE: candidate chan is no longer closed, so this func only ends when the context is canceled,
-// in order to enable ICE restart.
+// in order to enable ICE restart. THIS CTX CANCELS AFTER 15 SECONDS! will need to start a new
+// goroutine listening on the can chan if ICE restart is desired
 func recvEvents(
 	ctx context.Context,
 	ws *websocket.Conn,
@@ -618,10 +639,12 @@ func recvEvents(
 		// recv answer from the recipient.
 		case answerSd, ok := <-answerCh:
 			if !ok {
+				// if only one answer ever is sent, no need for closed check, just set to nil.
 				answerCh = nil
 				continue
 			}
 			logger.Debug("received answer from chan", "answer_from", from.Name)
+			trace.Log(ctx, "webrtc", "received answer")
 
 			bytes, err := json.Marshal(requests.Connection{
 				To: from.Name, // this is the recipient
@@ -636,6 +659,7 @@ func recvEvents(
 				return fmt.Errorf("writing answer: %w", err)
 			}
 			logger.Debug("answer relayed", "from", from.Name)
+			trace.Log(ctx, "webrtc", "relayed answer")
 
 		// recv answer candidates from the recipient
 		case candidate := <-from.Candidates:
@@ -653,6 +677,7 @@ func recvEvents(
 				return fmt.Errorf("writing answer candidate: %w", err)
 			}
 			logger.Debug("candidate relayed", "from", from.Name)
+			trace.Log(ctx, "webrtc", "relayed candidate")
 		}
 	}
 }
@@ -688,9 +713,11 @@ func handleMsg(
 		}
 		if data.Candidate.Candidate == "" {
 			logger.WRTC.Debug("ice gather completed (caller)", "caller", data.Username)
+			trace.Log(ctx, "webrtc", "detected ice gather completed (caller)")
 			break
 		}
 		conn.From.Candidates <- data.Candidate
+		trace.Log(ctx, "webrtc", "relayed ice-offer candidate")
 	case wsock.ICEAnswer:
 		data, err := parseCandidate(ws, msg.Data)
 		if err != nil {
@@ -709,9 +736,11 @@ func handleMsg(
 		}
 		if data.Candidate.Candidate == "" {
 			logger.WRTC.Debug("ice gather completed (answerer)", "answerer", data.Username)
+			trace.Log(ctx, "webrtc", "detected ice gather completed (answerer)")
 			return nil
 		}
 		conn.To.Candidates <- data.Candidate
+		trace.Log(ctx, "webrtc", "relayed ice-answer candidate")
 	// this is when the client answers a new user's offer
 	case wsock.Answer:
 		var answer requests.ConnectionWithId
@@ -738,9 +767,11 @@ func handleMsg(
 		conn.Answer <- answer.Sd
 		close(conn.Answer)
 		logger.WRTC.Debug("answer sent", "to", answer.To)
+		trace.Log(ctx, "webrtc", "answer sent")
 
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		iceWg.Go(func() {
+			defer trace.StartRegion(ctx, fmt.Sprintf("relay %s's candidates", conn.From.Name)).End()
 			defer cancel()
 			if err := relayIceCandidates(ctx, ws, caller, conn.From.Candidates, logger.WRTC); err != nil {
 				logger.ROUTE.Error("while relaying ICE candidates", "err", err)
@@ -786,6 +817,7 @@ func relayIceCandidates(
 				return fmt.Errorf("writing caller's candidate to client ws: %w", err)
 			}
 			logger.Debug("ice-offer relayed", "from", caller.Name)
+			trace.Log(ctx, "webrtc", "relayed ice-offer candidate")
 		}
 	}
 }

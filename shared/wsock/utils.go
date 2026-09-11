@@ -4,6 +4,7 @@ package wsock
 import (
 	"context"
 	"encoding/json"
+	"runtime/trace"
 	"sync"
 	"time"
 
@@ -47,6 +48,7 @@ func Listen(ctx context.Context, ws *websocket.Conn, ch chan<- Message) error {
 			return err
 		}
 		ch <- msg
+		trace.Log(ctx, "ws", "recieved message")
 	}
 }
 
