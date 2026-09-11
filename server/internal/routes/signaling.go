@@ -125,7 +125,9 @@ func (h *RouteHandler) Call(ws *websocket.Conn) {
 			case wsock.ICEOffer:
 				data, err := parseCandidate(ws, msg.Data)
 				if err != nil {
+					// note: this does not really need to close the ws.
 					logger.ROUTE.Error("parsing ice-offer candidate", "err", err)
+					_ = ws.WriteClose(http.StatusBadRequest)
 					return
 				}
 
@@ -211,15 +213,10 @@ func cleanupDispatcher(
 	_ = ws.Close()
 }
 
-// parseCandidate parses an ICE candidate from data and returns
-// the candidate. It closes the ws if an error is encountered.
+// parseCandidate parses an ICE candidate from data and returns the candidate.
 func parseCandidate(ws *websocket.Conn, data json.RawMessage) (messages.Candidate, error) {
 	var c messages.Candidate
-
 	err := json.Unmarshal(data, &c)
-	if err != nil {
-		_ = ws.WriteClose(http.StatusBadRequest)
-	}
 	return c, err
 }
 
@@ -329,7 +326,9 @@ func (h *RouteHandler) Answer(ws *websocket.Conn) {
 			case wsock.ICEAnswer:
 				data, err := parseCandidate(ws, msg.Data)
 				if err != nil {
+					// note: this does not really need to close the ws.
 					logger.ROUTE.Error("parsing ice-answer candidate", "err", err)
+					_ = ws.WriteClose(http.StatusBadRequest)
 					return
 				}
 
@@ -505,9 +504,12 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 	// now that the offers are being sent to existing users, we can start the loop that will run for the rest of the time
 	// that the user is in the room.
 
+	// waitgroups for message handling.
+	var msgWg sync.WaitGroup
 	var iceWg sync.WaitGroup
 	defer func() {
 		_ = ws.Close()
+		msgWg.Wait()
 		iceWg.Wait()
 	}()
 
@@ -517,17 +519,15 @@ func (h *RouteHandler) JoinRoom(ws *websocket.Conn) {
 		select {
 		case <-ctx.Done():
 			return
-		// NOTE: all funcs in this need to run async, since chan is unbuffered and blocks on sends
 		case msg := <-msgChan:
-			// TODO: put this switch into its own func. run it in its own goroutine. it should use a waitgroup defined before this
-			// event loop "msgHandlerWg". 'tick' will report the wg's counter (manually increment a top level int).
-			//
 			// TODO: could return (error, bool), signaling an abort with the bool.
 			// could also group retryable errors into a custom error, and also group client-side errors
 			// to send back to the client. could also send all errors back to client for detailed notifications
-			if err := handleMsg(ctx, &iceWg, ws, msg, logger, room, roomUser); err != nil {
-				logger.ROUTE.Error("handling message", "type", msg.Type, "err", err)
-			}
+			msgWg.Go(func() {
+				if err := handleMsg(ctx, &iceWg, ws, msg, logger, room, roomUser); err != nil {
+					logger.ROUTE.Error("handling message", "type", msg.Type, "err", err)
+				}
+			})
 		case offer := <-roomUser.Offers:
 			// when we get an offer from a new joiner, it must be relayed to self.
 			bytes, err := json.Marshal(offer)
@@ -681,13 +681,12 @@ func handleMsg(
 			return fmt.Errorf("parsing ice-offer candidate: %w", err)
 		}
 
-		// TODO: this may run before the bulk connection has been recvd from the client, meaning that the conn
+		// TODO: this may run before the bulk connection has been recvd from the client? meaning that the conn
 		// is not yet present. ICE msgs cannot be processed until connection has been created. add a chan.
 		conn, err := roomUser.PendingConnections.Get(data.UserId)
 		if err != nil {
 			// this probably means signalling has completed. should be able to figure this out with sync primitives
 			logger.STATE.Error("unable to get conn in ice-offer handler", "conn-owner", data.Username)
-			// _ = ws.WriteClose(http.StatusInternalServerError)
 			return nil
 		}
 		if data.Candidate.Candidate == "" {
@@ -705,16 +704,17 @@ func handleMsg(
 		caller, found := room.GetUser(data.UserId)
 		if !found {
 			logger.STATE.Error("unable to find caller in room while handling ice-answer message", "caller", data.Username)
-			// _ = ws.WriteClose(http.StatusBadRequest)
 			return nil
 		}
 		conn, err := caller.PendingConnections.Get(roomUser.Id)
 		if err != nil {
 			logger.STATE.Error("unable to get conn in ice-answer handler", "conn_owner", data.Username)
-			// _ = ws.WriteClose(http.StatusBadRequest)
 			return nil
 		}
 		if data.Candidate.Candidate == "" {
+			// since there are now senders in multiple goroutines, the sender goroutines should not close
+			// the chan. a closer goroutine should close once ice gather is completed, and sending should
+			// not happen if ice gather is completed (check nil chan?)
 			close(conn.To.Candidates)
 			logger.WRTC.Debug("ice gather completed (answerer)", "answerer", data.Username)
 			return nil
@@ -724,13 +724,11 @@ func handleMsg(
 	case wsock.Answer:
 		var answer requests.ConnectionWithId
 		if err := json.Unmarshal(msg.Data, &answer); err != nil {
-			// _ = ws.WriteClose(http.StatusBadRequest)
 			return fmt.Errorf("unmarshalling answer: %w", err)
 		}
 
 		if answer.Sd.SDP == "" { // TODO: retry
 			logger.WRTC.Debug("empty answer", "from", answer.From)
-			// _ = ws.WriteClose(http.StatusBadRequest)
 			return nil
 		}
 		logger.WRTC.Debug("answer prepared", "for", answer.To)
@@ -738,23 +736,21 @@ func handleMsg(
 		caller, found := room.GetUser(answer.ToId)
 		if !found {
 			logger.STATE.Error("caller not found in room while handling answer message", "caller", answer.From)
-			// _ = ws.WriteClose(http.StatusBadRequest)
 			return nil
 		}
 		conn, err := caller.PendingConnections.Get(roomUser.Id)
 		if err != nil {
 			logger.STATE.Warn("unable to get conn in answer handler", "conn_owner", caller.Name)
-			// _ = ws.WriteClose(http.StatusBadRequest)
 			return nil
 		}
 		conn.Answer <- answer.Sd
 		close(conn.Answer)
 		logger.WRTC.Debug("answer sent", "to", answer.To)
 
-		iceCtx, cancelIce := context.WithTimeout(ctx, 30*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		iceWg.Go(func() {
-			defer cancelIce()
-			if err := relayIceCandidates(iceCtx, ws, caller, conn.From.Candidates, logger.WRTC); err != nil {
+			defer cancel()
+			if err := relayIceCandidates(ctx, ws, caller, conn.From.Candidates, logger.WRTC); err != nil {
 				logger.ROUTE.Error("while relaying ICE candidates", "err", err)
 			}
 		})
