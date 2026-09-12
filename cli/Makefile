@@ -76,6 +76,8 @@ endif
 
 export CC CGO_CFLAGS CGO_LDFLAGS PKG_CONFIG GOEXPERIMENT GOAMD64 OUT_DIR
 
+.PHONY: format lint build install answer join call invite friends channel status register test escape
+
 # view asm: `go tool objdump -s "func_name" bin/vogo`
 
 build:
@@ -115,19 +117,20 @@ escape:
 # testing:
 # ==============================================================================
 # each shell executing vogo-client commands for testing should override
-# this to 'two' if they want to execute commands using the second user's config.
-# ex: `export VOGOENV=two`
-VOGOENV ?= one
+# this to '2' if they want to execute commands using the second user's config.
+# ex: `export VOGOENV=2`. This cannot be a string because it is used to increment
+# the port pprof is exposed on.
+VOGOENV ?= 1
 
 USER_ONE := greg
 USER_TWO := tim
 USER_THREE := john
 CHANNEL_NAME := test
 
-CONFIG_PATH := ./configs/dev.${VOGOENV}.toml
-USER_ONE_CONFIG := ./configs/dev.one.toml
-USER_TWO_CONFIG := ./configs/dev.two.toml
-USER_THREE_CONFIG := ./configs/dev.three.toml
+CONFIG_PATH := ./configs/dev_${VOGOENV}.toml
+USER_ONE_CONFIG := ./configs/dev_1.toml
+USER_TWO_CONFIG := ./configs/dev_2.toml
+USER_THREE_CONFIG := ./configs/dev_3.toml
 
 # note: X=1 uses deferred evaluation, so X could change every time its used
 
@@ -167,41 +170,68 @@ invite: build
 # make user_one call user_two.
 call: build
 	@echo "$(USER_ONE) calling $(USER_TWO)..."
-	$(OUT_DIR)/vogo call $(USER_TWO) --config=$(USER_ONE_CONFIG)
+	$(OUT_DIR)/vogo call $(USER_TWO) --config=$(USER_ONE_CONFIG) --pprof=$(PPROF_CLIENT_AUTHORITY)
 
 # make user_two answer user_one. fails if `make call` has not been run in another shell.
 answer: build
 	@echo "$(USER_TWO) answering $(USER_ONE)..."
-	$(OUT_DIR)/vogo answer $(USER_ONE) --config=$(USER_TWO_CONFIG)
+	$(OUT_DIR)/vogo answer $(USER_ONE) --config=$(USER_TWO_CONFIG) --pprof=$(PPROF_CLIENT_AUTHORITY)
 
 # using VOGOENV, join the channel created by `make channel`.
 join: announce build
 	@echo "joining $(USER_ONE)/$(CHANNEL_NAME)..."
-	$(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH) --pprof=localhost:6080
+	$(OUT_DIR)/vogo channel join $(USER_ONE)/$(CHANNEL_NAME) --config=$(CONFIG_PATH) --pprof=$(PPROF_CLIENT_AUTHORITY)
 
-PPROF_DIR = ../.pprof/vogo
-PROFILE_DIR ?= ${PPROF_DIR}/$(shell date +"%m-%d_%H:%M")
-PPROF_SECONDS ?= 30
-PPROF_PORT ?= 6040
+#################################################################################
+# PPROF -- ex. run `make pprof-cpu` to create and view a cpu profile.
+#################################################################################
 
-pprof-cpu:
-	mkdir -p $(PROFILE_DIR)
-	go tool pprof -proto http://localhost:6080/debug/pprof/profile\?seconds\=$(PPROF_SECONDS) > $(PROFILE_DIR)/cpu.prof
+.PHONY: pprof-cpu pprof-heap pprof-trace pprof-leak pprof-view profile-dir
 
-pprof-heap:
-	mkdir -p $(PROFILE_DIR)
-	go tool pprof -proto http://localhost:6080/debug/pprof/heap?gc=1 > $(PROFILE_DIR)/heap.prof
+PPROF_DIR      = ../.pprof/vogo-server
+PROFILE_DIR    := $(PPROF_DIR)/$(shell date +"%m-%d_%H:%M")
+PPROF_SECONDS  ?= 30
+PPROF_WEB_PORT ?= 6040
+LATEST_LINK    = $(PPROF_DIR)/latest
 
-pprof-trace:
-	mkdir -p $(PROFILE_DIR)
-	curl -s "http://localhost:6080/debug/pprof/trace?seconds=10" -o $(PROFILE_DIR)/trace.out
+# where to look for the client's pprof endpoint.
+PPROF_HOST ?= localhost
+PPROF_PORT ?= 6080
+
+# used by the pprof command
+PPROF_AUTHORITY ?= $(PPROF_HOST):$(PPROF_PORT)
+
+# if not using the default VOGOENV, increment the port the client
+# exposes pprof on, in order to prevent exposing on the same port.
+ifneq ($(VOGOENV),1)
+PPROF_CLIENT_PORT := $$(($(PPROF_PORT) + $(VOGOENV)))
+else
+PPROF_CLIENT_PORT := $(PPROF_PORT)
+endif
+PPROF_CLIENT_AUTHORITY ?= $(PPROF_HOST):$(PPROF_CLIENT_PORT)
+
+profile-dir:
+	@mkdir -p $(PROFILE_DIR)
+	@ln -sfn "$$(realpath $(PROFILE_DIR))" $(LATEST_LINK)
+
+pprof-cpu: profile-dir
+	go tool pprof -proto "http://$(PPROF_AUTHORITY)/debug/pprof/profile?seconds=$(PPROF_SECONDS)" > $(PROFILE_DIR)/cpu.prof
+	go tool pprof -http=:$(PPROF_WEB_PORT) $(PROFILE_DIR)/cpu.prof
+
+pprof-heap: profile-dir
+	go tool pprof -proto "http://$(PPROF_AUTHORITY)/debug/pprof/heap?gc=1" > $(PROFILE_DIR)/heap.prof
+	go tool pprof -http=:$(PPROF_WEB_PORT) $(PROFILE_DIR)/heap.prof
+
+pprof-leak: profile-dir
+	go tool pprof -proto "http://$(PPROF_AUTHORITY)/debug/pprof/goroutineleak" > $(PROFILE_DIR)/leak.prof
+	go tool pprof -http=:$(PPROF_WEB_PORT) $(PROFILE_DIR)/leak.prof
+
+# this will open up the trace on its own, no need to call pprof-view after.
+pprof-trace: profile-dir
+	curl -s "http://$(PPROF_AUTHORITY)/debug/pprof/trace?seconds=10" -o $(PROFILE_DIR)/trace.out
 	go tool trace $(PROFILE_DIR)/trace.out
-	# go tool pprof -proto http://localhost:6080/debug/pprof/trace?seconds=10 > $(PROFILE_DIR)/trace.out
 
-# Opens an existing pprof file in the web browser
+# Opens the supplied pprof file in the web browser
 pprof-view:
 	@echo "Viewing \$PPROF_FILE: $${PPROF_FILE:?PPROF_FILE is not set}"
-	go tool pprof -http=:$(PPROF_PORT) $${PPROF_FILE}
-
-
-.PHONY: format lint build install answer join call invite friends channel status register test escape
+	go tool pprof -http=:$(PPROF_WEB_PORT) $${PPROF_FILE}
