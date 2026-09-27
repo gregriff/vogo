@@ -3,14 +3,19 @@ package cmd
 // TODO: status should authenticate and issue a JWT
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	// _ "net/http/pprof".
+
+	"github.com/gregriff/vogo/shared/public"
 )
 
 var statusCmd = &cobra.Command{
@@ -30,8 +35,11 @@ func getStatus(_ *cobra.Command, _ []string) {
 		viper.GetString("user.password"),
 		viper.GetString("servers.vogo-origin")
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	vogoClient := crud.NewClient(vogoServer, username, password)
-	status, err := crud.Status(vogoClient)
+	status, err := crud.Status(ctx, vogoClient)
 	if err != nil {
 		log.Printf("error fetching status: %v", err)
 		return
@@ -41,13 +49,13 @@ func getStatus(_ *cobra.Command, _ []string) {
 	printChannels(status.Channels)
 }
 
-func printFriends(friends []crud.Friend) {
+func printFriends(friends []public.Friend) {
 	if len(friends) == 0 {
 		fmt.Println("\nNo Friends")
 		return
 	}
 
-	incomingRequests := make([]crud.Friend, 0, 2)
+	incomingRequests := make([]public.Friend, 0, 2)
 	for _, friend := range friends {
 		if friend.Status == "pending" {
 			incomingRequests = append(incomingRequests, friend)
@@ -70,7 +78,7 @@ func printFriends(friends []crud.Friend) {
 	}
 }
 
-func printChannels(channels []crud.Channel) {
+func printChannels(channels []public.Channel) {
 	if len(channels) == 0 {
 		fmt.Println("\nNo Channels")
 		return

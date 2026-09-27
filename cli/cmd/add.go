@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw/crud"
+	"github.com/gregriff/vogo/shared"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	// _ "net/http/pprof".
 )
 
 var addFriendCmd = &cobra.Command{
@@ -17,9 +21,9 @@ var addFriendCmd = &cobra.Command{
       name    The username of the friend to add (required)
 	`,
 	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
+	PreRunE: func(_ *cobra.Command, args []string) error {
 		friendName := args[0]
-		if len(friendName) > 16 {
+		if len(friendName) > shared.MaxUsernameLen {
 			return fmt.Errorf("friend's name too long")
 		}
 		if friendName == "" {
@@ -43,8 +47,12 @@ func addFriend(_ *cobra.Command, _ []string) {
 		viper.GetString("friendName"),
 		viper.GetString("servers.vogo-origin")
 
+	ctx, stop := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	vogoClient := crud.NewClient(vogoServer, username, password)
-	friend, err := crud.AddFriend(vogoClient, friendName)
+	friend, err := crud.AddFriend(ctx, vogoClient, friendName)
 	if err != nil {
 		log.Fatal(fmt.Errorf("error adding friend: %w", err).Error())
 	}

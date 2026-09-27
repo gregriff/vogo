@@ -1,95 +1,100 @@
+// package wrtc contains functions that initialize pion webrtc functionality, as well as functions to
+// read RTCP packets
 package wrtc
 
 import (
-	"fmt"
 	"log"
 
-	"github.com/gregriff/vogo/cli/internal/audio"
+	"github.com/gregriff/vogo/cli/internal/audio/pcm"
+	"github.com/pion/interceptor"
+	"github.com/pion/interceptor/pkg/stats"
 	"github.com/pion/webrtc/v4"
 )
 
+const RecvMTU = 1_200
+
 var opusCodec = webrtc.RTPCodecCapability{
 	MimeType:     webrtc.MimeTypeOpus,
-	ClockRate:    audio.SampleRate,
-	Channels:     audio.NumChannels,
-	SDPFmtpLine:  "", // "minptime=10;useinbandfec=1",
+	ClockRate:    pcm.SampleRate,
+	Channels:     pcm.NumChannels,
+	SDPFmtpLine:  "", // "minptime=10",
 	RTCPFeedback: nil,
 }
 
 // NewAudioPeerConnection creates the PeerConnection for a bidirectional audio webrtc connection.
-// It also returns the TrackLocalStaticSample used to write microphone audio to, and two channels,
-// one for recieving the client's ICE candidates as they're gathered, and the other for signaling
-// when the PeerConnection moves to a connected state.
-// TODO: create a struct for this retval
-func NewAudioPeerConnection(stunServer, trackID string, exitOnFail bool) (
+// It also returns the RTP sender and receiver, so the caller can access sender and receiver reports
+// for the peer connection.
+func NewAudioPeerConnection(stunServer string, track *webrtc.TrackLocalStaticSample) (
 	*webrtc.PeerConnection,
-	*webrtc.TrackLocalStaticSample,
-	chan webrtc.ICECandidateInit,
-	chan struct{},
-	error,
+	*webrtc.RTPSender,
+	*webrtc.RTPReceiver,
 ) {
-	pc, err := newPeerConnection(stunServer)
-	if err != nil {
-		ClosePC(pc, true)
-		return pc, nil, nil, nil, fmt.Errorf("error creating peer connection %w", err)
+	pc := newPeerConnection(stunServer)
+	sender, receiver := addAudioTrack(pc, track)
+	if sender == nil {
+		log.Panicf("RTPSender is nil")
 	}
-	// if _, err = pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio); err != nil {
-	// 	panic(err)
-	// }
-	track, err := createAudioTrack(pc, trackID)
-	if err != nil {
-		ClosePC(pc, true)
-		return pc, track, nil, nil, fmt.Errorf("error creating audio track: %w", err)
+	if receiver == nil {
+		log.Panicf("RTPReceiver is nil")
 	}
-
-	var (
-		// carries this client's ICE candidates as they're gathered
-		candidates = make(chan webrtc.ICECandidateInit, 10)
-
-		// notification channel for when the peer connection becomes connected
-		connected = make(chan struct{})
-	)
-	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-		onICECandidate(c, candidates)
-	})
-	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		onConnectionStateChange(s, connected, exitOnFail)
-	})
-	return pc, track, candidates, connected, nil
+	return pc, sender, receiver
 }
 
 // newPeerConnection creates a PeerConnection configured with the Opus audio codec.
 // It sets the STUN server and configures the MTU to avoid packet read underruns.
-func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
+// TODO: config creation and PeerConnection creation needs to be split into separate functions for room use case.
+func newPeerConnection(stunServer string) *webrtc.PeerConnection {
 	mediaEngine := &webrtc.MediaEngine{}
 	codecParams := webrtc.RTPCodecParameters{
 		RTPCodecCapability: opusCodec,
 		PayloadType:        111, // should this be negotiated and not hard coded?
 	}
 	if err := mediaEngine.RegisterCodec(codecParams, webrtc.RTPCodecTypeAudio); err != nil {
-		return nil, fmt.Errorf("error registering codec: %w", err)
+		log.Panicf("error registering codec: %v", err)
 	}
 
 	// Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
 	// This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
 	// this is enabled by default. If you are manually managing You MUST create a InterceptorRegistry
 	// for each PeerConnection.
-	// interceptorRegistry := &interceptor.Registry{}
+	interceptorRegistry := &interceptor.Registry{}
 
+	// TODO: to impl jitter buffer (with custom minpacketcount), will need to create custom receiver_interceptor
+	// that stores a jitterbuffer.New(jitterbuffer.WithMinimumPacketCount(2)) in it.
+	// https://github.com/pion/interceptor/blob/master/pkg/jitterbuffer/receiver_interceptor.go
 	// jitterBufferFactory, err := jitterbuffer.NewInterceptor()
 	// if err != nil {
-	// 	panic(err)
+	// panic(err)
 	// }
 	// interceptorRegistry.Add(jitterBufferFactory)
 
 	// Use the default set of Interceptors
-	// if err = webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
-	// 	panic(err)
-	// }
+	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
+		panic(err)
+	}
+
+	statsFactory, err := stats.NewInterceptor()
+	if err != nil {
+		panic(err)
+	}
+
+	interceptorRegistry.Add(statsFactory)
 
 	// not sure if this should be avoided but this prevents packet size overruns
 	settingEngine := webrtc.SettingEngine{}
-	settingEngine.SetReceiveMTU(3_000)
+	settingEngine.SetReceiveMTU(RecvMTU)
+
+	// Possible todo: ICE renomination
+	// For advanced use with a custom generator and interval.
+	// interval := 2 * time.Second
+	// customGen := func() uint32 { return uint32(time.Now().UnixNano()) } // example
+
+	// if err := se.SetICERenomination(
+	// 	webrtc.WithRenominationGenerator(customGen),
+	// 	webrtc.WithRenominationInterval(interval),
+	// ); err != nil {
+	// 	log.Println(err)
+	// }
 
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(mediaEngine),
@@ -97,17 +102,27 @@ func newPeerConnection(stunServer string) (*webrtc.PeerConnection, error) {
 	)
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
-			{
-				URLs: []string{stunServer},
-			},
+			{URLs: []string{stunServer}},
 		},
 	}
-	return api.NewPeerConnection(config)
+	pc, err := api.NewPeerConnection(config)
+	if err != nil {
+		log.Panicf("error creating PeerConnection: %v", err)
+	}
+	return pc
 }
 
-// createAudioTrack configures a PeerConnection with a bidirectional transceiver and creates
-// an Opus audio TrackLocalStaticSample, which is returned, to write captured audio to.
-func createAudioTrack(pc *webrtc.PeerConnection, trackID string) (*webrtc.TrackLocalStaticSample, error) {
+// CreateAudioTrack creates the opus audio track.
+func CreateAudioTrack(trackId string) *webrtc.TrackLocalStaticSample {
+	t, err := webrtc.NewTrackLocalStaticSample(opusCodec, "captureTrack", trackId)
+	if err != nil {
+		log.Panicf("error initializing capture track: %v", err)
+	}
+	return t
+}
+
+// addAudioTrack configures a PeerConnection with a bidirectional transceiver and adds the track to it.
+func addAudioTrack(pc *webrtc.PeerConnection, track *webrtc.TrackLocalStaticSample) (*webrtc.RTPSender, *webrtc.RTPReceiver) {
 	audioTrsv, err := pc.AddTransceiverFromKind(
 		webrtc.RTPCodecTypeAudio,
 		webrtc.RTPTransceiverInit{
@@ -115,27 +130,11 @@ func createAudioTrack(pc *webrtc.PeerConnection, trackID string) (*webrtc.TrackL
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("error adding transceiver: %v", err)
+		log.Panicf("error adding transceiver: %v", err)
 	}
-
-	// setup microphone capture track
-	captureTrack, err := webrtc.NewTrackLocalStaticSample(
-		opusCodec,
-		"captureTrack",
-		"captureTrack"+trackID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("error initalizing capture track: %v", err)
+	sender := audioTrsv.Sender()
+	if err = sender.ReplaceTrack(track); err != nil {
+		log.Panicf("error replacing track: %v", err)
 	}
-	audioTrsv.Sender().ReplaceTrack(captureTrack)
-	return captureTrack, nil
-}
-
-func ClosePC(pc *webrtc.PeerConnection, verbose bool) {
-	if verbose {
-		log.Println("closing peer connection")
-	}
-	if err := pc.Close(); err != nil {
-		fmt.Printf("cannot close peer connection: %v", err)
-	}
+	return sender, audioTrsv.Receiver()
 }
