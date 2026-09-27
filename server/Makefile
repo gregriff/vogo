@@ -4,6 +4,8 @@ SHELL = /usr/bin/env bash -o pipefail
 
 .PHONY: build run serve invite format lint create-db drop-db
 
+GOMAXPROCS=2
+
 build:
 	go build -o ../bin/vogo-server main.go
 

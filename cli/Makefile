@@ -2,6 +2,9 @@
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -e
 
+# Misc notes:
+# GODEBUG=inittrace=1 , shows init timings and allocs
+
 # =========================================================================
 # Detect machine info
 #
@@ -23,9 +26,12 @@ endif
 ifeq ($(OS),Windows_NT)
 DETECTED_ARCH := $(PROCESSOR_ARCHITECTURE)
 else
+# dont need to invoke shell here... can use $$
 DETECTED_ARCH := $(shell uname -m)
 endif
 ifeq ($(DETECTED_ARCH),x86_64)
+ARCH_NAME := amd64
+else ifeq ($(DETECTED_ARCH),AMD64)
 ARCH_NAME := amd64
 else ifeq ($(DETECTED_ARCH),aarch64)
 ARCH_NAME := arm64
@@ -53,6 +59,7 @@ info:
 
 # global env vars
 GOEXPERIMENT := simd
+GOMAXPROCS=2
 OUT_DIR := ./bin
 
 # os env vars
