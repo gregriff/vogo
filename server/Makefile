@@ -44,7 +44,7 @@ create-db:
 PPROF_AUTHORITY ?= localhost:6061
 
 PPROF_DIR      = ../.pprof/vogo-server
-PROFILE_DIR   := $(PPROF_DIR)/$(shell date +"%m-%d_%H:%M")
+PROFILE_DIR   := $(PPROF_DIR)/$(shell date +"%m-%d_%H-%M")
 PPROF_SECONDS ?= 30
 PPROF_PORT    ?= 6090
 LATEST_LINK    = $(PPROF_DIR)/latest

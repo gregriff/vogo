@@ -196,7 +196,7 @@ join: announce build
 .PHONY: pprof-cpu pprof-heap pprof-trace pprof-leak pprof-view profile-dir
 
 PPROF_DIR      = ../.pprof/vogo
-PROFILE_DIR    := $(PPROF_DIR)/$(shell date +"%m-%d_%H:%M")
+PROFILE_DIR    := $(PPROF_DIR)/$(shell date +"%m-%d_%H-%M")
 PPROF_SECONDS  ?= 30
 PPROF_WEB_PORT ?= 6040
 LATEST_LINK    = $(PPROF_DIR)/latest
