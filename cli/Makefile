@@ -1,6 +1,6 @@
 # allow bash commands to be executed by recipes
-SHELL = /usr/bin/env bash -o pipefail
-.SHELLFLAGS = -e
+# SHELL = /usr/bin/env bash -o pipefail
+# .SHELLFLAGS = -e
 
 # Misc notes:
 # GODEBUG=inittrace=1 , shows init timings and allocs
@@ -69,8 +69,8 @@ OUT_DIR := ./bin
 # Refer to BUILDING.md for instructions.
 ifeq ($(OS_NAME),windows)
 CC := gcc
-CGO_CFLAGS += -I/c/deps/opus/include/opus
-CGO_LDFLAGS += -L/c/deps/opus/lib -lopus
+CGO_CFLAGS += "-I/c/deps/opus/include/opus"
+CGO_LDFLAGS += "-L/c/deps/opus/lib -lopus"
 PKG_CONFIG := true
 endif
 # it is assumed on darwin and linux that libopus will have been
@@ -78,10 +78,10 @@ endif
 
 # cpu arch env vars
 ifeq ($(ARCH_NAME),amd64)
-GOAMD64 := v3  # or v4, depending on your CPU features
+GOAMD64 := v4  # or v4, depending on your CPU features
 endif
 
-export CC CGO_CFLAGS CGO_LDFLAGS PKG_CONFIG GOEXPERIMENT GOAMD64 OUT_DIR
+export CC CGO_CFLAGS CGO_LDFLAGS PKG_CONFIG GOEXPERIMENT GOAMD64 OUT_DIR GOMAXPROCS
 
 .PHONY: format lint build install answer join call invite friends channel status register test escape
 
