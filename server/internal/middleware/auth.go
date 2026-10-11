@@ -3,13 +3,12 @@ package middleware
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gregriff/vogo/server/internal/crypto"
 	"github.com/gregriff/vogo/server/internal/dal"
+	"github.com/gregriff/vogo/server/internal/logging"
 	"golang.org/x/net/websocket"
 )
 
@@ -17,8 +16,9 @@ type contextKey string
 
 const authKey contextKey = "authorization"
 
-// BasicAuth is a middleware that mandates basic auth is present in the headers and validates
-func BasicAuth(next http.Handler, db *sql.DB) http.Handler {
+// BasicAuth is a middleware that mandates basic auth is present in the headers and validates.
+func BasicAuth(next http.Handler, db *sql.DB, logOpts logging.Opts) http.Handler {
+	logger := logging.New(logOpts).With("type", "AUTH")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// whitelisted endpoints
 		if r.URL.Path == "/register" {
@@ -35,7 +35,7 @@ func BasicAuth(next http.Handler, db *sql.DB) http.Handler {
 
 		user, err := dal.GetUserWithPassword(db, username)
 		if err != nil || crypto.CompareHashAndPassword(user.Password, password) != nil {
-			log.Println(fmt.Errorf("auth error: %w", err))
+			logger.Error("error querying user with password", "err", err)
 			writeAuthError(w)
 			return
 		}
@@ -51,7 +51,7 @@ func writeAuthError(w http.ResponseWriter) {
 }
 
 // GetUsername is used in endpoint handlers to retrieve the username of the client that created the request.
-// This should probably be a func in the route handler since its a dependency
+// This should probably be a func in the route handler since its a dependency.
 func GetUsername(r *http.Request) string {
 	username, _ := r.Context().Value(authKey).(string)
 	return username

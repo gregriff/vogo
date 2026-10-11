@@ -1,4 +1,4 @@
-// package public contains structs that can be sent to the vogo client.
+// package public contains structs that can be sent from the server to the client.
 // These structs do not contain private information such as passwords, or
 // internal info such as UUIDs or timestamps. Structs used to represent database
 // records and other server-specific objects should embed these public structs.

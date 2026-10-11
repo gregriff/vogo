@@ -1,0 +1,159 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: build
+env:
+  OPUS_VERSION: 1.6.1
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      cli: ${{ steps.filter.outputs.cli }}
+      server: ${{ steps.filter.outputs.server }}
+    steps:
+    # For pull requests it's not necessary to checkout the code
+    - uses: dorny/paths-filter@v3
+      id: filter
+      with:
+        filters: |
+          cli:
+            - 'cli/**'
+          server:
+            - 'server/**'
+
+  cli-darwin:
+    needs: changes
+    if: ${{ needs.changes.outputs.cli == 'true' }}
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: ./cli
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-base
+
+      # TODO: compile manually if ML features not present.
+      - name: install-dependencies
+        run: |
+            brew install opus
+            [ "$(echo $(pkg-config --modversion opus))" = "${OPUS_VERSION}" ] || exit 1
+
+      - name: build
+        run: GOEXPERIMENT=simd go build -tags nolibopusfile -o dist/vogo main.go
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: vogo-darwin-arm64
+          path: cli/dist/vogo
+
+  server-darwin:
+    needs: changes
+    if: ${{ needs.changes.outputs.server == 'true' }}
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: ./server
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-base
+
+      # this would only be needed for testing
+      # - name: install-dependencies
+      #   run: brew install postgres
+
+      - name: build
+        run: GOEXPERIMENT=simd go build -o dist/vogo-server main.go
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: vogo-server-darwin-arm64
+          path: server/dist/vogo-server
+
+  cli-windows:
+    needs: changes
+    if: ${{ needs.changes.outputs.cli == 'true' }}
+    runs-on: windows-latest
+    env:
+      OPUS_CHECKSUM: 6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
+      OPUS_INSTALL_PREFIX: ${{ github.workspace }}/deps/opus
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      # - uses: ./.github/actions/go-base  # TODO: try this and find go bin
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-go
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-gcc
+            git
+      - uses: actions/checkout@v6
+      - name: build-opus
+        run: |
+            export OPUS="opus-1.6.1"
+            curl -L https://downloads.xiph.org/releases/opus/${OPUS}.tar.gz -o ${OPUS}.tar.gz
+            echo "${OPUS_CHECKSUM}  ${OPUS}.tar.gz" | sha256sum --check
+            tar -xzf ${OPUS}.tar.gz
+            cmake -S ${OPUS} -B ${OPUS}/build -G "MinGW Makefiles" \
+            -DCMAKE_INSTALL_PREFIX="${OPUS_INSTALL_PREFIX}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_FLAGS="-march=x86-64-v3 -O3" \
+            -DOPUS_X86_PRESUME_AVX2=ON -DOPUS_X86_PRESUME_SSE2=ON -DOPUS_X86_PRESUME_SSE4_1=ON \
+            -DOPUS_BUILD_SHARED_LIBRARY=ON \
+            -DOPUS_DEEP_PLC=ON -DOPUS_OSCE=ON
+            cmake --build ${OPUS}/build --parallel
+            cmake --install ${OPUS}/build
+
+      - name: build
+        working-directory: ./cli
+        run: |
+            go version
+            GOEXPERIMENT=simd \
+            GOAMD64=v3 \
+            CC=gcc \
+            CGO_CFLAGS="-I${OPUS_INSTALL_PREFIX}/include/opus" \
+            CGO_LDFLAGS="-L${OPUS_INSTALL_PREFIX}/lib -lopus" \
+            PKG_CONFIG=true \
+            go build -tags nolibopusfile -o dist/vogo.exe main.go
+            cp "${OPUS_INSTALL_PREFIX}/bin/libopus.dll" dist/libopus.dll
+            cp ./packaging/windows/* dist/
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: vogo-windows-amd64
+          path: cli/dist/
+
+    # will need to do something like this to have goreleaser do the releases.
+      # release:
+      # needs: [lint, test, build]
+      # runs-on: ubuntu-latest
+      # if: startsWith(github.ref, 'refs/tags/v')
+      # permissions:
+      #   contents: write
+      # steps:
+      #   - uses: actions/checkout@v6
+      #     with:
+      #       fetch-depth: 0
+
+      #   - uses: actions/download-artifact@v6
+      #     with:
+      #       pattern: binary-*
+      #       path: dist/
+      #       merge-multiple: true
+
+      #   - uses: goreleaser/goreleaser-action@v6
+      #     with:
+      #       args: release --clean
+      #     env:
+      #       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

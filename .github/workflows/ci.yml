@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: golangci-lint
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+  # Optional: allow read access to pull requests. Use with `only-new-issues` option.
+  # pull-requests: read
+
+jobs:
+  lint-cli:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-base
+
+      - name: install-dependencies
+        run: brew install opus
+
+      - name: vet
+        run: go vet -tags nolibopusfile ./...
+        working-directory: ./cli
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          working-directory: ./cli
+  lint-server:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-base
+
+      - name: vet
+        run: go vet ./...
+        working-directory: ./server
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          working-directory: ./server
+  test-cli-darwin:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/go-base
+
+      - name: install-dependencies
+        run: brew install opus
+
+      - name: run-tests
+        run: GOEXPERIMENT=simd go test -tags nolibopusfile -v -race ./cli/...

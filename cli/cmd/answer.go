@@ -1,16 +1,19 @@
+//go:build cgo
+
 package cmd
 
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/gregriff/vogo/cli/internal/netw"
+	"github.com/gregriff/vogo/shared"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	// _ "net/http/pprof".
 )
 
 var answerCmd = &cobra.Command{
@@ -21,20 +24,12 @@ var answerCmd = &cobra.Command{
 	`,
 	Args: cobra.ExactArgs(1),
 	PreRunE: func(_ *cobra.Command, args []string) error {
-		username, password := viper.GetString("user.name"), viper.GetString("user.password")
-		if len(username) == 0 {
-			return fmt.Errorf("username not found. ensure it is present in %s", ConfigFile)
-		}
-		if len(password) == 0 {
-			return fmt.Errorf("password not found. ensure it is present in %s", ConfigFile)
-		}
-
 		if len(args) == 0 {
 			return fmt.Errorf("caller must be specified as an argument")
 		}
 
 		caller := args[0]
-		if len(caller) > 16 {
+		if len(caller) > shared.MaxUsernameLen {
 			return fmt.Errorf("caller string too long")
 		}
 		viper.Set("caller", caller)
@@ -55,13 +50,15 @@ func answerCall(_ *cobra.Command, _ []string) {
 		viper.GetString("servers.stun-origin"),
 		viper.GetString("caller")
 
-	ctx, stop := signal.NotifyContext(context.Background(),
-		os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	credentials := netw.NewCredentials(stunServer, vogoServer, username, password)
 	err := netw.AnswerCall(ctx, credentials, caller)
 	if err != nil {
+		if err == io.EOF {
+			return
+		}
 		fmt.Println(err)
 	}
 }
