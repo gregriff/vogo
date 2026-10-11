@@ -11,3 +11,5 @@ escape.out
 ops*.test
 
 *prompt.txt
+
+*.dis
