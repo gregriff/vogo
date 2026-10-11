@@ -6,7 +6,7 @@ description: "sets up a go action using setup-go, and the project's go version"
 runs:
   using: composite
   steps:
-    - uses: actions/setup-go@v6
+    - uses: actions/setup-go@v7
       with:
         # go-version-file: <subrepo>/go.mod
         # cache: true
