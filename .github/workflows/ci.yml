@@ -11,11 +11,14 @@ permissions:
   # Optional: allow read access to pull requests. Use with `only-new-issues` option.
   # pull-requests: read
 
+env:
+  GOEXPERIMENT: simd
+
 jobs:
   lint-cli:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/go-base
 
       - name: install-dependencies
@@ -33,7 +36,7 @@ jobs:
   lint-server:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/go-base
 
       - name: vet
@@ -48,11 +51,11 @@ jobs:
   test-cli-darwin:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/go-base
 
       - name: install-dependencies
         run: brew install opus
 
       - name: run-tests
-        run: GOEXPERIMENT=simd go test -tags nolibopusfile -v -race ./cli/...
+        run: go test -tags nolibopusfile -v -race ./cli/...
